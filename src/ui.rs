@@ -125,12 +125,19 @@ pub fn map_confirm_key(key: KeyEvent) -> ConfirmInput {
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(area);
-    draw_list(frame, chunks[0], state);
-    draw_status(frame, chunks[1], state);
+    match &state.mode {
+        Mode::Form(form) => draw_form(frame, area, form),
+        Mode::ConfirmClose(number) => draw_confirm_close(frame, area, *number, state),
+        Mode::LittleCreate(buf) => draw_little_create(frame, area, buf),
+        _ => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+            draw_list(frame, chunks[0], state);
+            draw_status(frame, chunks[1], state);
+        }
+    }
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -193,6 +200,67 @@ fn label_color(hex: &str) -> Color {
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
     Color::Rgb(r, g, b)
+}
+
+fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
+    let block = Block::default().borders(Borders::ALL).title("New issue title (Enter to create, Esc to cancel)");
+    frame.render_widget(Paragraph::new(buf).block(block), area);
+}
+
+fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Min(3)])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(form.title.as_str()).block(
+            Block::default().borders(Borders::ALL).title("Title").border_style(field_style(form.field == FormField::Title)),
+        ),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(form.body.as_str()).block(
+            Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body)),
+        ),
+        chunks[1],
+    );
+
+    let items: Vec<ListItem> = form
+        .all_label_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mark = if form.selected_labels.contains(name) { "[x]" } else { "[ ]" };
+            let style = if i == form.label_cursor {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{mark} {name}")).style(style)
+        })
+        .collect();
+    frame.render_widget(
+        List::new(items).block(
+            Block::default().borders(Borders::ALL).title("Labels (space to toggle)").border_style(field_style(form.field == FormField::Labels)),
+        ),
+        chunks[2],
+    );
+}
+
+fn field_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    }
+}
+
+fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppState) {
+    let title = state.issues.iter().find(|i| i.number == number).map(|i| i.title.as_str()).unwrap_or("");
+    let text = format!("Close #{number}: {title}? (y/n)");
+    frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
 }
 
 #[cfg(test)]
@@ -314,5 +382,35 @@ mod tests {
         let state = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("No issues"));
+    }
+
+    #[test]
+    fn little_create_mode_renders_typed_title() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.little_create_push('F');
+        state.little_create_push('i');
+        state.little_create_push('x');
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Fix"));
+    }
+
+    #[test]
+    fn big_create_form_renders_title_body_and_labels() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Title"));
+        assert!(rendered.contains("Body"));
+        assert!(rendered.contains("bug"));
+    }
+
+    #[test]
+    fn confirm_close_renders_issue_title_and_prompt() {
+        let mut state = AppState::new(vec![issue(9, "Close me")], vec![]);
+        state.request_close();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Close me"));
+        assert!(rendered.contains("(y/n)"));
     }
 }
