@@ -1,4 +1,9 @@
-use crate::model::FormField;
+use crate::model::{AppState, FormField, Mode};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::Frame;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +123,78 @@ pub fn map_confirm_key(key: KeyEvent) -> ConfirmInput {
     }
 }
 
+pub fn draw(frame: &mut Frame, state: &AppState) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+    draw_list(frame, chunks[0], state);
+    draw_status(frame, chunks[1], state);
+}
+
+fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
+    let visible = state.visible_indices();
+    if visible.is_empty() {
+        let message = format!("No issues found for state filter {:?}", state.state_filter);
+        let list = List::new(vec![ListItem::new(message)])
+            .block(Block::default().borders(Borders::ALL).title("Issues"));
+        frame.render_widget(list, area);
+        return;
+    }
+    let mut items: Vec<ListItem> = Vec::new();
+    for (row, &idx) in visible.iter().enumerate() {
+        let issue = &state.issues[idx];
+        let mut spans = vec![Span::raw(format!("#{} ", issue.number)), Span::raw(issue.title.clone())];
+        for label in &issue.labels {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!(" {} ", label.name),
+                Style::default().bg(label_color(&label.color)).fg(Color::Black),
+            ));
+        }
+        let style = if row == state.cursor {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        items.push(ListItem::new(Line::from(spans)).style(style));
+        if state.expanded.contains(&issue.number) {
+            if issue.body.is_empty() {
+                items.push(ListItem::new("    (no description)"));
+            } else {
+                for line in issue.body.lines() {
+                    items.push(ListItem::new(format!("    {line}")));
+                }
+            }
+        }
+    }
+    let title = format!("Issues ({:?})", state.state_filter);
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    frame.render_widget(list, area);
+}
+
+fn draw_status(frame: &mut Frame, area: Rect, state: &AppState) {
+    let text = match &state.mode {
+        Mode::Search => format!("/{}", state.search_query),
+        _ => state.status.clone().unwrap_or_else(|| {
+            "j/k move  enter expand  / search  a state  c/C create  e edit  x close  y/Y/^y copy  q quit".to_string()
+        }),
+    };
+    frame.render_widget(Paragraph::new(text), area);
+}
+
+fn label_color(hex: &str) -> Color {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return Color::Gray;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
+    Color::Rgb(r, g, b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +249,70 @@ mod tests {
         assert_eq!(map_confirm_key(key(KeyCode::Char('y'))), ConfirmInput::Yes);
         assert_eq!(map_confirm_key(key(KeyCode::Char('n'))), ConfirmInput::No);
         assert_eq!(map_confirm_key(key(KeyCode::Esc)), ConfirmInput::No);
+    }
+
+    use crate::gh::StateFilter;
+    use crate::model::{Issue, IssueState, Label};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn issue(number: u32, title: &str) -> Issue {
+        Issue { number, title: title.into(), body: String::new(), labels: vec![], state: IssueState::Open, url: String::new() }
+    }
+
+    fn render_to_string(state: &AppState) -> String {
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, state)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn renders_issue_number_and_title() {
+        let state = AppState::new(vec![issue(42, "Fix login bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("#42"));
+        assert!(rendered.contains("Fix login bug"));
+    }
+
+    #[test]
+    fn renders_state_filter_in_list_title() {
+        let state = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains(&format!("{:?}", StateFilter::Open)));
+    }
+
+    #[test]
+    fn expanded_issue_shows_body_text() {
+        let mut issue = issue(1, "Fix bug");
+        issue.body = "steps to repro".into();
+        let mut state = AppState::new(vec![issue], vec![]);
+        state.toggle_expand();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("steps to repro"));
+    }
+
+    #[test]
+    fn search_mode_shows_query_in_status_line() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.enter_search();
+        state.search_push('x');
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("/x"));
+    }
+
+    #[test]
+    fn shows_friendly_message_when_no_issues_match_filter() {
+        let state = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("No issues"));
     }
 }
