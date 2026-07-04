@@ -1,5 +1,8 @@
 use std::io;
 
+mod gh;
+mod model;
+
 const HELP: &str = "\
 issue-browser - a tmux-popup TUI for GitHub issues
 
