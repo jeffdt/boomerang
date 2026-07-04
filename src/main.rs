@@ -4,6 +4,7 @@ mod copy;
 mod gh;
 mod model;
 mod search;
+mod ui;
 
 const HELP: &str = "\
 issue-browser - a tmux-popup TUI for GitHub issues
