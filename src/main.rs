@@ -1,5 +1,6 @@
 use std::io;
 
+mod copy;
 mod gh;
 mod model;
 mod search;
