@@ -28,6 +28,37 @@ use std::collections::HashSet;
 pub enum Mode {
     List,
     Search,
+    LittleCreate(String),
+    Form(FormState),
+    ConfirmClose(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FormField {
+    #[default]
+    Title,
+    Body,
+    Labels,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FormState {
+    pub editing: Option<u32>,
+    pub title: String,
+    pub body: String,
+    pub all_label_names: Vec<String>,
+    pub selected_labels: HashSet<String>,
+    pub label_cursor: usize,
+    pub field: FormField,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormSubmission {
+    pub editing: Option<u32>,
+    pub title: String,
+    pub body: String,
+    pub add_labels: Vec<String>,
+    pub remove_labels: Vec<String>,
 }
 
 pub struct AppState {
@@ -132,6 +163,186 @@ impl AppState {
         self.mode = Mode::List;
         self.search_query.clear();
     }
+
+    pub fn enter_little_create(&mut self) {
+        self.mode = Mode::LittleCreate(String::new());
+    }
+
+    pub fn little_create_push(&mut self, c: char) {
+        if let Mode::LittleCreate(buf) = &mut self.mode {
+            buf.push(c);
+        }
+    }
+
+    pub fn little_create_backspace(&mut self) {
+        if let Mode::LittleCreate(buf) = &mut self.mode {
+            buf.pop();
+        }
+    }
+
+    pub fn little_create_submit(&mut self) -> Option<String> {
+        if let Mode::LittleCreate(buf) = &self.mode {
+            let title = buf.trim().to_string();
+            if title.is_empty() {
+                return None;
+            }
+            self.mode = Mode::List;
+            return Some(title);
+        }
+        None
+    }
+
+    pub fn cancel_form_or_create(&mut self) {
+        self.mode = Mode::List;
+    }
+
+    fn new_form_state(&self, editing: Option<u32>) -> FormState {
+        let all_label_names: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let (title, body, selected_labels) = match editing.and_then(|n| self.issues.iter().find(|i| i.number == n)) {
+            Some(issue) => (
+                issue.title.clone(),
+                issue.body.clone(),
+                issue.labels.iter().map(|l| l.name.clone()).collect(),
+            ),
+            None => (String::new(), String::new(), HashSet::new()),
+        };
+        FormState { editing, title, body, all_label_names, selected_labels, label_cursor: 0, field: FormField::Title }
+    }
+
+    pub fn enter_big_create(&mut self) {
+        self.mode = Mode::Form(self.new_form_state(None));
+    }
+
+    pub fn enter_edit(&mut self) {
+        if let Some(number) = self.selected_issue().map(|i| i.number) {
+            self.mode = Mode::Form(self.new_form_state(Some(number)));
+        }
+    }
+
+    pub fn form_push_char(&mut self, c: char) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => form.title.push(c),
+                FormField::Body => form.body.push(c),
+                FormField::Labels => {}
+            }
+        }
+    }
+
+    pub fn form_backspace(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => { form.title.pop(); }
+                FormField::Body => { form.body.pop(); }
+                FormField::Labels => {}
+            }
+        }
+    }
+
+    pub fn form_next_field(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            form.field = match form.field {
+                FormField::Title => FormField::Body,
+                FormField::Body => FormField::Labels,
+                FormField::Labels => FormField::Title,
+            };
+        }
+    }
+
+    pub fn form_prev_field(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            form.field = match form.field {
+                FormField::Title => FormField::Labels,
+                FormField::Body => FormField::Title,
+                FormField::Labels => FormField::Body,
+            };
+        }
+    }
+
+    pub fn form_move_label_cursor(&mut self, delta: isize) {
+        if let Mode::Form(form) = &mut self.mode {
+            let len = form.all_label_names.len();
+            if len == 0 {
+                return;
+            }
+            let next = (form.label_cursor as isize + delta).rem_euclid(len as isize);
+            form.label_cursor = next as usize;
+        }
+    }
+
+    pub fn form_toggle_label(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            if form.field != FormField::Labels {
+                return;
+            }
+            if let Some(name) = form.all_label_names.get(form.label_cursor).cloned() {
+                if !form.selected_labels.remove(&name) {
+                    form.selected_labels.insert(name);
+                }
+            }
+        }
+    }
+
+    pub fn form_enter(&mut self) -> Option<FormSubmission> {
+        let (editing, field) = match &self.mode {
+            Mode::Form(form) => (form.editing, form.field),
+            _ => return None,
+        };
+        match field {
+            FormField::Title => {
+                if let Mode::Form(form) = &mut self.mode {
+                    form.field = FormField::Body;
+                }
+                None
+            }
+            FormField::Body => {
+                if let Mode::Form(form) = &mut self.mode {
+                    form.body.push('\n');
+                }
+                None
+            }
+            FormField::Labels => {
+                let original: HashSet<String> = editing
+                    .and_then(|n| self.issues.iter().find(|i| i.number == n))
+                    .map(|issue| issue.labels.iter().map(|l| l.name.clone()).collect())
+                    .unwrap_or_default();
+                let form = match &self.mode {
+                    Mode::Form(form) => form.clone(),
+                    _ => return None,
+                };
+                let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
+                let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
+                let submission = FormSubmission {
+                    editing: form.editing,
+                    title: form.title.clone(),
+                    body: form.body.clone(),
+                    add_labels,
+                    remove_labels,
+                };
+                self.mode = Mode::List;
+                Some(submission)
+            }
+        }
+    }
+
+    pub fn request_close(&mut self) {
+        if let Some(number) = self.selected_issue().map(|i| i.number) {
+            self.mode = Mode::ConfirmClose(number);
+        }
+    }
+
+    pub fn confirm_close_yes(&mut self) -> Option<u32> {
+        if let Mode::ConfirmClose(number) = self.mode {
+            self.mode = Mode::List;
+            Some(number)
+        } else {
+            None
+        }
+    }
+
+    pub fn confirm_close_no(&mut self) {
+        self.mode = Mode::List;
+    }
 }
 
 #[cfg(test)]
@@ -195,5 +406,137 @@ mod tests {
         assert_eq!(state.cycle_state_filter(), StateFilter::Closed);
         assert_eq!(state.cycle_state_filter(), StateFilter::All);
         assert_eq!(state.cycle_state_filter(), StateFilter::Open);
+    }
+
+    #[test]
+    fn little_create_submit_returns_trimmed_title_and_resets_mode() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        for c in "  Fix the bug  ".chars() {
+            state.little_create_push(c);
+        }
+        let submitted = state.little_create_submit();
+        assert_eq!(submitted, Some("Fix the bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn little_create_submit_rejects_blank_title() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.little_create_push(' ');
+        assert_eq!(state.little_create_submit(), None);
+        assert!(matches!(state.mode, Mode::LittleCreate(_)), "stays in create mode on blank submit");
+    }
+
+    #[test]
+    fn enter_edit_prefills_form_from_selected_issue() {
+        let mut issue1 = issue(1, "Fix bug");
+        issue1.body = "steps to repro".into();
+        issue1.labels = vec![Label { name: "bug".into(), color: "d73a4a".into() }];
+        let mut state = AppState::new(
+            vec![issue1],
+            vec![
+                Label { name: "bug".into(), color: "d73a4a".into() },
+                Label { name: "docs".into(), color: "0075ca".into() },
+            ],
+        );
+        state.enter_edit();
+        match &state.mode {
+            Mode::Form(form) => {
+                assert_eq!(form.editing, Some(1));
+                assert_eq!(form.title, "Fix bug");
+                assert_eq!(form.body, "steps to repro");
+                assert!(form.selected_labels.contains("bug"));
+                assert_eq!(form.all_label_names, vec!["bug".to_string(), "docs".to_string()]);
+            }
+            other => panic!("expected Form mode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn form_toggle_label_only_applies_when_labels_field_focused() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        state.form_toggle_label(); // field is Title, should be ignored
+        if let Mode::Form(form) = &state.mode {
+            assert!(form.selected_labels.is_empty());
+        }
+        state.form_next_field(); // Body
+        state.form_next_field(); // Labels
+        state.form_toggle_label();
+        if let Mode::Form(form) = &state.mode {
+            assert!(form.selected_labels.contains("bug"));
+        }
+    }
+
+    #[test]
+    fn form_enter_on_title_advances_to_body_without_submitting() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        assert_eq!(state.form_enter(), None);
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.field, FormField::Body);
+        }
+    }
+
+    #[test]
+    fn form_enter_on_labels_submits_and_returns_to_list() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.form_next_field();
+        state.form_push_char('B');
+        state.form_next_field();
+        state.form_toggle_label();
+        let submission = state.form_enter().expect("labels field submits on enter");
+        assert_eq!(submission.editing, None);
+        assert_eq!(submission.title, "T");
+        assert_eq!(submission.body, "B");
+        assert_eq!(submission.add_labels, vec!["bug".to_string()]);
+        assert!(submission.remove_labels.is_empty());
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn form_enter_while_editing_diffs_labels_against_original() {
+        let mut issue1 = issue(1, "Fix bug");
+        issue1.labels = vec![
+            Label { name: "bug".into(), color: "d73a4a".into() },
+            Label { name: "keep".into(), color: "0075ca".into() },
+        ];
+        let all_labels = vec![
+            Label { name: "bug".into(), color: "d73a4a".into() },
+            Label { name: "keep".into(), color: "0075ca".into() },
+            Label { name: "docs".into(), color: "0075ca".into() },
+        ];
+        let mut state = AppState::new(vec![issue1], all_labels);
+        state.enter_edit();
+        state.form_next_field(); // Body
+        state.form_next_field(); // Labels, cursor starts at 0 ("bug")
+        state.form_toggle_label(); // toggle "bug" off
+        state.form_move_label_cursor(2); // to "docs"
+        state.form_toggle_label(); // toggle "docs" on
+        let submission = state.form_enter().unwrap();
+        assert_eq!(submission.editing, Some(1));
+        assert_eq!(submission.add_labels, vec!["docs".to_string()]);
+        assert_eq!(submission.remove_labels, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn confirm_close_flow() {
+        let mut state = AppState::new(vec![issue(9, "close me")], vec![]);
+        state.request_close();
+        assert_eq!(state.mode, Mode::ConfirmClose(9));
+        assert_eq!(state.confirm_close_yes(), Some(9));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn confirm_close_no_returns_to_list_without_closing() {
+        let mut state = AppState::new(vec![issue(9, "close me")], vec![]);
+        state.request_close();
+        state.confirm_close_no();
+        assert_eq!(state.mode, Mode::List);
     }
 }
