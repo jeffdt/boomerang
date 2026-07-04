@@ -1,0 +1,22 @@
+[package]
+name = "issue-browser"
+version = "0.1.0"
+edition = "2021"
+description = "A tmux-popup TUI for browsing, searching, creating, editing, and closing GitHub issues in the current repo"
+license = "MIT"
+
+[[bin]]
+name = "issue-browser"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.28"
+nucleo-matcher = "0.3"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
