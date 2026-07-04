@@ -2,6 +2,7 @@ use std::io;
 
 mod gh;
 mod model;
+mod search;
 
 const HELP: &str = "\
 issue-browser - a tmux-popup TUI for GitHub issues
