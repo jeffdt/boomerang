@@ -122,6 +122,18 @@ impl AppState {
         }
     }
 
+    pub fn expand_selected(&mut self) {
+        if let Some(number) = self.selected_issue().map(|i| i.number) {
+            self.expanded.insert(number);
+        }
+    }
+
+    pub fn collapse_selected(&mut self) {
+        if let Some(number) = self.selected_issue().map(|i| i.number) {
+            self.expanded.remove(&number);
+        }
+    }
+
     pub fn set_issues(&mut self, issues: Vec<Issue>) {
         self.issues = issues;
         self.cursor = 0;
@@ -406,6 +418,25 @@ mod tests {
         state.toggle_expand();
         assert!(state.expanded.contains(&1));
         state.toggle_expand();
+        assert!(!state.expanded.contains(&1));
+    }
+
+    #[test]
+    fn expand_selected_is_idempotent() {
+        let mut state = AppState::new(vec![issue(1, "a"), issue(2, "b")], vec![]);
+        state.expand_selected();
+        assert!(state.expanded.contains(&1));
+        state.expand_selected();
+        assert!(state.expanded.contains(&1), "expanding an already-expanded issue is a no-op");
+    }
+
+    #[test]
+    fn collapse_selected_is_idempotent() {
+        let mut state = AppState::new(vec![issue(1, "a"), issue(2, "b")], vec![]);
+        state.collapse_selected();
+        assert!(!state.expanded.contains(&1), "collapsing a not-expanded issue is a no-op");
+        state.expand_selected();
+        state.collapse_selected();
         assert!(!state.expanded.contains(&1));
     }
 

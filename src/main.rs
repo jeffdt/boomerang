@@ -105,6 +105,8 @@ fn event_loop(
                     ListInput::Down => state.move_cursor(1),
                     ListInput::Up => state.move_cursor(-1),
                     ListInput::ToggleExpand => state.toggle_expand(),
+                    ListInput::Expand => state.expand_selected(),
+                    ListInput::Collapse => state.collapse_selected(),
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
                         let filter = state.cycle_state_filter();

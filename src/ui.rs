@@ -2,15 +2,22 @@ use crate::model::{AppState, FormField, Mode};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use ratatui::Frame;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+const POPUP_MARGIN: u16 = 2;
+
+const LABEL_PALETTE: [Color; 6] =
+    [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::Red];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListInput {
     Up,
     Down,
     ToggleExpand,
+    Expand,
+    Collapse,
     EnterSearch,
     CycleStateFilter,
     LittleCreate,
@@ -29,6 +36,8 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('j') | KeyCode::Down => ListInput::Down,
         KeyCode::Char('k') | KeyCode::Up => ListInput::Up,
         KeyCode::Enter => ListInput::ToggleExpand,
+        KeyCode::Right => ListInput::Expand,
+        KeyCode::Left => ListInput::Collapse,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
         KeyCode::Char('c') => ListInput::LittleCreate,
@@ -129,23 +138,50 @@ pub fn map_confirm_key(key: KeyEvent) -> ConfirmInput {
     }
 }
 
+/// Shrink `area` by `margin` cells on every side, reducing the margin toward
+/// zero rather than panicking if the area is too small to inset cleanly.
+fn inset(area: Rect, margin: u16) -> Rect {
+    let mx = margin.min(area.width.saturating_sub(1) / 2);
+    let my = margin.min(area.height.saturating_sub(1) / 2);
+    Rect {
+        x: area.x + mx,
+        y: area.y + my,
+        width: area.width.saturating_sub(2 * mx),
+        height: area.height.saturating_sub(2 * my),
+    }
+}
+
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let area = frame.area();
+    let area = inset(frame.area(), POPUP_MARGIN);
+    let border_style = Style::default();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Line::from(vec![
+            Span::styled("─", border_style),
+            Span::styled("‹ issue-browser ›", border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC)),
+        ]));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     match &state.mode {
-        Mode::Form(form) => draw_form(frame, area, form),
-        Mode::ConfirmClose(number) => draw_confirm_close(frame, area, *number, state),
-        Mode::LittleCreate(buf) => draw_little_create(frame, area, buf),
+        Mode::Form(form) => draw_form(frame, inner, form),
+        Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
+        Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
-                .split(area);
+                .split(inner);
             draw_list(frame, chunks[0], state);
             draw_shortcuts_hint(frame, chunks[1], state);
             draw_toast(frame, chunks[2], state);
         }
     }
 }
+
+const BODY_INDENT: &str = "    ";
 
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let visible = state.visible_indices();
@@ -156,15 +192,18 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         frame.render_widget(list, area);
         return;
     }
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let max_body_width = inner_width.saturating_sub(BODY_INDENT.len());
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
-        let mut spans = vec![Span::raw(format!("#{} ", issue.number)), Span::raw(issue.title.clone())];
+        let mut spans =
+            vec![Span::raw(format!("{:<6}", format!("#{}", issue.number))), Span::raw(issue.title.clone())];
         for label in &issue.labels {
             spans.push(Span::raw("  "));
             spans.push(Span::styled(
                 format!(" {} ", label.name),
-                Style::default().bg(label_color(&label.color)).fg(Color::Black),
+                Style::default().bg(label_palette_color(&label.name)).fg(Color::Black),
             ));
         }
         let style = if row == state.cursor {
@@ -175,10 +214,12 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         items.push(ListItem::new(Line::from(spans)).style(style));
         if state.expanded.contains(&issue.number) {
             if issue.body.is_empty() {
-                items.push(ListItem::new("    (no description)"));
+                items.push(ListItem::new(format!("{BODY_INDENT}(no description)")));
             } else {
                 for line in issue.body.lines() {
-                    items.push(ListItem::new(format!("    {line}")));
+                    for wrapped in wrap_line(line, max_body_width) {
+                        items.push(ListItem::new(format!("{BODY_INDENT}{wrapped}")));
+                    }
                 }
             }
         }
@@ -186,6 +227,49 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let title = format!("Issues ({:?})", state.state_filter);
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
     frame.render_widget(list, area);
+}
+
+/// Word-wrap `line` into chunks no wider than `max_width`, breaking on
+/// whitespace. A single word longer than `max_width` is hard-broken on char
+/// boundaries since it has no whitespace to break at.
+fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![line.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in line.split_whitespace() {
+        let word_len = word.chars().count();
+        if word_len > max_width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut chars = word.chars().peekable();
+            while chars.peek().is_some() {
+                let chunk: String = chars.by_ref().take(max_width).collect();
+                if chars.peek().is_some() {
+                    lines.push(chunk);
+                } else {
+                    current = chunk;
+                }
+            }
+            continue;
+        }
+        let current_len = current.chars().count();
+        if current.is_empty() {
+            current = word.to_string();
+        } else if current_len + 1 + word_len <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -201,15 +285,12 @@ fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(text), area);
 }
 
-fn label_color(hex: &str) -> Color {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return Color::Gray;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
-    Color::Rgb(r, g, b)
+/// Deterministically assign a label a color from `LABEL_PALETTE` by hashing
+/// its name (not its hex), so the same label name always renders the same
+/// named ANSI color across sessions without persisting any assignment.
+fn label_palette_color(name: &str) -> Color {
+    let sum: usize = name.bytes().map(|b| b as usize).sum();
+    LABEL_PALETTE[sum % LABEL_PALETTE.len()]
 }
 
 fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
@@ -362,7 +443,7 @@ mod tests {
     }
 
     fn render_to_string(state: &AppState) -> String {
-        let backend = TestBackend::new(60, 10);
+        let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
         let buf = terminal.backend().buffer().clone();
@@ -445,5 +526,81 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Close me"));
         assert!(rendered.contains("(y/n)"));
+    }
+
+    #[test]
+    fn maps_right_and_left_to_expand_and_collapse() {
+        assert_eq!(map_list_key(key(KeyCode::Right)), ListInput::Expand);
+        assert_eq!(map_list_key(key(KeyCode::Left)), ListInput::Collapse);
+    }
+
+    #[test]
+    fn wrap_line_leaves_short_line_unchanged() {
+        assert_eq!(wrap_line("short line", 40), vec!["short line".to_string()]);
+    }
+
+    #[test]
+    fn wrap_line_breaks_at_one_wrap_point() {
+        assert_eq!(
+            wrap_line("one two three", 7),
+            vec!["one two".to_string(), "three".to_string()]
+        );
+    }
+
+    #[test]
+    fn wrap_line_hard_breaks_a_single_overlong_word() {
+        assert_eq!(
+            wrap_line("supercalifragilisticexpialidocious", 10),
+            vec!["supercalif".to_string(), "ragilistic".to_string(), "expialidoc".to_string(), "ious".to_string()]
+        );
+    }
+
+    #[test]
+    fn label_palette_color_is_deterministic_and_within_palette() {
+        let first = label_palette_color("bug");
+        let second = label_palette_color("bug");
+        assert_eq!(first, second, "same label name must always map to the same color");
+        assert!(LABEL_PALETTE.contains(&first));
+    }
+
+    #[test]
+    fn label_palette_color_does_not_depend_on_hex() {
+        assert_eq!(label_palette_color("bug"), label_palette_color("bug"));
+    }
+
+    #[test]
+    fn renders_outer_rounded_frame_with_title() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains('╭'));
+        assert!(rendered.contains('╮'));
+        assert!(rendered.contains('╰'));
+        assert!(rendered.contains('╯'));
+        assert!(rendered.contains("issue-browser"));
+    }
+
+    #[test]
+    fn issue_titles_align_regardless_of_number_width() {
+        let short = AppState::new(vec![issue(1, "Short number title")], vec![]);
+        let long = AppState::new(vec![issue(123, "Long number title")], vec![]);
+        let short_rendered = render_to_string(&short);
+        let long_rendered = render_to_string(&long);
+        let short_col = short_rendered.find("Short number title").expect("short title rendered");
+        let long_col = long_rendered.find("Long number title").expect("long title rendered");
+        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        assert_eq!(short_col - short_row_start, long_col - long_row_start);
+    }
+
+    #[test]
+    fn long_body_line_wraps_across_multiple_rows() {
+        let mut issue = issue(1, "Fix bug");
+        issue.body = "a ".repeat(60).trim().to_string();
+        let mut state = AppState::new(vec![issue], vec![]);
+        state.toggle_expand();
+        let rendered = render_to_string(&state);
+        let repeated_a_pattern = "a a a a a a a a a a";
+        let a_rows = rendered.lines().filter(|line| line.contains(repeated_a_pattern)).count();
+        assert!(a_rows > 1, "long body line should wrap across multiple rendered rows");
     }
 }
