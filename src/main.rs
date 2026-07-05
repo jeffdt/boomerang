@@ -61,8 +61,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     let source = GhCliSource::new();
-    let issues = source.list(StateFilter::Open)?;
-    let labels = source.labels().unwrap_or_default();
+    let issues_handle = std::thread::spawn(move || GhCliSource::new().list(StateFilter::Open));
+    let labels_handle = std::thread::spawn(move || GhCliSource::new().labels());
+    let issues = issues_handle.join().expect("issue list thread panicked")?;
+    let labels = labels_handle.join().expect("label list thread panicked").unwrap_or_default();
     let mut state = AppState::new(issues, labels);
 
     run_ui(&mut state, &source)
