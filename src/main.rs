@@ -12,6 +12,7 @@ use model::{AppState, Mode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::{self, stdout};
+use std::time::Duration;
 use ui::{
     map_confirm_key, map_form_key, map_list_key, map_little_create_key, map_search_key, ConfirmInput, FormInput,
     LittleCreateInput, ListInput, SearchInput,
@@ -91,6 +92,10 @@ fn event_loop(
 ) -> anyhow::Result<()> {
     loop {
         terminal.draw(|f| ui::draw(f, state))?;
+        state.clear_expired_status();
+        if !event::poll(Duration::from_millis(200))? {
+            continue;
+        }
         if let Event::Key(key) = event::read()? {
             if key.kind != event::KeyEventKind::Press {
                 continue;
@@ -105,7 +110,7 @@ fn event_loop(
                         let filter = state.cycle_state_filter();
                         match source.list(filter) {
                             Ok(issues) => state.set_issues(issues),
-                            Err(e) => state.status = Some(format!("gh error: {e}")),
+                            Err(e) => state.set_status(format!("gh error: {e}")),
                         }
                     }
                     ListInput::LittleCreate => state.enter_little_create(),
@@ -133,7 +138,7 @@ fn event_loop(
                         if let Some(title) = state.little_create_submit() {
                             match source.create(&title, "", &[]) {
                                 Ok(()) => refresh(state, source),
-                                Err(e) => state.status = Some(format!("gh error: {e}")),
+                                Err(e) => state.set_status(format!("gh error: {e}")),
                             }
                         }
                     }
@@ -163,7 +168,7 @@ fn event_loop(
                             };
                             match result {
                                 Ok(()) => refresh(state, source),
-                                Err(e) => state.status = Some(format!("gh error: {e}")),
+                                Err(e) => state.set_status(format!("gh error: {e}")),
                             }
                         }
                     }
@@ -174,7 +179,7 @@ fn event_loop(
                         if let Some(number) = state.confirm_close_yes() {
                             match source.close(number) {
                                 Ok(()) => refresh(state, source),
-                                Err(e) => state.status = Some(format!("gh error: {e}")),
+                                Err(e) => state.set_status(format!("gh error: {e}")),
                             }
                         }
                     }
@@ -189,7 +194,7 @@ fn event_loop(
 fn refresh(state: &mut AppState, source: &impl IssueSource) {
     match source.list(state.state_filter) {
         Ok(issues) => state.set_issues(issues),
-        Err(e) => state.status = Some(format!("gh error: {e}")),
+        Err(e) => state.set_status(format!("gh error: {e}")),
     }
 }
 
@@ -197,8 +202,8 @@ fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String)
     if let Some(issue) = state.selected_issue() {
         let text = format(issue);
         match copy::copy_to_clipboard(&text) {
-            Ok(()) => state.status = Some(format!("copied: {text}")),
-            Err(e) => state.status = Some(format!("copy failed: {e}")),
+            Ok(()) => state.set_status(format!("copied: {text}")),
+            Err(e) => state.set_status(format!("copy failed: {e}")),
         }
     }
 }

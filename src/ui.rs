@@ -138,10 +138,11 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
                 .split(area);
             draw_list(frame, chunks[0], state);
-            draw_status(frame, chunks[1], state);
+            draw_shortcuts_hint(frame, chunks[1], state);
+            draw_toast(frame, chunks[2], state);
         }
     }
 }
@@ -187,13 +188,16 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(list, area);
 }
 
-fn draw_status(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = match &state.mode {
         Mode::Search => format!("/{}", state.search_query),
-        _ => state.status.clone().unwrap_or_else(|| {
-            "j/k move  enter expand  / search  a state  c/C create  e edit  x close  y/Y/^y copy  q quit".to_string()
-        }),
+        _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  y/Y/^y copy  q quit".to_string(),
     };
+    frame.render_widget(Paragraph::new(text), area);
+}
+
+fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
+    let text = state.status.as_ref().map(|(msg, _)| msg.as_str()).unwrap_or("");
     frame.render_widget(Paragraph::new(text), area);
 }
 

@@ -23,6 +23,9 @@ pub struct Issue {
 use crate::gh::StateFilter;
 use crate::search;
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
+
+pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
@@ -70,7 +73,7 @@ pub struct AppState {
     pub expanded: HashSet<u32>,
     pub search_query: String,
     pub search_ranked: Vec<usize>,
-    pub status: Option<String>,
+    pub status: Option<(String, Instant)>,
 }
 
 impl AppState {
@@ -358,6 +361,18 @@ impl AppState {
     pub fn confirm_close_no(&mut self) {
         self.mode = Mode::List;
     }
+
+    pub fn set_status(&mut self, message: String) {
+        self.status = Some((message, Instant::now()));
+    }
+
+    pub fn clear_expired_status(&mut self) {
+        if let Some((_, set_at)) = &self.status {
+            if set_at.elapsed() >= STATUS_TOAST_DURATION {
+                self.status = None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -578,5 +593,22 @@ mod tests {
         state.request_close();
         state.confirm_close_no();
         assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn fresh_status_survives_expiry_check() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status("copied: #1".to_string());
+        state.clear_expired_status();
+        assert!(state.status.is_some(), "a just-set status hasn't reached the toast duration yet");
+    }
+
+    #[test]
+    fn stale_status_is_cleared_by_expiry_check() {
+        let mut state = AppState::new(vec![], vec![]);
+        let set_at = Instant::now() - STATUS_TOAST_DURATION - Duration::from_millis(1);
+        state.status = Some(("copied: #1".to_string(), set_at));
+        state.clear_expired_status();
+        assert!(state.status.is_none(), "a status older than STATUS_TOAST_DURATION should be cleared");
     }
 }
