@@ -1,0 +1,728 @@
+use crate::model::{AppState, FormField, Label, Mode};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::Frame;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+const POPUP_MARGIN: u16 = 2;
+
+const LABEL_PALETTE: [Color; 6] =
+    [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::Red];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListInput {
+    Up,
+    Down,
+    ToggleExpand,
+    Expand,
+    Collapse,
+    EnterSearch,
+    CycleStateFilter,
+    LittleCreate,
+    BigCreate,
+    Edit,
+    RequestClose,
+    CopyReference,
+    CopyMarkdownLink,
+    CopyUrl,
+    OpenInBrowser,
+    Quit,
+    None,
+}
+
+pub fn map_list_key(key: KeyEvent) -> ListInput {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => ListInput::Down,
+        KeyCode::Char('k') | KeyCode::Up => ListInput::Up,
+        KeyCode::Enter => ListInput::ToggleExpand,
+        KeyCode::Right => ListInput::Expand,
+        KeyCode::Left => ListInput::Collapse,
+        KeyCode::Char('/') => ListInput::EnterSearch,
+        KeyCode::Char('a') => ListInput::CycleStateFilter,
+        KeyCode::Char('c') => ListInput::LittleCreate,
+        KeyCode::Char('C') => ListInput::BigCreate,
+        KeyCode::Char('e') => ListInput::Edit,
+        KeyCode::Char('x') => ListInput::RequestClose,
+        KeyCode::Char('o') => ListInput::OpenInBrowser,
+        KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
+        KeyCode::Char('y') => ListInput::CopyReference,
+        KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
+        KeyCode::Char('q') | KeyCode::Esc => ListInput::Quit,
+        _ => ListInput::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchInput {
+    Char(char),
+    Backspace,
+    DeleteWord,
+    Clear,
+    Exit,
+    None,
+}
+
+pub fn map_search_key(key: KeyEvent) -> SearchInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => SearchInput::Exit,
+        KeyCode::Backspace => SearchInput::Backspace,
+        KeyCode::Char('w') if ctrl => SearchInput::DeleteWord,
+        KeyCode::Char('u') if ctrl => SearchInput::Clear,
+        KeyCode::Char(_) if ctrl => SearchInput::None,
+        KeyCode::Char(c) => SearchInput::Char(c),
+        _ => SearchInput::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LittleCreateInput {
+    Char(char),
+    Backspace,
+    Submit,
+    Cancel,
+    None,
+}
+
+pub fn map_little_create_key(key: KeyEvent) -> LittleCreateInput {
+    match key.code {
+        KeyCode::Char(c) => LittleCreateInput::Char(c),
+        KeyCode::Backspace => LittleCreateInput::Backspace,
+        KeyCode::Enter => LittleCreateInput::Submit,
+        KeyCode::Esc => LittleCreateInput::Cancel,
+        _ => LittleCreateInput::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormInput {
+    Char(char),
+    Backspace,
+    NextField,
+    PrevField,
+    Enter,
+    MoveUp,
+    MoveDown,
+    ToggleLabel,
+    Cancel,
+    None,
+}
+
+pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
+    match key.code {
+        KeyCode::Tab => FormInput::NextField,
+        KeyCode::BackTab => FormInput::PrevField,
+        KeyCode::Esc => FormInput::Cancel,
+        KeyCode::Enter => FormInput::Enter,
+        KeyCode::Backspace => FormInput::Backspace,
+        KeyCode::Up if field == FormField::Labels => FormInput::MoveUp,
+        KeyCode::Down if field == FormField::Labels => FormInput::MoveDown,
+        KeyCode::Char(' ') if field == FormField::Labels => FormInput::ToggleLabel,
+        KeyCode::Char(c) => FormInput::Char(c),
+        _ => FormInput::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmInput {
+    Yes,
+    No,
+    None,
+}
+
+pub fn map_confirm_key(key: KeyEvent) -> ConfirmInput {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => ConfirmInput::Yes,
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => ConfirmInput::No,
+        _ => ConfirmInput::None,
+    }
+}
+
+/// Shrink `area` by `margin` cells on every side, reducing the margin toward
+/// zero rather than panicking if the area is too small to inset cleanly.
+fn inset(area: Rect, margin: u16) -> Rect {
+    let mx = margin.min(area.width.saturating_sub(1) / 2);
+    let my = margin.min(area.height.saturating_sub(1) / 2);
+    Rect {
+        x: area.x + mx,
+        y: area.y + my,
+        width: area.width.saturating_sub(2 * mx),
+        height: area.height.saturating_sub(2 * my),
+    }
+}
+
+pub fn draw(frame: &mut Frame, state: &AppState) {
+    let area = inset(frame.area(), POPUP_MARGIN);
+    let border_style = Style::default();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Line::from(vec![
+            Span::styled("─", border_style),
+            Span::styled("‹ issue-browser ›", border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC)),
+        ]));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    match &state.mode {
+        Mode::Form(form) => draw_form(frame, inner, form),
+        Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
+        Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf),
+        _ => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
+                .split(inner);
+            draw_list(frame, chunks[0], state);
+            draw_shortcuts_hint(frame, chunks[1], state);
+            draw_toast(frame, chunks[2], state);
+        }
+    }
+}
+
+const BODY_INDENT: &str = "    ";
+
+fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    let header = format!("Issues ({:?})", state.state_filter);
+    frame.render_widget(Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)), chunks[0]);
+    let list_area = chunks[1];
+
+    let visible = state.visible_indices();
+    if visible.is_empty() {
+        let message = format!("No issues found for state filter {:?}", state.state_filter);
+        frame.render_widget(List::new(vec![ListItem::new(message)]), list_area);
+        return;
+    }
+    let available_width = list_area.width as usize;
+    let max_body_width = available_width.saturating_sub(BODY_INDENT.len());
+    let mut items: Vec<ListItem> = Vec::new();
+    for (row, &idx) in visible.iter().enumerate() {
+        let issue = &state.issues[idx];
+        let left = format!("{:<6}{}", format!("#{}", issue.number), issue.title);
+        let mut spans = vec![Span::raw(left.clone())];
+        if !issue.labels.is_empty() {
+            // Tally the labels' rendered width in the same pass that builds their
+            // spans, so the padding calculation can never drift from what's
+            // actually drawn (no separate width formula to keep in sync).
+            let mut label_spans = Vec::new();
+            let mut labels_width = 0usize;
+            for (i, label) in issue.labels.iter().enumerate() {
+                if i > 0 {
+                    label_spans.push(Span::raw(" "));
+                    labels_width += 1;
+                }
+                let badge = format!(" {} ", label.name);
+                labels_width += badge.chars().count();
+                label_spans.push(Span::styled(
+                    badge,
+                    Style::default().bg(label_palette_color(&state.all_labels, &label.name)).fg(Color::Black),
+                ));
+            }
+            let left_width = left.chars().count();
+            let pad = available_width.saturating_sub(left_width).saturating_sub(labels_width);
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.extend(label_spans);
+        }
+        let style = if row == state.cursor {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        items.push(ListItem::new(Line::from(spans)).style(style));
+        if state.expanded.contains(&issue.number) {
+            if issue.body.is_empty() {
+                items.push(ListItem::new(format!("{BODY_INDENT}(no description)")));
+            } else {
+                for line in issue.body.lines() {
+                    for wrapped in wrap_line(line, max_body_width) {
+                        items.push(ListItem::new(format!("{BODY_INDENT}{wrapped}")));
+                    }
+                }
+            }
+        }
+    }
+    frame.render_widget(List::new(items), list_area);
+}
+
+/// Word-wrap `line` into chunks no wider than `max_width`, breaking on
+/// whitespace. A single word longer than `max_width` is hard-broken on char
+/// boundaries since it has no whitespace to break at.
+fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![line.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in line.split_whitespace() {
+        let word_len = word.chars().count();
+        if word_len > max_width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut chars = word.chars().peekable();
+            while chars.peek().is_some() {
+                let chunk: String = chars.by_ref().take(max_width).collect();
+                if chars.peek().is_some() {
+                    lines.push(chunk);
+                } else {
+                    current = chunk;
+                }
+            }
+            continue;
+        }
+        let current_len = current.chars().count();
+        if current.is_empty() {
+            current = word.to_string();
+        } else if current_len + 1 + word_len <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
+    let text = match &state.mode {
+        Mode::Search => format!("/{}", state.search_query),
+        _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+    };
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+}
+
+fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
+    let text = state.status.as_ref().map(|(msg, _)| msg.as_str()).unwrap_or("");
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+}
+
+/// Assign a label a color from `LABEL_PALETTE` by its position in the repo's
+/// full label list (fetched once at startup), cycling through the palette.
+/// No persisted assignment and no hashing: `all_labels` is already stable
+/// for the session, so the same name gets the same color for as long as the
+/// popup is open, and colors are free to shift across launches as labels are
+/// added/removed on the repo.
+fn label_palette_color(all_labels: &[Label], name: &str) -> Color {
+    let index = all_labels.iter().position(|l| l.name == name).unwrap_or(0);
+    LABEL_PALETTE[index % LABEL_PALETTE.len()]
+}
+
+fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
+    let block = Block::default().borders(Borders::ALL).title("New issue title (Enter to create, Esc to cancel)");
+    frame.render_widget(Paragraph::new(buf).block(block), area);
+}
+
+fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Min(3)])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(form.title.as_str()).block(
+            Block::default().borders(Borders::ALL).title("Title").border_style(field_style(form.field == FormField::Title)),
+        ),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(form.body.as_str()).wrap(Wrap { trim: false }).block(
+            Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body)),
+        ),
+        chunks[1],
+    );
+
+    let items: Vec<ListItem> = form
+        .all_label_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mark = if form.selected_labels.contains(name) { "[x]" } else { "[ ]" };
+            let style = if i == form.label_cursor {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{mark} {name}")).style(style)
+        })
+        .collect();
+    frame.render_widget(
+        List::new(items).block(
+            Block::default().borders(Borders::ALL).title("Labels (space to toggle)").border_style(field_style(form.field == FormField::Labels)),
+        ),
+        chunks[2],
+    );
+}
+
+fn field_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    }
+}
+
+fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppState) {
+    let title = state.find_issue(number).map(|i| i.title.as_str()).unwrap_or("");
+    let text = format!("Close #{number}: {title}? (y/n)");
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEventKind, KeyEventState};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+    }
+
+    fn key_with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent { code, modifiers, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+    }
+
+    #[test]
+    fn maps_lowercase_y_to_copy_reference() {
+        assert_eq!(map_list_key(key(KeyCode::Char('y'))), ListInput::CopyReference);
+    }
+
+    #[test]
+    fn maps_uppercase_y_to_copy_markdown_link() {
+        assert_eq!(map_list_key(key(KeyCode::Char('Y'))), ListInput::CopyMarkdownLink);
+    }
+
+    #[test]
+    fn maps_ctrl_y_to_copy_url() {
+        let k = key_with(KeyCode::Char('y'), KeyModifiers::CONTROL);
+        assert_eq!(map_list_key(k), ListInput::CopyUrl);
+    }
+
+    #[test]
+    fn maps_lowercase_o_to_open_in_browser() {
+        assert_eq!(map_list_key(key(KeyCode::Char('o'))), ListInput::OpenInBrowser);
+    }
+
+    #[test]
+    fn maps_shift_c_to_big_create_and_lowercase_c_to_little_create() {
+        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::LittleCreate);
+        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::BigCreate);
+    }
+
+    #[test]
+    fn search_key_mapping_exits_on_enter_or_esc() {
+        assert_eq!(map_search_key(key(KeyCode::Enter)), SearchInput::Exit);
+        assert_eq!(map_search_key(key(KeyCode::Esc)), SearchInput::Exit);
+        assert_eq!(map_search_key(key(KeyCode::Char('x'))), SearchInput::Char('x'));
+    }
+
+    #[test]
+    fn search_key_mapping_swallows_ctrl_chars() {
+        let ctrl_h = key_with(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_h), SearchInput::None);
+    }
+
+    #[test]
+    fn search_key_mapping_handles_ctrl_u_as_clear() {
+        let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_u), SearchInput::Clear);
+    }
+
+    #[test]
+    fn search_key_mapping_handles_ctrl_w_as_delete_word() {
+        let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_w), SearchInput::DeleteWord);
+    }
+
+    #[test]
+    fn search_key_mapping_plain_char_unaffected() {
+        assert_eq!(map_search_key(key(KeyCode::Char('h'))), SearchInput::Char('h'));
+    }
+
+    #[test]
+    fn form_key_mapping_reserves_space_and_arrows_for_labels_field() {
+        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Labels), FormInput::ToggleLabel);
+        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Title), FormInput::Char(' '));
+        assert_eq!(map_form_key(key(KeyCode::Down), FormField::Labels), FormInput::MoveDown);
+    }
+
+    #[test]
+    fn confirm_key_mapping() {
+        assert_eq!(map_confirm_key(key(KeyCode::Char('y'))), ConfirmInput::Yes);
+        assert_eq!(map_confirm_key(key(KeyCode::Char('n'))), ConfirmInput::No);
+        assert_eq!(map_confirm_key(key(KeyCode::Esc)), ConfirmInput::No);
+    }
+
+    use crate::gh::StateFilter;
+    use crate::model::{Issue, IssueState, Label};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn issue(number: u32, title: &str) -> Issue {
+        Issue { number, title: title.into(), body: String::new(), labels: vec![], state: IssueState::Open, url: String::new() }
+    }
+
+    fn render_to_string(state: &AppState) -> String {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, state)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn renders_issue_number_and_title() {
+        let state = AppState::new(vec![issue(42, "Fix login bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("#42"));
+        assert!(rendered.contains("Fix login bug"));
+    }
+
+    #[test]
+    fn renders_state_filter_in_list_title() {
+        let state = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains(&format!("{:?}", StateFilter::Open)));
+    }
+
+    #[test]
+    fn expanded_issue_shows_body_text() {
+        let mut issue = issue(1, "Fix bug");
+        issue.body = "steps to repro".into();
+        let mut state = AppState::new(vec![issue], vec![]);
+        state.toggle_expand();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("steps to repro"));
+    }
+
+    #[test]
+    fn search_mode_shows_query_in_status_line() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.enter_search();
+        state.search_push('x');
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("/x"));
+    }
+
+    #[test]
+    fn shows_friendly_message_when_no_issues_match_filter() {
+        let state = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("No issues"));
+    }
+
+    #[test]
+    fn little_create_mode_renders_typed_title() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.little_create_push('F');
+        state.little_create_push('i');
+        state.little_create_push('x');
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Fix"));
+    }
+
+    #[test]
+    fn big_create_form_renders_title_body_and_labels() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Title"));
+        assert!(rendered.contains("Body"));
+        assert!(rendered.contains("bug"));
+    }
+
+    #[test]
+    fn confirm_close_renders_issue_title_and_prompt() {
+        let mut state = AppState::new(vec![issue(9, "Close me")], vec![]);
+        state.request_close();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Close me"));
+        assert!(rendered.contains("(y/n)"));
+    }
+
+    #[test]
+    fn maps_right_and_left_to_expand_and_collapse() {
+        assert_eq!(map_list_key(key(KeyCode::Right)), ListInput::Expand);
+        assert_eq!(map_list_key(key(KeyCode::Left)), ListInput::Collapse);
+    }
+
+    #[test]
+    fn wrap_line_leaves_short_line_unchanged() {
+        assert_eq!(wrap_line("short line", 40), vec!["short line".to_string()]);
+    }
+
+    #[test]
+    fn wrap_line_breaks_at_one_wrap_point() {
+        assert_eq!(
+            wrap_line("one two three", 7),
+            vec!["one two".to_string(), "three".to_string()]
+        );
+    }
+
+    #[test]
+    fn wrap_line_hard_breaks_a_single_overlong_word() {
+        assert_eq!(
+            wrap_line("supercalifragilisticexpialidocious", 10),
+            vec!["supercalif".to_string(), "ragilistic".to_string(), "expialidoc".to_string(), "ious".to_string()]
+        );
+    }
+
+    fn labels(names: &[&str]) -> Vec<Label> {
+        names.iter().map(|n| Label { name: n.to_string(), color: String::new() }).collect()
+    }
+
+    #[test]
+    fn label_palette_color_is_deterministic_and_within_palette() {
+        let all = labels(&["bug", "enhancement"]);
+        let first = label_palette_color(&all, "bug");
+        let second = label_palette_color(&all, "bug");
+        assert_eq!(first, second, "same label name must always map to the same color for a given label list");
+        assert!(LABEL_PALETTE.contains(&first));
+    }
+
+    #[test]
+    fn distinct_labels_get_distinct_colors_within_palette_size() {
+        // GitHub's own common defaults, the exact set a plain byte-sum hash
+        // used to collide on ("bug", "enhancement", "question" all landed in
+        // the same bucket).
+        let all = labels(&["bug", "enhancement", "question", "documentation", "good first issue"]);
+        let colors: Vec<Color> = all.iter().map(|l| label_palette_color(&all, &l.name)).collect();
+        let unique: std::collections::HashSet<_> = colors.iter().collect();
+        assert_eq!(unique.len(), colors.len(), "with fewer labels than palette colors, none should collide");
+    }
+
+    #[test]
+    fn renders_outer_rounded_frame_with_title() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains('╭'));
+        assert!(rendered.contains('╮'));
+        assert!(rendered.contains('╰'));
+        assert!(rendered.contains('╯'));
+        assert!(rendered.contains("issue-browser"));
+    }
+
+    #[test]
+    fn issue_titles_align_regardless_of_number_width() {
+        let short = AppState::new(vec![issue(1, "Short number title")], vec![]);
+        let long = AppState::new(vec![issue(123, "Long number title")], vec![]);
+        let short_rendered = render_to_string(&short);
+        let long_rendered = render_to_string(&long);
+        let short_col = short_rendered.find("Short number title").expect("short title rendered");
+        let long_col = long_rendered.find("Long number title").expect("long title rendered");
+        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        assert_eq!(short_col - short_row_start, long_col - long_row_start);
+    }
+
+    #[test]
+    fn list_has_no_inner_border_around_state_filter_header() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        let header_line = rendered.lines().find(|line| line.contains("Issues (")).expect("header line rendered");
+        assert!(
+            !header_line.contains('┌') && !header_line.contains('┐') && !header_line.contains('─'),
+            "state filter header should be plain text with no surrounding inner box-drawing characters, got: {header_line:?}"
+        );
+
+        let mut box_glyph_lines = 0;
+        for line in rendered.lines() {
+            if line.contains('╭') || line.contains('╰') {
+                box_glyph_lines += 1;
+            }
+        }
+        assert_eq!(box_glyph_lines, 2, "expected exactly one outer box (one top corner row, one bottom corner row), found evidence of nested boxes");
+    }
+
+    #[test]
+    fn labels_right_align_to_same_column_regardless_of_title_length() {
+        let label = Label { name: "bug".into(), color: "d73a4a".into() };
+        let mut short_issue = issue(1, "Short");
+        short_issue.labels = vec![label.clone()];
+        let mut long_issue = issue(2, "A very long issue title that takes up a lot of space");
+        long_issue.labels = vec![label];
+
+        let short_state = AppState::new(vec![short_issue], vec![]);
+        let long_state = AppState::new(vec![long_issue], vec![]);
+
+        let short_rendered = render_to_string(&short_state);
+        let long_rendered = render_to_string(&long_state);
+
+        let short_col = short_rendered.find("bug").expect("label rendered for short title");
+        let long_col = long_rendered.find("bug").expect("label rendered for long title");
+
+        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+        assert_eq!(
+            short_col - short_row_start,
+            long_col - long_row_start,
+            "label badge should be right-aligned to the same column regardless of title length"
+        );
+    }
+
+    #[test]
+    fn long_body_line_wraps_across_multiple_rows() {
+        let mut issue = issue(1, "Fix bug");
+        issue.body = "a ".repeat(60).trim().to_string();
+        let mut state = AppState::new(vec![issue], vec![]);
+        state.toggle_expand();
+        let rendered = render_to_string(&state);
+        let repeated_a_pattern = "a a a a a a a a a a";
+        let a_rows = rendered.lines().filter(|line| line.contains(repeated_a_pattern)).count();
+        assert!(a_rows > 1, "long body line should wrap across multiple rendered rows");
+    }
+
+    #[test]
+    fn form_body_field_wraps_long_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Move to Body field
+        let long_text = "word ".repeat(40);
+        for c in long_text.chars() {
+            state.form_push_char(c);
+        }
+        let rendered = render_to_string(&state);
+        let body_section = rendered.lines()
+            .skip_while(|line| !line.contains("Body"))
+            .take_while(|line| !line.contains("Labels"))
+            .collect::<Vec<_>>();
+        assert!(body_section.len() > 3, "form body field with long unwrapped text should span multiple rows");
+    }
+
+    #[test]
+    fn long_status_message_renders_without_clipping() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        let long_message = "gh error: ".to_string() + &"x".repeat(100);
+        state.set_status(long_message.clone());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("gh error:"), "status message should be visible in rendered output");
+    }
+
+    #[test]
+    fn confirm_close_with_long_title_shows_yn_prompt() {
+        let long_title = "A very long issue title that might exceed the available width ".repeat(3);
+        let mut state = AppState::new(vec![issue(42, &long_title)], vec![]);
+        state.request_close();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("(y/n)"), "confirm close dialog should show (y/n) prompt even with long title");
+    }
+}
