@@ -2,7 +2,7 @@ use crate::model::{AppState, FormField, Mode};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -327,7 +327,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
     );
 
     frame.render_widget(
-        Paragraph::new(form.body.as_str()).block(
+        Paragraph::new(form.body.as_str()).wrap(Wrap { trim: false }).block(
             Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body)),
         ),
         chunks[1],
@@ -668,5 +668,22 @@ mod tests {
         let repeated_a_pattern = "a a a a a a a a a a";
         let a_rows = rendered.lines().filter(|line| line.contains(repeated_a_pattern)).count();
         assert!(a_rows > 1, "long body line should wrap across multiple rendered rows");
+    }
+
+    #[test]
+    fn form_body_field_wraps_long_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Move to Body field
+        let long_text = "word ".repeat(40);
+        for c in long_text.chars() {
+            state.form_push_char(c);
+        }
+        let rendered = render_to_string(&state);
+        let body_section = rendered.lines()
+            .skip_while(|line| !line.contains("Body"))
+            .take_while(|line| !line.contains("Labels"))
+            .collect::<Vec<_>>();
+        assert!(body_section.len() > 3, "form body field with long unwrapped text should span multiple rows");
     }
 }
