@@ -1,0 +1,27 @@
+# AGENTS.md
+
+Orientation for agents and humans working on issue-browser. This file holds
+durable intent and conventions, not a file-by-file map (that goes stale).
+Read the source for current structure.
+
+## What this is
+
+issue-browser is a terminal UI for browsing, searching, creating, editing, and
+closing GitHub issues in the repo sitting in the current directory. It is a
+standalone compiled binary that tmux launches on demand via `tmux popup -E`;
+it is not a tmux plugin and runs no background process. Same architectural
+family as its sibling project, [rolomux](https://github.com/jeffdt/smux)
+(formerly `smux`).
+
+## Durable design decisions
+
+- **Mock up visual/rendering changes before writing the spec.** When a design
+  discussion touches how something renders (colors, layout, new
+  glyphs/columns), don't rely on a text description alone — render an ANSI
+  mockup (a small script with `printf`/`echo -e` escape codes, not the real
+  binary) in a new tmux window via `mux spawn --workspace caller`, so Jeff can
+  look at it before design gets locked in. Skip this for changes with no
+  visual surface (model/logic-only work).
+- **Named ANSI colors only.** Use the 16 named terminal colors (e.g.
+  `Color::Cyan`, `Color::DarkGray`), never `Color::Rgb`. This is what lets the
+  picker inherit the user's terminal theme rather than imposing fixed colors.
