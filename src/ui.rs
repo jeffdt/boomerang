@@ -184,27 +184,42 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 const BODY_INDENT: &str = "    ";
 
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    let header = format!("Issues ({:?})", state.state_filter);
+    frame.render_widget(Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)), chunks[0]);
+    let list_area = chunks[1];
+
     let visible = state.visible_indices();
     if visible.is_empty() {
         let message = format!("No issues found for state filter {:?}", state.state_filter);
-        let list = List::new(vec![ListItem::new(message)])
-            .block(Block::default().borders(Borders::ALL).title("Issues"));
-        frame.render_widget(list, area);
+        frame.render_widget(List::new(vec![ListItem::new(message)]), list_area);
         return;
     }
-    let inner_width = area.width.saturating_sub(2) as usize;
-    let max_body_width = inner_width.saturating_sub(BODY_INDENT.len());
+    let available_width = list_area.width as usize;
+    let max_body_width = available_width.saturating_sub(BODY_INDENT.len());
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
-        let mut spans =
-            vec![Span::raw(format!("{:<6}", format!("#{}", issue.number))), Span::raw(issue.title.clone())];
-        for label in &issue.labels {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!(" {} ", label.name),
-                Style::default().bg(label_palette_color(&label.name)).fg(Color::Black),
-            ));
+        let left = format!("{:<6}{}", format!("#{}", issue.number), issue.title);
+        let mut spans = vec![Span::raw(left.clone())];
+        if !issue.labels.is_empty() {
+            let labels_width: usize =
+                issue.labels.iter().map(|label| label.name.chars().count() + 3).sum::<usize>() - 1;
+            let left_width = left.chars().count();
+            let pad = available_width.saturating_sub(left_width).saturating_sub(labels_width);
+            spans.push(Span::raw(" ".repeat(pad)));
+            for (i, label) in issue.labels.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                spans.push(Span::styled(
+                    format!(" {} ", label.name),
+                    Style::default().bg(label_palette_color(&label.name)).fg(Color::Black),
+                ));
+            }
         }
         let style = if row == state.cursor {
             Style::default().add_modifier(Modifier::REVERSED)
@@ -224,9 +239,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             }
         }
     }
-    let title = format!("Issues ({:?})", state.state_filter);
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
-    frame.render_widget(list, area);
+    frame.render_widget(List::new(items), list_area);
 }
 
 /// Word-wrap `line` into chunks no wider than `max_width`, breaking on
@@ -590,6 +603,52 @@ mod tests {
         let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
         let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
         assert_eq!(short_col - short_row_start, long_col - long_row_start);
+    }
+
+    #[test]
+    fn list_has_no_inner_border_around_state_filter_header() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        let header_line = rendered.lines().find(|line| line.contains("Issues (")).expect("header line rendered");
+        assert!(
+            !header_line.contains('┌') && !header_line.contains('┐') && !header_line.contains('─'),
+            "state filter header should be plain text with no surrounding inner box-drawing characters, got: {header_line:?}"
+        );
+
+        let mut box_glyph_lines = 0;
+        for line in rendered.lines() {
+            if line.contains('╭') || line.contains('╰') {
+                box_glyph_lines += 1;
+            }
+        }
+        assert_eq!(box_glyph_lines, 2, "expected exactly one outer box (one top corner row, one bottom corner row), found evidence of nested boxes");
+    }
+
+    #[test]
+    fn labels_right_align_to_same_column_regardless_of_title_length() {
+        let label = Label { name: "bug".into(), color: "d73a4a".into() };
+        let mut short_issue = issue(1, "Short");
+        short_issue.labels = vec![label.clone()];
+        let mut long_issue = issue(2, "A very long issue title that takes up a lot of space");
+        long_issue.labels = vec![label];
+
+        let short_state = AppState::new(vec![short_issue], vec![]);
+        let long_state = AppState::new(vec![long_issue], vec![]);
+
+        let short_rendered = render_to_string(&short_state);
+        let long_rendered = render_to_string(&long_state);
+
+        let short_col = short_rendered.find("bug").expect("label rendered for short title");
+        let long_col = long_rendered.find("bug").expect("label rendered for long title");
+
+        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+        assert_eq!(
+            short_col - short_row_start,
+            long_col - long_row_start,
+            "label badge should be right-aligned to the same column regardless of title length"
+        );
     }
 
     #[test]
