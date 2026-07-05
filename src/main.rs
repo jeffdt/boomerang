@@ -122,6 +122,7 @@ fn event_loop(
                     ListInput::CopyReference => copy_selected(state, copy::format_reference),
                     ListInput::CopyMarkdownLink => copy_selected(state, copy::format_markdown_link),
                     ListInput::CopyUrl => copy_selected(state, copy::format_url),
+                    ListInput::OpenInBrowser => open_in_browser(state),
                     ListInput::Quit => return Ok(()),
                     ListInput::None => {}
                 },
@@ -206,6 +207,16 @@ fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String)
         match copy::copy_to_clipboard(&text) {
             Ok(()) => state.set_status(format!("copied: {text}")),
             Err(e) => state.set_status(format!("copy failed: {e}")),
+        }
+    }
+}
+
+fn open_in_browser(state: &mut AppState) {
+    if let Some(issue) = state.selected_issue() {
+        let url = issue.url.clone();
+        match std::process::Command::new("open").arg(&url).status() {
+            Ok(_) => state.set_status(format!("opened: {url}")),
+            Err(e) => state.set_status(format!("failed to open: {e}")),
         }
     }
 }

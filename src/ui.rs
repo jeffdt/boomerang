@@ -27,6 +27,7 @@ pub enum ListInput {
     CopyReference,
     CopyMarkdownLink,
     CopyUrl,
+    OpenInBrowser,
     Quit,
     None,
 }
@@ -44,6 +45,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('C') => ListInput::BigCreate,
         KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('x') => ListInput::RequestClose,
+        KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -288,7 +290,7 @@ fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = match &state.mode {
         Mode::Search => format!("/{}", state.search_query),
-        _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  y/Y/^y copy  q quit".to_string(),
+        _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
     };
     frame.render_widget(Paragraph::new(text), area);
 }
@@ -394,6 +396,11 @@ mod tests {
     fn maps_ctrl_y_to_copy_url() {
         let k = key_with(KeyCode::Char('y'), KeyModifiers::CONTROL);
         assert_eq!(map_list_key(k), ListInput::CopyUrl);
+    }
+
+    #[test]
+    fn maps_lowercase_o_to_open_in_browser() {
+        assert_eq!(map_list_key(key(KeyCode::Char('o'))), ListInput::OpenInBrowser);
     }
 
     #[test]
