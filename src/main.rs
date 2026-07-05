@@ -100,7 +100,7 @@ fn event_loop(
             if key.kind != event::KeyEventKind::Press {
                 continue;
             }
-            match state.mode.clone() {
+            match &state.mode {
                 Mode::List => match map_list_key(key) {
                     ListInput::Down => state.move_cursor(1),
                     ListInput::Up => state.move_cursor(-1),
@@ -109,11 +109,8 @@ fn event_loop(
                     ListInput::Collapse => state.collapse_selected(),
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
-                        let filter = state.cycle_state_filter();
-                        match source.list(filter) {
-                            Ok(issues) => state.set_issues(issues),
-                            Err(e) => state.set_status(format!("gh error: {e}")),
-                        }
+                        state.cycle_state_filter();
+                        refresh(state, source);
                     }
                     ListInput::LittleCreate => state.enter_little_create(),
                     ListInput::BigCreate => state.enter_big_create(),
@@ -139,51 +136,49 @@ fn event_loop(
                     LittleCreateInput::Backspace => state.little_create_backspace(),
                     LittleCreateInput::Submit => {
                         if let Some(title) = state.little_create_submit() {
-                            match source.create(&title, "", &[]) {
-                                Ok(()) => refresh(state, source),
-                                Err(e) => state.set_status(format!("gh error: {e}")),
-                            }
+                            let result = source.create(&title, "", &[]);
+                            apply_result(state, source, result);
                         }
                     }
                     LittleCreateInput::Cancel => state.cancel_form_or_create(),
                     LittleCreateInput::None => {}
                 },
-                Mode::Form(form) => match map_form_key(key, form.field) {
-                    FormInput::Char(c) => state.form_push_char(c),
-                    FormInput::Backspace => state.form_backspace(),
-                    FormInput::NextField => state.form_next_field(),
-                    FormInput::PrevField => state.form_prev_field(),
-                    FormInput::MoveUp => state.form_move_label_cursor(-1),
-                    FormInput::MoveDown => state.form_move_label_cursor(1),
-                    FormInput::ToggleLabel => state.form_toggle_label(),
-                    FormInput::Cancel => state.cancel_form_or_create(),
-                    FormInput::Enter => {
-                        if let Some(submission) = state.form_enter() {
-                            let result = match submission.editing {
-                                Some(number) => source.edit(
-                                    number,
-                                    &submission.title,
-                                    &submission.body,
-                                    &submission.add_labels,
-                                    &submission.remove_labels,
-                                ),
-                                None => source.create(&submission.title, &submission.body, &submission.add_labels),
-                            };
-                            match result {
-                                Ok(()) => refresh(state, source),
-                                Err(e) => state.set_status(format!("gh error: {e}")),
+                Mode::Form(form) => {
+                    let field = form.field;
+                    match map_form_key(key, field) {
+                        FormInput::Char(c) => state.form_push_char(c),
+                        FormInput::Backspace => state.form_backspace(),
+                        FormInput::NextField => state.form_next_field(),
+                        FormInput::PrevField => state.form_prev_field(),
+                        FormInput::MoveUp => state.form_move_label_cursor(-1),
+                        FormInput::MoveDown => state.form_move_label_cursor(1),
+                        FormInput::ToggleLabel => state.form_toggle_label(),
+                        FormInput::Cancel => state.cancel_form_or_create(),
+                        FormInput::Enter => {
+                            if let Some(submission) = state.form_enter() {
+                                let result = match submission.editing {
+                                    Some(number) => source.edit(
+                                        number,
+                                        &submission.title,
+                                        &submission.body,
+                                        &submission.add_labels,
+                                        &submission.remove_labels,
+                                    ),
+                                    None => {
+                                        source.create(&submission.title, &submission.body, &submission.add_labels)
+                                    }
+                                };
+                                apply_result(state, source, result);
                             }
                         }
+                        FormInput::None => {}
                     }
-                    FormInput::None => {}
-                },
+                }
                 Mode::ConfirmClose(_) => match map_confirm_key(key) {
                     ConfirmInput::Yes => {
                         if let Some(number) = state.confirm_close_yes() {
-                            match source.close(number) {
-                                Ok(()) => refresh(state, source),
-                                Err(e) => state.set_status(format!("gh error: {e}")),
-                            }
+                            let result = source.close(number);
+                            apply_result(state, source, result);
                         }
                     }
                     ConfirmInput::No => state.confirm_close_no(),
@@ -197,6 +192,16 @@ fn event_loop(
 fn refresh(state: &mut AppState, source: &impl IssueSource) {
     match source.list(state.state_filter) {
         Ok(issues) => state.set_issues(issues),
+        Err(e) => state.set_status(format!("gh error: {e}")),
+    }
+}
+
+/// Refresh the issue list on success, or surface the error on the toast line.
+/// Shared by every mutating action (create/edit/close) since they all react
+/// to their `gh` call's result the same way.
+fn apply_result(state: &mut AppState, source: &impl IssueSource, result: anyhow::Result<()>) {
+    match result {
+        Ok(()) => refresh(state, source),
         Err(e) => state.set_status(format!("gh error: {e}")),
     }
 }

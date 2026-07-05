@@ -1,4 +1,4 @@
-use crate::model::{AppState, FormField, Mode};
+use crate::model::{AppState, FormField, Label, Mode};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -208,20 +208,27 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         let left = format!("{:<6}{}", format!("#{}", issue.number), issue.title);
         let mut spans = vec![Span::raw(left.clone())];
         if !issue.labels.is_empty() {
-            let labels_width: usize =
-                issue.labels.iter().map(|label| label.name.chars().count() + 3).sum::<usize>() - 1;
+            // Tally the labels' rendered width in the same pass that builds their
+            // spans, so the padding calculation can never drift from what's
+            // actually drawn (no separate width formula to keep in sync).
+            let mut label_spans = Vec::new();
+            let mut labels_width = 0usize;
+            for (i, label) in issue.labels.iter().enumerate() {
+                if i > 0 {
+                    label_spans.push(Span::raw(" "));
+                    labels_width += 1;
+                }
+                let badge = format!(" {} ", label.name);
+                labels_width += badge.chars().count();
+                label_spans.push(Span::styled(
+                    badge,
+                    Style::default().bg(label_palette_color(&state.all_labels, &label.name)).fg(Color::Black),
+                ));
+            }
             let left_width = left.chars().count();
             let pad = available_width.saturating_sub(left_width).saturating_sub(labels_width);
             spans.push(Span::raw(" ".repeat(pad)));
-            for (i, label) in issue.labels.iter().enumerate() {
-                if i > 0 {
-                    spans.push(Span::raw(" "));
-                }
-                spans.push(Span::styled(
-                    format!(" {} ", label.name),
-                    Style::default().bg(label_palette_color(&label.name)).fg(Color::Black),
-                ));
-            }
+            spans.extend(label_spans);
         }
         let style = if row == state.cursor {
             Style::default().add_modifier(Modifier::REVERSED)
@@ -300,12 +307,15 @@ fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
 
-/// Deterministically assign a label a color from `LABEL_PALETTE` by hashing
-/// its name (not its hex), so the same label name always renders the same
-/// named ANSI color across sessions without persisting any assignment.
-fn label_palette_color(name: &str) -> Color {
-    let sum: usize = name.bytes().map(|b| b as usize).sum();
-    LABEL_PALETTE[sum % LABEL_PALETTE.len()]
+/// Assign a label a color from `LABEL_PALETTE` by its position in the repo's
+/// full label list (fetched once at startup), cycling through the palette.
+/// No persisted assignment and no hashing: `all_labels` is already stable
+/// for the session, so the same name gets the same color for as long as the
+/// popup is open, and colors are free to shift across launches as labels are
+/// added/removed on the repo.
+fn label_palette_color(all_labels: &[Label], name: &str) -> Color {
+    let index = all_labels.iter().position(|l| l.name == name).unwrap_or(0);
+    LABEL_PALETTE[index % LABEL_PALETTE.len()]
 }
 
 fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
@@ -364,7 +374,7 @@ fn field_style(focused: bool) -> Style {
 }
 
 fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppState) {
-    let title = state.issues.iter().find(|i| i.number == number).map(|i| i.title.as_str()).unwrap_or("");
+    let title = state.find_issue(number).map(|i| i.title.as_str()).unwrap_or("");
     let text = format!("Close #{number}: {title}? (y/n)");
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
 }
@@ -575,17 +585,28 @@ mod tests {
         );
     }
 
+    fn labels(names: &[&str]) -> Vec<Label> {
+        names.iter().map(|n| Label { name: n.to_string(), color: String::new() }).collect()
+    }
+
     #[test]
     fn label_palette_color_is_deterministic_and_within_palette() {
-        let first = label_palette_color("bug");
-        let second = label_palette_color("bug");
-        assert_eq!(first, second, "same label name must always map to the same color");
+        let all = labels(&["bug", "enhancement"]);
+        let first = label_palette_color(&all, "bug");
+        let second = label_palette_color(&all, "bug");
+        assert_eq!(first, second, "same label name must always map to the same color for a given label list");
         assert!(LABEL_PALETTE.contains(&first));
     }
 
     #[test]
-    fn label_palette_color_does_not_depend_on_hex() {
-        assert_eq!(label_palette_color("bug"), label_palette_color("bug"));
+    fn distinct_labels_get_distinct_colors_within_palette_size() {
+        // GitHub's own common defaults, the exact set a plain byte-sum hash
+        // used to collide on ("bug", "enhancement", "question" all landed in
+        // the same bucket).
+        let all = labels(&["bug", "enhancement", "question", "documentation", "good first issue"]);
+        let colors: Vec<Color> = all.iter().map(|l| label_palette_color(&all, &l.name)).collect();
+        let unique: std::collections::HashSet<_> = colors.iter().collect();
+        assert_eq!(unique.len(), colors.len(), "with fewer labels than palette colors, none should collide");
     }
 
     #[test]

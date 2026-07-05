@@ -103,6 +103,10 @@ impl AppState {
         visible.get(self.cursor).and_then(|&i| self.issues.get(i))
     }
 
+    pub fn find_issue(&self, number: u32) -> Option<&Issue> {
+        self.issues.iter().find(|i| i.number == number)
+    }
+
     pub fn move_cursor(&mut self, delta: isize) {
         let len = self.visible_indices().len();
         if len == 0 {
@@ -228,7 +232,7 @@ impl AppState {
 
     fn new_form_state(&self, editing: Option<u32>) -> FormState {
         let all_label_names: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
-        let (title, body, selected_labels) = match editing.and_then(|n| self.issues.iter().find(|i| i.number == n)) {
+        let (title, body, selected_labels) = match editing.and_then(|n| self.find_issue(n)) {
             Some(issue) => (
                 issue.title.clone(),
                 issue.body.clone(),
@@ -333,22 +337,18 @@ impl AppState {
             }
             FormField::Labels => {
                 let original: HashSet<String> = editing
-                    .and_then(|n| self.issues.iter().find(|i| i.number == n))
+                    .and_then(|n| self.find_issue(n))
                     .map(|issue| issue.labels.iter().map(|l| l.name.clone()).collect())
                     .unwrap_or_default();
-                let form = match &self.mode {
-                    Mode::Form(form) => form.clone(),
+                let (title, body, add_labels, remove_labels) = match &self.mode {
+                    Mode::Form(form) => {
+                        let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
+                        let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
+                        (form.title.clone(), form.body.clone(), add_labels, remove_labels)
+                    }
                     _ => return None,
                 };
-                let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
-                let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
-                let submission = FormSubmission {
-                    editing: form.editing,
-                    title: form.title.clone(),
-                    body: form.body.clone(),
-                    add_labels,
-                    remove_labels,
-                };
+                let submission = FormSubmission { editing, title, body, add_labels, remove_labels };
                 self.mode = Mode::List;
                 Some(submission)
             }
