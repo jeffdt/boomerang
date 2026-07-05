@@ -119,6 +119,8 @@ fn event_loop(
                 Mode::Search => match map_search_key(key) {
                     SearchInput::Char(c) => state.search_push(c),
                     SearchInput::Backspace => state.search_backspace(),
+                    SearchInput::DeleteWord => state.search_delete_word(),
+                    SearchInput::Clear => state.search_clear(),
                     SearchInput::Exit => state.exit_search(),
                     SearchInput::None => {}
                 },

@@ -47,15 +47,21 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
 pub enum SearchInput {
     Char(char),
     Backspace,
+    DeleteWord,
+    Clear,
     Exit,
     None,
 }
 
 pub fn map_search_key(key: KeyEvent) -> SearchInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char(c) => SearchInput::Char(c),
+        KeyCode::Esc | KeyCode::Enter => SearchInput::Exit,
         KeyCode::Backspace => SearchInput::Backspace,
-        KeyCode::Enter | KeyCode::Esc => SearchInput::Exit,
+        KeyCode::Char('w') if ctrl => SearchInput::DeleteWord,
+        KeyCode::Char('u') if ctrl => SearchInput::Clear,
+        KeyCode::Char(_) if ctrl => SearchInput::None,
+        KeyCode::Char(c) => SearchInput::Char(c),
         _ => SearchInput::None,
     }
 }
@@ -303,6 +309,29 @@ mod tests {
         assert_eq!(map_search_key(key(KeyCode::Enter)), SearchInput::Exit);
         assert_eq!(map_search_key(key(KeyCode::Esc)), SearchInput::Exit);
         assert_eq!(map_search_key(key(KeyCode::Char('x'))), SearchInput::Char('x'));
+    }
+
+    #[test]
+    fn search_key_mapping_swallows_ctrl_chars() {
+        let ctrl_h = key_with(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_h), SearchInput::None);
+    }
+
+    #[test]
+    fn search_key_mapping_handles_ctrl_u_as_clear() {
+        let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_u), SearchInput::Clear);
+    }
+
+    #[test]
+    fn search_key_mapping_handles_ctrl_w_as_delete_word() {
+        let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(map_search_key(ctrl_w), SearchInput::DeleteWord);
+    }
+
+    #[test]
+    fn search_key_mapping_plain_char_unaffected() {
+        assert_eq!(map_search_key(key(KeyCode::Char('h'))), SearchInput::Char('h'));
     }
 
     #[test]

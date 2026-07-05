@@ -156,6 +156,21 @@ impl AppState {
         self.recompute_search();
     }
 
+    pub fn search_delete_word(&mut self) {
+        while !self.search_query.is_empty() && self.search_query.ends_with(' ') {
+            self.search_query.pop();
+        }
+        while !self.search_query.is_empty() && !self.search_query.ends_with(' ') {
+            self.search_query.pop();
+        }
+        self.recompute_search();
+    }
+
+    pub fn search_clear(&mut self) {
+        self.search_query.clear();
+        self.recompute_search();
+    }
+
     pub fn exit_search(&mut self) {
         if let Some(&idx) = self.search_ranked.get(self.cursor) {
             self.cursor = idx;
@@ -398,6 +413,31 @@ mod tests {
         state.exit_search();
         assert_eq!(state.cursor, 1, "cursor lands on issue 2's absolute index in the full list");
         assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn search_delete_word_removes_last_word() {
+        let mut state = AppState::new(vec![issue(1, "fix login error")], vec![]);
+        state.enter_search();
+        for c in "fix login".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(state.search_query, "fix login");
+        state.search_delete_word();
+        assert_eq!(state.search_query, "fix ");
+    }
+
+    #[test]
+    fn search_clear_empties_query() {
+        let mut state = AppState::new(vec![issue(1, "test")], vec![]);
+        state.enter_search();
+        for c in "test query".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(state.search_query, "test query");
+        state.search_clear();
+        assert_eq!(state.search_query, "");
+        assert_eq!(state.search_ranked.len(), 1, "resets ranking to show all issues");
     }
 
     #[test]
