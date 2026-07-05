@@ -292,12 +292,12 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         Mode::Search => format!("/{}", state.search_query),
         _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
     };
-    frame.render_widget(Paragraph::new(text), area);
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = state.status.as_ref().map(|(msg, _)| msg.as_str()).unwrap_or("");
-    frame.render_widget(Paragraph::new(text), area);
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
 
 /// Deterministically assign a label a color from `LABEL_PALETTE` by hashing
@@ -366,7 +366,7 @@ fn field_style(focused: bool) -> Style {
 fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppState) {
     let title = state.issues.iter().find(|i| i.number == number).map(|i| i.title.as_str()).unwrap_or("");
     let text = format!("Close #{number}: {title}? (y/n)");
-    frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
 }
 
 #[cfg(test)]
@@ -685,5 +685,23 @@ mod tests {
             .take_while(|line| !line.contains("Labels"))
             .collect::<Vec<_>>();
         assert!(body_section.len() > 3, "form body field with long unwrapped text should span multiple rows");
+    }
+
+    #[test]
+    fn long_status_message_renders_without_clipping() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        let long_message = "gh error: ".to_string() + &"x".repeat(100);
+        state.set_status(long_message.clone());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("gh error:"), "status message should be visible in rendered output");
+    }
+
+    #[test]
+    fn confirm_close_with_long_title_shows_yn_prompt() {
+        let long_title = "A very long issue title that might exceed the available width ".repeat(3);
+        let mut state = AppState::new(vec![issue(42, &long_title)], vec![]);
+        state.request_close();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("(y/n)"), "confirm close dialog should show (y/n) prompt even with long title");
     }
 }
