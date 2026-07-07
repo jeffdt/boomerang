@@ -18,8 +18,12 @@ Then add a keybind to `~/.tmux.conf`, pointing at the built binary (or a copy
 on your `PATH`):
 
 ```tmux
-bind i display-popup -E -B -w 84 -h 60% "exec issue-browser"
+bind i display-popup -E -B -d "#{pane_current_path}" -w 84 -h 60% "exec issue-browser"
 ```
+
+The `-d "#{pane_current_path}"` matters: without it, `display-popup` doesn't
+reliably inherit the current pane's working directory, so `gh` ends up
+running outside your repo and the popup exits (and closes) immediately.
 
 Reload tmux and press `prefix + i`. Popup dimensions are a starting point,
 not fixed — the create/edit form may want more vertical room than the list
