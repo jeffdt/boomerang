@@ -35,6 +35,7 @@ mod tests {
             labels: vec![],
             state: IssueState::Open,
             url: "https://github.com/owner/repo/issues/123".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 

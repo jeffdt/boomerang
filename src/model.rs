@@ -18,6 +18,7 @@ pub struct Issue {
     pub labels: Vec<Label>,
     pub state: IssueState,
     pub url: String,
+    pub created_at: String,
 }
 
 use crate::gh::StateFilter;
@@ -70,10 +71,10 @@ pub struct AppState {
     pub state_filter: StateFilter,
     pub mode: Mode,
     pub cursor: usize,
-    pub expanded: HashSet<u32>,
     pub search_query: String,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, Instant)>,
+    pub pane_open: bool,
 }
 
 impl AppState {
@@ -84,10 +85,10 @@ impl AppState {
             state_filter: StateFilter::Open,
             mode: Mode::List,
             cursor: 0,
-            expanded: HashSet::new(),
             search_query: String::new(),
             search_ranked: Vec::new(),
             status: None,
+            pane_open: false,
         }
     }
 
@@ -118,24 +119,8 @@ impl AppState {
         self.cursor = next as usize;
     }
 
-    pub fn toggle_expand(&mut self) {
-        if let Some(number) = self.selected_issue().map(|i| i.number) {
-            if !self.expanded.remove(&number) {
-                self.expanded.insert(number);
-            }
-        }
-    }
-
-    pub fn expand_selected(&mut self) {
-        if let Some(number) = self.selected_issue().map(|i| i.number) {
-            self.expanded.insert(number);
-        }
-    }
-
-    pub fn collapse_selected(&mut self) {
-        if let Some(number) = self.selected_issue().map(|i| i.number) {
-            self.expanded.remove(&number);
-        }
+    pub fn toggle_pane(&mut self) {
+        self.pane_open = !self.pane_open;
     }
 
     pub fn set_issues(&mut self, issues: Vec<Issue>) {
@@ -400,6 +385,7 @@ mod tests {
             labels: vec![],
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
+            created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -410,34 +396,6 @@ mod tests {
         assert_eq!(state.cursor, 1, "moving up from 0 wraps to the last row");
         state.move_cursor(1);
         assert_eq!(state.cursor, 0);
-    }
-
-    #[test]
-    fn toggle_expand_tracks_selected_issue_number() {
-        let mut state = AppState::new(vec![issue(1, "a"), issue(2, "b")], vec![]);
-        state.toggle_expand();
-        assert!(state.expanded.contains(&1));
-        state.toggle_expand();
-        assert!(!state.expanded.contains(&1));
-    }
-
-    #[test]
-    fn expand_selected_is_idempotent() {
-        let mut state = AppState::new(vec![issue(1, "a"), issue(2, "b")], vec![]);
-        state.expand_selected();
-        assert!(state.expanded.contains(&1));
-        state.expand_selected();
-        assert!(state.expanded.contains(&1), "expanding an already-expanded issue is a no-op");
-    }
-
-    #[test]
-    fn collapse_selected_is_idempotent() {
-        let mut state = AppState::new(vec![issue(1, "a"), issue(2, "b")], vec![]);
-        state.collapse_selected();
-        assert!(!state.expanded.contains(&1), "collapsing a not-expanded issue is a no-op");
-        state.expand_selected();
-        state.collapse_selected();
-        assert!(!state.expanded.contains(&1));
     }
 
     #[test]
@@ -641,5 +599,15 @@ mod tests {
         state.status = Some(("copied: #1".to_string(), set_at));
         state.clear_expired_status();
         assert!(state.status.is_none(), "a status older than STATUS_TOAST_DURATION should be cleared");
+    }
+
+    #[test]
+    fn toggle_pane_flips_the_flag_and_starts_closed() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert!(!state.pane_open, "pane should be hidden on a fresh AppState");
+        state.toggle_pane();
+        assert!(state.pane_open);
+        state.toggle_pane();
+        assert!(!state.pane_open);
     }
 }

@@ -104,9 +104,7 @@ fn event_loop(
                 Mode::List => match map_list_key(key) {
                     ListInput::Down => state.move_cursor(1),
                     ListInput::Up => state.move_cursor(-1),
-                    ListInput::ToggleExpand => state.toggle_expand(),
-                    ListInput::Expand => state.expand_selected(),
-                    ListInput::Collapse => state.collapse_selected(),
+                    ListInput::TogglePane => state.toggle_pane(),
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
                         state.cycle_state_filter();
