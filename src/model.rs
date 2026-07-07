@@ -27,6 +27,20 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
+const PENDING_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
+const PENDING_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingOperation {
+    CreateIssue,
+    EditIssue,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingState {
+    pub operation: PendingOperation,
+    pub started_at: Instant,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
@@ -74,6 +88,7 @@ pub struct AppState {
     pub search_query: String,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, Instant)>,
+    pub pending: Option<PendingState>,
     pub pane_open: bool,
 }
 
@@ -88,6 +103,7 @@ impl AppState {
             search_query: String::new(),
             search_ranked: Vec::new(),
             status: None,
+            pending: None,
             pane_open: false,
         }
     }
@@ -225,7 +241,15 @@ impl AppState {
             ),
             None => (String::new(), String::new(), HashSet::new()),
         };
-        FormState { editing, title, body, all_label_names, selected_labels, label_cursor: 0, field: FormField::Title }
+        FormState {
+            editing,
+            title,
+            body,
+            all_label_names,
+            selected_labels,
+            label_cursor: 0,
+            field: FormField::Title,
+        }
     }
 
     pub fn enter_big_create(&mut self) {
@@ -251,8 +275,12 @@ impl AppState {
     pub fn form_backspace(&mut self) {
         if let Mode::Form(form) = &mut self.mode {
             match form.field {
-                FormField::Title => { form.title.pop(); }
-                FormField::Body => { form.body.pop(); }
+                FormField::Title => {
+                    form.title.pop();
+                }
+                FormField::Body => {
+                    form.body.pop();
+                }
                 FormField::Labels => {}
             }
         }
@@ -327,13 +355,31 @@ impl AppState {
                     .unwrap_or_default();
                 let (title, body, add_labels, remove_labels) = match &self.mode {
                     Mode::Form(form) => {
-                        let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
-                        let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
-                        (form.title.clone(), form.body.clone(), add_labels, remove_labels)
+                        let add_labels: Vec<String> = form
+                            .selected_labels
+                            .difference(&original)
+                            .cloned()
+                            .collect();
+                        let remove_labels: Vec<String> = original
+                            .difference(&form.selected_labels)
+                            .cloned()
+                            .collect();
+                        (
+                            form.title.clone(),
+                            form.body.clone(),
+                            add_labels,
+                            remove_labels,
+                        )
                     }
                     _ => return None,
                 };
-                let submission = FormSubmission { editing, title, body, add_labels, remove_labels };
+                let submission = FormSubmission {
+                    editing,
+                    title,
+                    body,
+                    add_labels,
+                    remove_labels,
+                };
                 self.mode = Mode::List;
                 Some(submission)
             }
@@ -361,6 +407,36 @@ impl AppState {
 
     pub fn set_status(&mut self, message: String) {
         self.status = Some((message, Instant::now()));
+    }
+
+    pub fn begin_pending(&mut self, operation: PendingOperation) {
+        self.pending = Some(PendingState {
+            operation,
+            started_at: Instant::now(),
+        });
+    }
+
+    pub fn finish_pending(&mut self) {
+        self.pending = None;
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub fn pending_message(&self) -> Option<String> {
+        let pending = self.pending.as_ref()?;
+        let frame_index = ((pending.started_at.elapsed().as_millis()
+            / PENDING_SPINNER_INTERVAL.as_millis()) as usize)
+            % PENDING_SPINNER_FRAMES.len();
+        let action = match pending.operation {
+            PendingOperation::CreateIssue => "Creating issue",
+            PendingOperation::EditIssue => "Updating issue",
+        };
+        Some(format!(
+            "{} {action}...",
+            PENDING_SPINNER_FRAMES[frame_index]
+        ))
     }
 
     pub fn clear_expired_status(&mut self) {
@@ -400,12 +476,19 @@ mod tests {
 
     #[test]
     fn search_filters_and_ranks_by_title() {
-        let mut state = AppState::new(vec![issue(1, "a pretty big input"), issue(2, "api gateway")], vec![]);
+        let mut state = AppState::new(
+            vec![issue(1, "a pretty big input"), issue(2, "api gateway")],
+            vec![],
+        );
         state.enter_search();
         state.search_push('a');
         state.search_push('p');
         state.search_push('i');
-        assert_eq!(state.search_ranked.first().copied(), Some(1), "consecutive prefix match ranks first");
+        assert_eq!(
+            state.search_ranked.first().copied(),
+            Some(1),
+            "consecutive prefix match ranks first"
+        );
     }
 
     #[test]
@@ -415,7 +498,10 @@ mod tests {
         state.search_push('b');
         assert_eq!(state.cursor, 0, "only match is at ranked position 0");
         state.exit_search();
-        assert_eq!(state.cursor, 1, "cursor lands on issue 2's absolute index in the full list");
+        assert_eq!(
+            state.cursor, 1,
+            "cursor lands on issue 2's absolute index in the full list"
+        );
         assert_eq!(state.mode, Mode::List);
     }
 
@@ -441,7 +527,11 @@ mod tests {
         assert_eq!(state.search_query, "test query");
         state.search_clear();
         assert_eq!(state.search_query, "");
-        assert_eq!(state.search_ranked.len(), 1, "resets ranking to show all issues");
+        assert_eq!(
+            state.search_ranked.len(),
+            1,
+            "resets ranking to show all issues"
+        );
     }
 
     #[test]
@@ -470,19 +560,31 @@ mod tests {
         state.enter_little_create();
         state.little_create_push(' ');
         assert_eq!(state.little_create_submit(), None);
-        assert!(matches!(state.mode, Mode::LittleCreate(_)), "stays in create mode on blank submit");
+        assert!(
+            matches!(state.mode, Mode::LittleCreate(_)),
+            "stays in create mode on blank submit"
+        );
     }
 
     #[test]
     fn enter_edit_prefills_form_from_selected_issue() {
         let mut issue1 = issue(1, "Fix bug");
         issue1.body = "steps to repro".into();
-        issue1.labels = vec![Label { name: "bug".into(), color: "d73a4a".into() }];
+        issue1.labels = vec![Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        }];
         let mut state = AppState::new(
             vec![issue1],
             vec![
-                Label { name: "bug".into(), color: "d73a4a".into() },
-                Label { name: "docs".into(), color: "0075ca".into() },
+                Label {
+                    name: "bug".into(),
+                    color: "d73a4a".into(),
+                },
+                Label {
+                    name: "docs".into(),
+                    color: "0075ca".into(),
+                },
             ],
         );
         state.enter_edit();
@@ -492,7 +594,10 @@ mod tests {
                 assert_eq!(form.title, "Fix bug");
                 assert_eq!(form.body, "steps to repro");
                 assert!(form.selected_labels.contains("bug"));
-                assert_eq!(form.all_label_names, vec!["bug".to_string(), "docs".to_string()]);
+                assert_eq!(
+                    form.all_label_names,
+                    vec!["bug".to_string(), "docs".to_string()]
+                );
             }
             other => panic!("expected Form mode, got {other:?}"),
         }
@@ -500,7 +605,13 @@ mod tests {
 
     #[test]
     fn form_toggle_label_only_applies_when_labels_field_focused() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         state.form_toggle_label(); // field is Title, should be ignored
         if let Mode::Form(form) = &state.mode {
@@ -526,7 +637,13 @@ mod tests {
 
     #[test]
     fn form_enter_on_labels_submits_and_returns_to_list() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         state.form_push_char('T');
         state.form_next_field();
@@ -546,13 +663,28 @@ mod tests {
     fn form_enter_while_editing_diffs_labels_against_original() {
         let mut issue1 = issue(1, "Fix bug");
         issue1.labels = vec![
-            Label { name: "bug".into(), color: "d73a4a".into() },
-            Label { name: "keep".into(), color: "0075ca".into() },
+            Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            },
+            Label {
+                name: "keep".into(),
+                color: "0075ca".into(),
+            },
         ];
         let all_labels = vec![
-            Label { name: "bug".into(), color: "d73a4a".into() },
-            Label { name: "keep".into(), color: "0075ca".into() },
-            Label { name: "docs".into(), color: "0075ca".into() },
+            Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            },
+            Label {
+                name: "keep".into(),
+                color: "0075ca".into(),
+            },
+            Label {
+                name: "docs".into(),
+                color: "0075ca".into(),
+            },
         ];
         let mut state = AppState::new(vec![issue1], all_labels);
         state.enter_edit();
@@ -589,7 +721,10 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.set_status("copied: #1".to_string());
         state.clear_expired_status();
-        assert!(state.status.is_some(), "a just-set status hasn't reached the toast duration yet");
+        assert!(
+            state.status.is_some(),
+            "a just-set status hasn't reached the toast duration yet"
+        );
     }
 
     #[test]
@@ -598,13 +733,62 @@ mod tests {
         let set_at = Instant::now() - STATUS_TOAST_DURATION - Duration::from_millis(1);
         state.status = Some(("copied: #1".to_string(), set_at));
         state.clear_expired_status();
-        assert!(state.status.is_none(), "a status older than STATUS_TOAST_DURATION should be cleared");
+        assert!(
+            state.status.is_none(),
+            "a status older than STATUS_TOAST_DURATION should be cleared"
+        );
+    }
+
+    #[test]
+    fn begin_create_pending_preserves_mode_and_reports_spinner_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.begin_pending(PendingOperation::CreateIssue);
+        assert!(matches!(state.mode, Mode::LittleCreate(_)));
+        assert!(state.is_pending());
+        assert_eq!(
+            state.pending.as_ref().map(|p| p.operation),
+            Some(PendingOperation::CreateIssue)
+        );
+        assert!(state
+            .pending_message()
+            .unwrap()
+            .contains("Creating issue..."));
+    }
+
+    #[test]
+    fn begin_edit_pending_preserves_mode_and_reports_spinner_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.begin_pending(PendingOperation::EditIssue);
+        assert!(matches!(state.mode, Mode::Form(_)));
+        assert!(state.is_pending());
+        assert_eq!(
+            state.pending.as_ref().map(|p| p.operation),
+            Some(PendingOperation::EditIssue)
+        );
+        assert!(state
+            .pending_message()
+            .unwrap()
+            .contains("Updating issue..."));
+    }
+
+    #[test]
+    fn finish_pending_clears_pending_state() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        state.finish_pending();
+        assert!(!state.is_pending());
+        assert_eq!(state.pending_message(), None);
     }
 
     #[test]
     fn toggle_pane_flips_the_flag_and_starts_closed() {
         let mut state = AppState::new(vec![], vec![]);
-        assert!(!state.pane_open, "pane should be hidden on a fresh AppState");
+        assert!(
+            !state.pane_open,
+            "pane should be hidden on a fresh AppState"
+        );
         state.toggle_pane();
         assert!(state.pane_open);
         state.toggle_pane();

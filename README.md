@@ -35,6 +35,8 @@ view; adjust `-w`/`-h` to taste.
   detection — no config or `--repo` flag needed.
 - Fetches all open issues (including body and labels) in one `gh issue list`
   call, so the description pane never needs a follow-up network call.
+- Create and edit submissions run in the background with an in-place pending
+  indicator, then refresh the issue list when `gh` returns.
 - All GitHub interaction shells out to the `gh` CLI, which must be installed
   and authenticated (`gh auth login`).
 
@@ -58,6 +60,25 @@ view; adjust `-w`/`-h` to taste.
 Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
 Title → Body → submit (submitting from the Labels field).
+
+## Diagnostics
+
+Run `issue-browser --doctor` from the target repo to print cwd, git remote,
+`gh` auth, detected GitHub repo, token-env, and diagnostic logging state.
+
+`gh` follows normal environment precedence. If tmux exports `GITHUB_TOKEN`, that
+token overrides the `gh` keyring account. For personal repos where your shell has
+a work token, launch with:
+
+```sh
+env -u GITHUB_TOKEN issue-browser
+```
+
+Opt-in command diagnostics by setting `ISSUE_BROWSER_LOG=1`. Logs go to
+`~/.cache/issue-browser/issue-browser.log` by default, or to
+`ISSUE_BROWSER_LOG_PATH` when set. Logs include sanitized `gh` argv, elapsed
+milliseconds, exit status, stdout byte count, and stderr. Issue titles and bodies
+passed to `gh` are redacted.
 
 ## Disclaimer
 

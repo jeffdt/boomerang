@@ -1,7 +1,9 @@
+use crate::diagnostics;
 use crate::model::{Issue, IssueState, Label};
 use anyhow::{bail, Result};
 use serde::Deserialize;
 use std::process::Command;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateFilter {
@@ -89,7 +91,10 @@ pub fn parse_issues_json(json: &str) -> Result<Vec<Issue>> {
                 labels: r
                     .labels
                     .into_iter()
-                    .map(|l| Label { name: l.name, color: l.color })
+                    .map(|l| Label {
+                        name: l.name,
+                        color: l.color,
+                    })
                     .collect(),
                 state: parse_state(&r.state)?,
                 url: r.url,
@@ -101,7 +106,13 @@ pub fn parse_issues_json(json: &str) -> Result<Vec<Issue>> {
 
 pub fn parse_labels_json(json: &str) -> Result<Vec<Label>> {
     let raw: Vec<RawLabel> = serde_json::from_str(json)?;
-    Ok(raw.into_iter().map(|l| Label { name: l.name, color: l.color }).collect())
+    Ok(raw
+        .into_iter()
+        .map(|l| Label {
+            name: l.name,
+            color: l.color,
+        })
+        .collect())
 }
 
 pub fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<String> {
@@ -120,7 +131,13 @@ pub fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<String> {
     args
 }
 
-pub fn edit_args(number: u32, title: &str, body: &str, add_labels: &[String], remove_labels: &[String]) -> Vec<String> {
+pub fn edit_args(
+    number: u32,
+    title: &str,
+    body: &str,
+    add_labels: &[String],
+    remove_labels: &[String],
+) -> Vec<String> {
     let mut args = vec![
         "issue".into(),
         "edit".into(),
@@ -145,14 +162,22 @@ pub fn close_args(number: u32) -> Vec<String> {
     vec!["issue".into(), "close".into(), number.to_string()]
 }
 
-pub trait IssueSource {
+pub trait IssueSource: Clone + Send + 'static {
     fn list(&self, state: StateFilter) -> Result<Vec<Issue>>;
     fn labels(&self) -> Result<Vec<Label>>;
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<()>;
-    fn edit(&self, number: u32, title: &str, body: &str, add_labels: &[String], remove_labels: &[String]) -> Result<()>;
+    fn edit(
+        &self,
+        number: u32,
+        title: &str,
+        body: &str,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()>;
     fn close(&self, number: u32) -> Result<()>;
 }
 
+#[derive(Clone, Copy)]
 pub struct GhCliSource;
 
 impl GhCliSource {
@@ -161,9 +186,21 @@ impl GhCliSource {
     }
 
     fn run(&self, args: &[String]) -> Result<String> {
-        let output = Command::new("gh").args(args).output()?;
+        let started = Instant::now();
+        let output = match Command::new("gh").args(args).output() {
+            Ok(output) => output,
+            Err(e) => {
+                diagnostics::log_gh_spawn_error(args, started.elapsed(), &e);
+                return Err(e.into());
+            }
+        };
+        diagnostics::log_gh_result(args, started.elapsed(), &output);
         if !output.status.success() {
-            bail!("gh {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "gh {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -182,8 +219,16 @@ impl IssueSource for GhCliSource {
         self.run(&create_args(title, body, labels)).map(|_| ())
     }
 
-    fn edit(&self, number: u32, title: &str, body: &str, add_labels: &[String], remove_labels: &[String]) -> Result<()> {
-        self.run(&edit_args(number, title, body, add_labels, remove_labels)).map(|_| ())
+    fn edit(
+        &self,
+        number: u32,
+        title: &str,
+        body: &str,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()> {
+        self.run(&edit_args(number, title, body, add_labels, remove_labels))
+            .map(|_| ())
     }
 
     fn close(&self, number: u32) -> Result<()> {
@@ -211,7 +256,10 @@ mod tests {
         assert_eq!(issues[0].created_at, "2026-06-01T12:00:00Z");
         assert_eq!(
             issues[0].labels,
-            vec![crate::model::Label { name: "bug".into(), color: "d73a4a".into() }]
+            vec![crate::model::Label {
+                name: "bug".into(),
+                color: "d73a4a".into()
+            }]
         );
     }
 
@@ -235,8 +283,14 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                crate::model::Label { name: "bug".into(), color: "d73a4a".into() },
-                crate::model::Label { name: "docs".into(), color: "0075ca".into() },
+                crate::model::Label {
+                    name: "bug".into(),
+                    color: "d73a4a".into()
+                },
+                crate::model::Label {
+                    name: "docs".into(),
+                    color: "0075ca".into()
+                },
             ]
         );
     }
@@ -246,7 +300,10 @@ mod tests {
         let args = list_args(StateFilter::Closed);
         assert!(args.contains(&"--state".to_string()));
         assert!(args.contains(&"closed".to_string()));
-        assert!(args.iter().any(|a| a.contains("createdAt")), "must request createdAt for the description pane");
+        assert!(
+            args.iter().any(|a| a.contains("createdAt")),
+            "must request createdAt for the description pane"
+        );
     }
 
     #[test]
@@ -262,19 +319,44 @@ mod tests {
 
     #[test]
     fn create_args_includes_title_body_and_labels() {
-        let args = create_args("Fix bug", "Steps...", &["bug".to_string(), "urgent".to_string()]);
+        let args = create_args(
+            "Fix bug",
+            "Steps...",
+            &["bug".to_string(), "urgent".to_string()],
+        );
         assert_eq!(
             args,
-            strs(&["issue", "create", "--title", "Fix bug", "--body", "Steps...", "--label", "bug", "--label", "urgent"])
+            strs(&[
+                "issue", "create", "--title", "Fix bug", "--body", "Steps...", "--label", "bug",
+                "--label", "urgent"
+            ])
         );
     }
 
     #[test]
     fn edit_args_includes_add_and_remove_labels() {
-        let args = edit_args(42, "New title", "New body", &["bug".to_string()], &["wontfix".to_string()]);
+        let args = edit_args(
+            42,
+            "New title",
+            "New body",
+            &["bug".to_string()],
+            &["wontfix".to_string()],
+        );
         assert_eq!(
             args,
-            strs(&["issue", "edit", "42", "--title", "New title", "--body", "New body", "--add-label", "bug", "--remove-label", "wontfix"])
+            strs(&[
+                "issue",
+                "edit",
+                "42",
+                "--title",
+                "New title",
+                "--body",
+                "New body",
+                "--add-label",
+                "bug",
+                "--remove-label",
+                "wontfix"
+            ])
         );
     }
 

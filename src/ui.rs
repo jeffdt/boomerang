@@ -1,15 +1,21 @@
 use crate::model::{AppState, FormField, Label, Mode};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const POPUP_MARGIN: u16 = 2;
 
-const LABEL_PALETTE: [Color; 6] =
-    [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::Red];
+const LABEL_PALETTE: [Color; 6] = [
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Blue,
+    Color::Red,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListInput {
@@ -158,19 +164,26 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .border_style(border_style)
         .title(Line::from(vec![
             Span::styled("─", border_style),
-            Span::styled("‹ issue-browser ›", border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC)),
+            Span::styled(
+                "‹ issue-browser ›",
+                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
+            ),
         ]));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     match &state.mode {
-        Mode::Form(form) => draw_form(frame, inner, form),
+        Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
-        Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf),
+        Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
+                .constraints([
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                ])
                 .split(inner);
             if state.pane_open {
                 let list_and_pane = Layout::default()
@@ -193,8 +206,15 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(area);
-    let header = format!("Issues ({:?})", state.state_filter);
-    frame.render_widget(Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)), chunks[0]);
+    let mut header = format!("Issues ({:?})", state.state_filter);
+    if let Some(pending) = state.pending_message() {
+        header.push_str("  ");
+        header.push_str(&pending);
+    }
+    frame.render_widget(
+        Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
+        chunks[0],
+    );
     let list_area = chunks[1];
 
     let visible = state.visible_indices();
@@ -222,10 +242,15 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
                 }
                 let badge = label.name.clone();
                 labels_width += badge.chars().count();
-                label_spans.push(Span::styled(badge, label_style(label_palette_color(&state.all_labels, &label.name))));
+                label_spans.push(Span::styled(
+                    badge,
+                    label_style(label_palette_color(&state.all_labels, &label.name)),
+                ));
             }
             let left_width = left.chars().count();
-            let pad = available_width.saturating_sub(left_width).saturating_sub(labels_width);
+            let pad = available_width
+                .saturating_sub(left_width)
+                .saturating_sub(labels_width);
             spans.push(Span::raw(" ".repeat(pad)));
             spans.extend(label_spans);
         }
@@ -249,23 +274,41 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(area);
-    let date = issue.created_at.split('T').next().unwrap_or(&issue.created_at);
+    let date = issue
+        .created_at
+        .split('T')
+        .next()
+        .unwrap_or(&issue.created_at);
     let header = format!("#{} · opened {date}", issue.number);
-    frame.render_widget(Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)), chunks[0]);
-    let body = if issue.body.is_empty() { "(no description)" } else { issue.body.as_str() };
+    frame.render_widget(
+        Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
+        chunks[0],
+    );
+    let body = if issue.body.is_empty() {
+        "(no description)"
+    } else {
+        issue.body.as_str()
+    };
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[1]);
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = match &state.mode {
-        Mode::Search => format!("/{}", state.search_query),
-        _ => "j/k move  enter toggle pane  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+    let text = if let Some(pending) = state.pending_message() {
+        format!("{pending}  q quit")
+    } else {
+        match &state.mode {
+            Mode::Search => format!("/{}", state.search_query),
+            _ => "j/k move  enter toggle pane  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+        }
     };
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = state.status.as_ref().map(|(msg, _)| msg.as_str()).unwrap_or("");
+    let text = state
+        .pending_message()
+        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
+        .unwrap_or_default();
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
 
@@ -284,28 +327,51 @@ fn label_style(color: Color) -> Style {
     Style::default().fg(color).add_modifier(Modifier::ITALIC)
 }
 
-fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
-    let block = Block::default().borders(Borders::ALL).title("New issue title (Enter to create, Esc to cancel)");
-    frame.render_widget(Paragraph::new(buf).block(block), area);
-}
-
-fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
+fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Min(3)])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("New issue title (Enter to create, Esc to cancel)");
+    frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
+    draw_toast(frame, chunks[1], state);
+}
+
+fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
+    let outer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Min(3),
+        ])
+        .split(outer_chunks[0]);
 
     frame.render_widget(
         Paragraph::new(form.title.as_str()).block(
-            Block::default().borders(Borders::ALL).title("Title").border_style(field_style(form.field == FormField::Title)),
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Title")
+                .border_style(field_style(form.field == FormField::Title)),
         ),
         chunks[0],
     );
 
     frame.render_widget(
-        Paragraph::new(form.body.as_str()).wrap(Wrap { trim: false }).block(
-            Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body)),
-        ),
+        Paragraph::new(form.body.as_str())
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Body")
+                    .border_style(field_style(form.field == FormField::Body)),
+            ),
         chunks[1],
     );
 
@@ -314,7 +380,11 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let mark = if form.selected_labels.contains(name) { "[x]" } else { "[ ]" };
+            let mark = if form.selected_labels.contains(name) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
             let style = if i == form.label_cursor {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
@@ -325,10 +395,14 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState) {
         .collect();
     frame.render_widget(
         List::new(items).block(
-            Block::default().borders(Borders::ALL).title("Labels (space to toggle)").border_style(field_style(form.field == FormField::Labels)),
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Labels (space to toggle)")
+                .border_style(field_style(form.field == FormField::Labels)),
         ),
         chunks[2],
     );
+    draw_toast(frame, outer_chunks[1], state);
 }
 
 fn field_style(focused: bool) -> Style {
@@ -340,9 +414,17 @@ fn field_style(focused: bool) -> Style {
 }
 
 fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppState) {
-    let title = state.find_issue(number).map(|i| i.title.as_str()).unwrap_or("");
+    let title = state
+        .find_issue(number)
+        .map(|i| i.title.as_str())
+        .unwrap_or("");
     let text = format!("Close #{number}: {title}? (y/n)");
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Confirm")),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -351,21 +433,37 @@ mod tests {
     use crossterm::event::{KeyEventKind, KeyEventState};
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     fn key_with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent { code, modifiers, kind: KeyEventKind::Press, state: KeyEventState::NONE }
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
     }
 
     #[test]
     fn maps_lowercase_y_to_copy_reference() {
-        assert_eq!(map_list_key(key(KeyCode::Char('y'))), ListInput::CopyReference);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('y'))),
+            ListInput::CopyReference
+        );
     }
 
     #[test]
     fn maps_uppercase_y_to_copy_markdown_link() {
-        assert_eq!(map_list_key(key(KeyCode::Char('Y'))), ListInput::CopyMarkdownLink);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('Y'))),
+            ListInput::CopyMarkdownLink
+        );
     }
 
     #[test]
@@ -376,12 +474,18 @@ mod tests {
 
     #[test]
     fn maps_lowercase_o_to_open_in_browser() {
-        assert_eq!(map_list_key(key(KeyCode::Char('o'))), ListInput::OpenInBrowser);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('o'))),
+            ListInput::OpenInBrowser
+        );
     }
 
     #[test]
     fn maps_shift_c_to_big_create_and_lowercase_c_to_little_create() {
-        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::LittleCreate);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('c'))),
+            ListInput::LittleCreate
+        );
         assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::BigCreate);
     }
 
@@ -389,7 +493,10 @@ mod tests {
     fn search_key_mapping_exits_on_enter_or_esc() {
         assert_eq!(map_search_key(key(KeyCode::Enter)), SearchInput::Exit);
         assert_eq!(map_search_key(key(KeyCode::Esc)), SearchInput::Exit);
-        assert_eq!(map_search_key(key(KeyCode::Char('x'))), SearchInput::Char('x'));
+        assert_eq!(
+            map_search_key(key(KeyCode::Char('x'))),
+            SearchInput::Char('x')
+        );
     }
 
     #[test]
@@ -412,14 +519,26 @@ mod tests {
 
     #[test]
     fn search_key_mapping_plain_char_unaffected() {
-        assert_eq!(map_search_key(key(KeyCode::Char('h'))), SearchInput::Char('h'));
+        assert_eq!(
+            map_search_key(key(KeyCode::Char('h'))),
+            SearchInput::Char('h')
+        );
     }
 
     #[test]
     fn form_key_mapping_reserves_space_and_arrows_for_labels_field() {
-        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Labels), FormInput::ToggleLabel);
-        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Title), FormInput::Char(' '));
-        assert_eq!(map_form_key(key(KeyCode::Down), FormField::Labels), FormInput::MoveDown);
+        assert_eq!(
+            map_form_key(key(KeyCode::Char(' ')), FormField::Labels),
+            FormInput::ToggleLabel
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Char(' ')), FormField::Title),
+            FormInput::Char(' ')
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Down), FormField::Labels),
+            FormInput::MoveDown
+        );
     }
 
     #[test]
@@ -441,7 +560,7 @@ mod tests {
     }
 
     use crate::gh::StateFilter;
-    use crate::model::{Issue, IssueState, Label};
+    use crate::model::{Issue, IssueState, Label, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -491,7 +610,10 @@ mod tests {
     fn pane_is_hidden_by_default() {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
-        assert!(!rendered.contains("opened"), "pane should not render until toggled on");
+        assert!(
+            !rendered.contains("opened"),
+            "pane should not render until toggled on"
+        );
     }
 
     #[test]
@@ -516,7 +638,9 @@ mod tests {
 
     #[test]
     fn cursor_on_far_down_issue_stays_visible_in_small_viewport() {
-        let issues: Vec<Issue> = (1..=50).map(|n| issue(n, &format!("Issue number {n}"))).collect();
+        let issues: Vec<Issue> = (1..=50)
+            .map(|n| issue(n, &format!("Issue number {n}")))
+            .collect();
         let mut state = AppState::new(issues, vec![]);
         for _ in 0..40 {
             state.move_cursor(1);
@@ -557,7 +681,13 @@ mod tests {
 
     #[test]
     fn big_create_form_renders_title_body_and_labels() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Title"));
@@ -575,7 +705,13 @@ mod tests {
     }
 
     fn labels(names: &[&str]) -> Vec<Label> {
-        names.iter().map(|n| Label { name: n.to_string(), color: String::new() }).collect()
+        names
+            .iter()
+            .map(|n| Label {
+                name: n.to_string(),
+                color: String::new(),
+            })
+            .collect()
     }
 
     #[test]
@@ -583,7 +719,10 @@ mod tests {
         let all = labels(&["bug", "enhancement"]);
         let first = label_palette_color(&all, "bug");
         let second = label_palette_color(&all, "bug");
-        assert_eq!(first, second, "same label name must always map to the same color for a given label list");
+        assert_eq!(
+            first, second,
+            "same label name must always map to the same color for a given label list"
+        );
         assert!(LABEL_PALETTE.contains(&first));
     }
 
@@ -592,17 +731,33 @@ mod tests {
         // GitHub's own common defaults, the exact set a plain byte-sum hash
         // used to collide on ("bug", "enhancement", "question" all landed in
         // the same bucket).
-        let all = labels(&["bug", "enhancement", "question", "documentation", "good first issue"]);
-        let colors: Vec<Color> = all.iter().map(|l| label_palette_color(&all, &l.name)).collect();
+        let all = labels(&[
+            "bug",
+            "enhancement",
+            "question",
+            "documentation",
+            "good first issue",
+        ]);
+        let colors: Vec<Color> = all
+            .iter()
+            .map(|l| label_palette_color(&all, &l.name))
+            .collect();
         let unique: std::collections::HashSet<_> = colors.iter().collect();
-        assert_eq!(unique.len(), colors.len(), "with fewer labels than palette colors, none should collide");
+        assert_eq!(
+            unique.len(),
+            colors.len(),
+            "with fewer labels than palette colors, none should collide"
+        );
     }
 
     #[test]
     fn label_style_uses_colored_italic_text_with_no_background() {
         let style = label_style(Color::Cyan);
         assert_eq!(style.fg, Some(Color::Cyan));
-        assert_eq!(style.bg, None, "label style must not set a background color");
+        assert_eq!(
+            style.bg, None,
+            "label style must not set a background color"
+        );
         assert!(style.add_modifier.contains(Modifier::ITALIC));
     }
 
@@ -623,10 +778,20 @@ mod tests {
         let long = AppState::new(vec![issue(123, "Long number title")], vec![]);
         let short_rendered = render_to_string(&short);
         let long_rendered = render_to_string(&long);
-        let short_col = short_rendered.find("Short number title").expect("short title rendered");
-        let long_col = long_rendered.find("Long number title").expect("long title rendered");
-        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let short_col = short_rendered
+            .find("Short number title")
+            .expect("short title rendered");
+        let long_col = long_rendered
+            .find("Long number title")
+            .expect("long title rendered");
+        let short_row_start = short_rendered[..short_col]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let long_row_start = long_rendered[..long_col]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
         assert_eq!(short_col - short_row_start, long_col - long_row_start);
     }
 
@@ -634,7 +799,10 @@ mod tests {
     fn list_has_no_inner_border_around_state_filter_header() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let rendered = render_to_string(&state);
-        let header_line = rendered.lines().find(|line| line.contains("Issues (")).expect("header line rendered");
+        let header_line = rendered
+            .lines()
+            .find(|line| line.contains("Issues ("))
+            .expect("header line rendered");
         assert!(
             !header_line.contains('┌') && !header_line.contains('┐') && !header_line.contains('─'),
             "state filter header should be plain text with no surrounding inner box-drawing characters, got: {header_line:?}"
@@ -651,7 +819,10 @@ mod tests {
 
     #[test]
     fn labels_right_align_to_same_column_regardless_of_title_length() {
-        let label = Label { name: "bug".into(), color: "d73a4a".into() };
+        let label = Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        };
         let mut short_issue = issue(1, "Short");
         short_issue.labels = vec![label.clone()];
         let mut long_issue = issue(2, "A very long issue title that takes up a lot of space");
@@ -663,11 +834,21 @@ mod tests {
         let short_rendered = render_to_string(&short_state);
         let long_rendered = render_to_string(&long_state);
 
-        let short_col = short_rendered.find("bug").expect("label rendered for short title");
-        let long_col = long_rendered.find("bug").expect("label rendered for long title");
+        let short_col = short_rendered
+            .find("bug")
+            .expect("label rendered for short title");
+        let long_col = long_rendered
+            .find("bug")
+            .expect("label rendered for long title");
 
-        let short_row_start = short_rendered[..short_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let long_row_start = long_rendered[..long_col].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let short_row_start = short_rendered[..short_col]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let long_row_start = long_rendered[..long_col]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
 
         assert_eq!(
             short_col - short_row_start,
@@ -686,11 +867,15 @@ mod tests {
             state.form_push_char(c);
         }
         let rendered = render_to_string(&state);
-        let body_section = rendered.lines()
+        let body_section = rendered
+            .lines()
             .skip_while(|line| !line.contains("Body"))
             .take_while(|line| !line.contains("Labels"))
             .collect::<Vec<_>>();
-        assert!(body_section.len() > 3, "form body field with long unwrapped text should span multiple rows");
+        assert!(
+            body_section.len() > 3,
+            "form body field with long unwrapped text should span multiple rows"
+        );
     }
 
     #[test]
@@ -699,7 +884,52 @@ mod tests {
         let long_message = "gh error: ".to_string() + &"x".repeat(100);
         state.set_status(long_message.clone());
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("gh error:"), "status message should be visible in rendered output");
+        assert!(
+            rendered.contains("gh error:"),
+            "status message should be visible in rendered output"
+        );
+    }
+
+    #[test]
+    fn pending_create_renders_spinner_and_wait_hint() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Creating issue..."));
+        assert!(rendered.contains("q quit"));
+    }
+
+    #[test]
+    fn pending_create_spinner_is_visible_in_list_header() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let rendered = render_to_string(&state);
+        let header = rendered
+            .lines()
+            .find(|line| line.contains("Issues (Open)"))
+            .expect("list header rendered");
+        assert!(header.contains("Creating issue..."));
+    }
+
+    #[test]
+    fn pending_edit_spinner_is_visible_in_list_header() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::EditIssue);
+        let rendered = render_to_string(&state);
+        let header = rendered
+            .lines()
+            .find(|line| line.contains("Issues (Open)"))
+            .expect("list header rendered");
+        assert!(header.contains("Updating issue..."));
+    }
+
+    #[test]
+    fn form_mode_renders_error_status_for_failed_submission() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.enter_big_create();
+        state.set_status("gh error: create failed".to_string());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("gh error: create failed"));
     }
 
     #[test]
@@ -708,6 +938,9 @@ mod tests {
         let mut state = AppState::new(vec![issue(42, &long_title)], vec![]);
         state.request_close();
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("(y/n)"), "confirm close dialog should show (y/n) prompt even with long title");
+        assert!(
+            rendered.contains("(y/n)"),
+            "confirm close dialog should show (y/n) prompt even with long title"
+        );
     }
 }
