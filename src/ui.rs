@@ -636,7 +636,7 @@ mod tests {
         loading.started_at = Instant::now();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("●"));
-        assert!(rendered.contains("◆") || rendered.contains("◇"));
+        assert!(!rendered.contains("No issues found"));
     }
 
     #[test]

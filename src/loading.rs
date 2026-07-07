@@ -174,28 +174,55 @@ fn ripple_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> 
     if width == 0 || height == 0 {
         return None;
     }
+    let max_radius = ripple_max_radius(width, height);
+    let radius = tick % (max_radius + 8);
+    if radius > max_radius + 2 {
+        return None;
+    }
     let center_x = width as isize / 2;
     let center_y = height as isize / 2;
     let dx = x as isize - center_x;
     let dy = (y as isize - center_y) * 2;
-    let distance = (dx * dx + dy * dy) as usize;
-    let band = (distance / 7 + tick * 2) % 32;
-    let shimmer = (x * 11 + y * 17 + tick) % 29;
-    let (ch, color, bold) = match band {
-        0..=1 => ('●', Color::White, true),
-        2..=3 => ('◆', Color::Cyan, true),
-        4..=5 => ('◇', Color::Magenta, true),
-        6..=7 => ('·', Color::Blue, false),
-        8 if shimmer < 4 => ('.', Color::DarkGray, false),
-        _ if shimmer == 0 => ('.', Color::DarkGray, false),
-        _ => return None,
-    };
-    let style = if bold {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(color)
-    };
-    Some(Cell { ch, style })
+    let distance = (((dx * dx + dy * dy) as f64).sqrt().round()) as isize;
+    if radius <= 1 && distance <= 1 {
+        return Some(Cell {
+            ch: '●',
+            style: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        });
+    }
+    let delta = (distance - radius as isize).abs();
+    match delta {
+        0 => Some(Cell {
+            ch: '●',
+            style: Style::default()
+                .fg(ripple_color(radius))
+                .add_modifier(Modifier::BOLD),
+        }),
+        1 => Some(Cell {
+            ch: '·',
+            style: Style::default().fg(Color::DarkGray),
+        }),
+        _ => None,
+    }
+}
+
+fn ripple_max_radius(width: usize, height: usize) -> usize {
+    let half_width = width as f64 / 2.0;
+    let half_height = height as f64;
+    (half_width
+        .mul_add(half_width, half_height * half_height)
+        .sqrt()
+        .ceil()) as usize
+}
+
+fn ripple_color(radius: usize) -> Color {
+    match (radius / 4) % 3 {
+        0 => Color::Cyan,
+        1 => Color::Blue,
+        _ => Color::Magenta,
+    }
 }
 
 fn matrix_hash(a: u64, b: u64, c: u64, d: u64) -> u64 {
@@ -310,24 +337,34 @@ mod tests {
     }
 
     #[test]
-    fn ripple_emits_center_weighted_bullseye_bands() {
+    fn ripple_emits_one_clean_centered_ring() {
         let center = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
         assert_eq!(center.ch, '●');
         assert_eq!(center.style.fg, Some(Color::White));
         assert!(center.style.add_modifier.contains(Modifier::BOLD));
 
-        let outer = ripple_cell(46, 9, 80, 18, 0).expect("outer ripple band");
-        assert_eq!(outer.ch, '◇');
-        assert_eq!(outer.style.fg, Some(Color::Magenta));
+        let ring = ripple_cell(46, 9, 80, 18, 6).expect("single ripple ring");
+        assert_eq!(ring.ch, '●');
+        assert_eq!(ring.style.fg, Some(Color::Blue));
+
+        assert_eq!(
+            ripple_cell(60, 9, 80, 18, 6).map(|cell| cell.ch),
+            None,
+            "ripple should render one ring, not repeated bullseye bands"
+        );
     }
 
     #[test]
-    fn ripple_bands_expand_over_time() {
+    fn ripple_ring_moves_outward_over_time() {
         let first = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
-        let later = ripple_cell(40, 9, 80, 18, 1);
+        let later = ripple_cell(40, 9, 80, 18, 2);
         assert!(
             later.is_none_or(|cell| cell.ch != first.ch || cell.style.fg != first.style.fg),
             "ripple center should change as the wave passes"
+        );
+        assert!(
+            ripple_cell(42, 9, 80, 18, 2).is_some(),
+            "ripple should move outward from the center"
         );
     }
 }
