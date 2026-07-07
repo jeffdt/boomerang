@@ -1,6 +1,7 @@
 mod copy;
 mod diagnostics;
 mod gh;
+mod loading;
 mod model;
 mod search;
 mod ui;

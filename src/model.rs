@@ -45,15 +45,19 @@ pub struct PendingState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadingAnimation {
     MatrixRain,
-    Orbit,
-    Pulse,
+    Pipes,
+    Starfield,
+    BlackHole,
+    BonsaiSprout,
 }
 
 impl LoadingAnimation {
-    const ALL: [LoadingAnimation; 3] = [
+    const ALL: [LoadingAnimation; 5] = [
         LoadingAnimation::MatrixRain,
-        LoadingAnimation::Orbit,
-        LoadingAnimation::Pulse,
+        LoadingAnimation::Pipes,
+        LoadingAnimation::Starfield,
+        LoadingAnimation::BlackHole,
+        LoadingAnimation::BonsaiSprout,
     ];
 
     pub fn for_launch() -> Self {
@@ -66,8 +70,10 @@ impl LoadingAnimation {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "matrix" | "matrix-rain" | "rain" => Some(Self::MatrixRain),
-            "orbit" | "spinner" => Some(Self::Orbit),
-            "pulse" | "bars" => Some(Self::Pulse),
+            "pipes" | "pipe" => Some(Self::Pipes),
+            "starfield" | "stars" | "hyperspace" => Some(Self::Starfield),
+            "black-hole" | "blackhole" | "hole" => Some(Self::BlackHole),
+            "bonsai" | "sprout" | "bonsai-sprout" => Some(Self::BonsaiSprout),
             _ => None,
         }
     }
@@ -874,7 +880,13 @@ mod tests {
         assert!(state.is_loading());
         assert!(matches!(
             state.loading.as_ref().map(|loading| loading.animation),
-            Some(LoadingAnimation::MatrixRain | LoadingAnimation::Orbit | LoadingAnimation::Pulse)
+            Some(
+                LoadingAnimation::MatrixRain
+                    | LoadingAnimation::Pipes
+                    | LoadingAnimation::Starfield
+                    | LoadingAnimation::BlackHole
+                    | LoadingAnimation::BonsaiSprout
+            )
         ));
         assert!(state
             .loading_message()
@@ -904,13 +916,22 @@ mod tests {
             Some(LoadingAnimation::MatrixRain)
         );
         assert_eq!(
-            LoadingAnimation::parse("spinner"),
-            Some(LoadingAnimation::Orbit)
+            LoadingAnimation::parse("pipes"),
+            Some(LoadingAnimation::Pipes)
         );
         assert_eq!(
-            LoadingAnimation::parse("bars"),
-            Some(LoadingAnimation::Pulse)
+            LoadingAnimation::parse("hyperspace"),
+            Some(LoadingAnimation::Starfield)
         );
+        assert_eq!(
+            LoadingAnimation::parse("black-hole"),
+            Some(LoadingAnimation::BlackHole)
+        );
+        assert_eq!(
+            LoadingAnimation::parse("bonsai"),
+            Some(LoadingAnimation::BonsaiSprout)
+        );
+        assert_eq!(LoadingAnimation::parse("orbit"), None);
         assert_eq!(LoadingAnimation::parse("unknown"), None);
     }
 

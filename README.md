@@ -82,8 +82,9 @@ Opt-in command diagnostics by setting `ISSUE_BROWSER_LOG=1`. Logs go to
 milliseconds, exit status, stdout byte count, and stderr. Issue titles and bodies
 passed to `gh` are redacted.
 
-Set `ISSUE_BROWSER_LOADING_ANIMATION` to `matrix`, `orbit`, or `pulse` to pin a
-specific startup animation while experimenting. Leave it unset to rotate.
+Set `ISSUE_BROWSER_LOADING_ANIMATION` to `matrix`, `pipes`, `starfield`,
+`black-hole`, or `bonsai` to pin a specific startup animation while
+experimenting. Leave it unset to rotate.
 
 ## Disclaimer
 
