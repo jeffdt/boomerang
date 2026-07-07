@@ -33,6 +33,8 @@ view; adjust `-w`/`-h` to taste.
 
 - Auto-detects the repo from the current directory via `gh`'s own git-remote
   detection — no config or `--repo` flag needed.
+- Opens the TUI immediately with a rotating loading animation while issues and
+  labels are fetched in the background.
 - Fetches all open issues (including body and labels) in one `gh issue list`
   call, so the description pane never needs a follow-up network call.
 - Create and edit submissions run in the background with an in-place pending
@@ -79,6 +81,9 @@ Opt-in command diagnostics by setting `ISSUE_BROWSER_LOG=1`. Logs go to
 `ISSUE_BROWSER_LOG_PATH` when set. Logs include sanitized `gh` argv, elapsed
 milliseconds, exit status, stdout byte count, and stderr. Issue titles and bodies
 passed to `gh` are redacted.
+
+Set `ISSUE_BROWSER_LOADING_ANIMATION` to `matrix`, `orbit`, or `pulse` to pin a
+specific startup animation while experimenting. Leave it unset to rotate.
 
 ## Disclaimer
 

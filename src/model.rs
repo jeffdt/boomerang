@@ -24,11 +24,11 @@ pub struct Issue {
 use crate::gh::StateFilter;
 use crate::search;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
-const PENDING_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
-const PENDING_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
+const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingOperation {
@@ -40,6 +40,51 @@ pub enum PendingOperation {
 pub struct PendingState {
     pub operation: PendingOperation,
     pub started_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadingAnimation {
+    MatrixRain,
+    Orbit,
+    Pulse,
+}
+
+impl LoadingAnimation {
+    const ALL: [LoadingAnimation; 3] = [
+        LoadingAnimation::MatrixRain,
+        LoadingAnimation::Orbit,
+        LoadingAnimation::Pulse,
+    ];
+
+    pub fn for_launch() -> Self {
+        std::env::var("ISSUE_BROWSER_LOADING_ANIMATION")
+            .ok()
+            .and_then(|value| Self::parse(&value))
+            .unwrap_or_else(Self::rotated)
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "matrix" | "matrix-rain" | "rain" => Some(Self::MatrixRain),
+            "orbit" | "spinner" => Some(Self::Orbit),
+            "pulse" | "bars" => Some(Self::Pulse),
+            _ => None,
+        }
+    }
+
+    fn rotated() -> Self {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as usize)
+            .unwrap_or(0);
+        Self::ALL[millis % Self::ALL.len()]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadingState {
+    pub started_at: Instant,
+    pub animation: LoadingAnimation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +133,7 @@ pub struct AppState {
     pub search_query: String,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, Instant)>,
+    pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
     pub pane_open: bool,
 }
@@ -103,9 +149,22 @@ impl AppState {
             search_query: String::new(),
             search_ranked: Vec::new(),
             status: None,
+            loading: None,
             pending: None,
             pane_open: false,
         }
+    }
+
+    pub fn loading() -> Self {
+        let mut state = Self::new(vec![], vec![]);
+        state.begin_loading();
+        state
+    }
+
+    pub fn set_loaded(&mut self, issues: Vec<Issue>, all_labels: Vec<Label>) {
+        self.all_labels = all_labels;
+        self.set_issues(issues);
+        self.finish_loading();
     }
 
     pub fn visible_indices(&self) -> Vec<usize> {
@@ -409,6 +468,29 @@ impl AppState {
         self.status = Some((message, Instant::now()));
     }
 
+    pub fn begin_loading(&mut self) {
+        self.loading = Some(LoadingState {
+            started_at: Instant::now(),
+            animation: LoadingAnimation::for_launch(),
+        });
+    }
+
+    pub fn finish_loading(&mut self) {
+        self.loading = None;
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.loading.is_some()
+    }
+
+    pub fn loading_message(&self) -> Option<String> {
+        let loading = self.loading.as_ref()?;
+        Some(format!(
+            "{} Loading issues...",
+            spinner_frame(&loading.started_at)
+        ))
+    }
+
     pub fn begin_pending(&mut self, operation: PendingOperation) {
         self.pending = Some(PendingState {
             operation,
@@ -426,16 +508,13 @@ impl AppState {
 
     pub fn pending_message(&self) -> Option<String> {
         let pending = self.pending.as_ref()?;
-        let frame_index = ((pending.started_at.elapsed().as_millis()
-            / PENDING_SPINNER_INTERVAL.as_millis()) as usize)
-            % PENDING_SPINNER_FRAMES.len();
         let action = match pending.operation {
             PendingOperation::CreateIssue => "Creating issue",
             PendingOperation::EditIssue => "Updating issue",
         };
         Some(format!(
             "{} {action}...",
-            PENDING_SPINNER_FRAMES[frame_index]
+            spinner_frame(&pending.started_at)
         ))
     }
 
@@ -446,6 +525,13 @@ impl AppState {
             }
         }
     }
+}
+
+fn spinner_frame(started_at: &Instant) -> &'static str {
+    let frame_index = ((started_at.elapsed().as_millis() / ACTIVITY_SPINNER_INTERVAL.as_millis())
+        as usize)
+        % ACTIVITY_SPINNER_FRAMES.len();
+    ACTIVITY_SPINNER_FRAMES[frame_index]
 }
 
 #[cfg(test)]
@@ -780,6 +866,52 @@ mod tests {
         state.finish_pending();
         assert!(!state.is_pending());
         assert_eq!(state.pending_message(), None);
+    }
+
+    #[test]
+    fn loading_state_reports_message_and_selected_animation() {
+        let state = AppState::loading();
+        assert!(state.is_loading());
+        assert!(matches!(
+            state.loading.as_ref().map(|loading| loading.animation),
+            Some(LoadingAnimation::MatrixRain | LoadingAnimation::Orbit | LoadingAnimation::Pulse)
+        ));
+        assert!(state
+            .loading_message()
+            .expect("loading message")
+            .contains("Loading issues..."));
+    }
+
+    #[test]
+    fn set_loaded_replaces_startup_data_and_clears_loading() {
+        let loaded_issue = issue(7, "Loaded issue");
+        let label = Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        };
+        let mut state = AppState::loading();
+        state.set_loaded(vec![loaded_issue.clone()], vec![label.clone()]);
+        assert_eq!(state.issues, vec![loaded_issue]);
+        assert_eq!(state.all_labels, vec![label]);
+        assert!(!state.is_loading());
+        assert_eq!(state.loading_message(), None);
+    }
+
+    #[test]
+    fn loading_animation_parse_accepts_experiment_names() {
+        assert_eq!(
+            LoadingAnimation::parse("matrix-rain"),
+            Some(LoadingAnimation::MatrixRain)
+        );
+        assert_eq!(
+            LoadingAnimation::parse("spinner"),
+            Some(LoadingAnimation::Orbit)
+        );
+        assert_eq!(
+            LoadingAnimation::parse("bars"),
+            Some(LoadingAnimation::Pulse)
+        );
+        assert_eq!(LoadingAnimation::parse("unknown"), None);
     }
 
     #[test]

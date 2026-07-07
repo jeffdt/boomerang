@@ -1,10 +1,11 @@
-use crate::model::{AppState, FormField, Label, Mode};
+use crate::model::{AppState, FormField, Label, LoadingAnimation, Mode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
+use std::time::Duration;
 
 const POPUP_MARGIN: u16 = 2;
 
@@ -172,6 +173,11 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    if state.is_loading() {
+        draw_loading(frame, inner, state);
+        return;
+    }
+
     match &state.mode {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
@@ -199,6 +205,139 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             draw_toast(frame, chunks[2], state);
         }
     }
+}
+
+fn draw_loading(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    let mut header = format!("Issues ({:?})", state.state_filter);
+    if let Some(loading) = state.loading_message() {
+        header.push_str("  ");
+        header.push_str(&loading);
+    }
+    frame.render_widget(
+        Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
+        chunks[0],
+    );
+    draw_loading_animation(frame, chunks[1], state);
+    draw_shortcuts_hint(frame, chunks[2], state);
+}
+
+fn draw_loading_animation(frame: &mut Frame, area: Rect, state: &AppState) {
+    let Some(loading) = state.loading.as_ref() else {
+        return;
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let elapsed = loading.started_at.elapsed();
+    match loading.animation {
+        LoadingAnimation::MatrixRain => draw_matrix_rain(frame, area, elapsed),
+        LoadingAnimation::Orbit => draw_orbit(frame, area, elapsed),
+        LoadingAnimation::Pulse => draw_pulse(frame, area, elapsed),
+    }
+}
+
+fn draw_matrix_rain(frame: &mut Frame, area: Rect, elapsed: Duration) {
+    const MATRIX_CHARS: &[u8] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#@$%&?";
+    let tick = (elapsed.as_millis() / 80) as usize;
+    let height = area.height as usize;
+    let width = area.width as usize;
+    let tail = 6usize;
+    let cycle = height + tail + 6;
+    let mut lines = Vec::with_capacity(height);
+    for y in 0..height {
+        let mut spans = Vec::with_capacity(width);
+        for x in 0..width {
+            let column_seed = (x * 17 + 11) % cycle;
+            let active_column = (x + column_seed) % 4 == 0;
+            let head = ((tick + column_seed) % cycle) as isize - 3;
+            let distance = head - y as isize;
+            if active_column && (0..=tail as isize).contains(&distance) {
+                let index = (x * 13 + y * 7 + tick) % MATRIX_CHARS.len();
+                let ch = MATRIX_CHARS[index] as char;
+                let style = match distance {
+                    0 => Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                    1 | 2 => Style::default().fg(Color::Green),
+                    _ => Style::default().fg(Color::DarkGray),
+                };
+                spans.push(Span::styled(ch.to_string(), style));
+            } else {
+                spans.push(Span::raw(" "));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn draw_orbit(frame: &mut Frame, area: Rect, elapsed: Duration) {
+    let frames = ["◐", "◓", "◑", "◒"];
+    let glyph = frames[((elapsed.as_millis() / 120) as usize) % frames.len()];
+    let content = vec![
+        Line::from(Span::styled(
+            glyph,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "orbiting GitHub",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(center_vertically(area, content)).alignment(Alignment::Center),
+        area,
+    );
+}
+
+fn draw_pulse(frame: &mut Frame, area: Rect, elapsed: Duration) {
+    let width = usize::from(area.width.saturating_sub(8).min(40)).max(1);
+    let tick = (elapsed.as_millis() / 80) as usize;
+    let mut spans = vec![Span::styled("[", Style::default().fg(Color::DarkGray))];
+    for i in 0..width {
+        let wave = (i + tick) % width;
+        let style = if wave < width / 3 + 1 {
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled("█", style));
+    }
+    spans.push(Span::styled("]", Style::default().fg(Color::DarkGray)));
+    let content = vec![
+        Line::from(spans),
+        Line::from(Span::styled(
+            "warming up the issue list",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(center_vertically(area, content)).alignment(Alignment::Center),
+        area,
+    );
+}
+
+fn center_vertically(area: Rect, content: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let top_padding = area.height.saturating_sub(content.len() as u16) / 2;
+    let mut lines = Vec::with_capacity(top_padding as usize + content.len());
+    for _ in 0..top_padding {
+        lines.push(Line::default());
+    }
+    lines.extend(content);
+    lines
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -293,7 +432,9 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = if let Some(pending) = state.pending_message() {
+    let text = if state.is_loading() {
+        "q quit".to_string()
+    } else if let Some(pending) = state.pending_message() {
         format!("{pending}  q quit")
     } else {
         match &state.mode {
@@ -560,7 +701,7 @@ mod tests {
     }
 
     use crate::gh::StateFilter;
-    use crate::model::{Issue, IssueState, Label, PendingOperation};
+    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
@@ -604,6 +745,19 @@ mod tests {
         let state = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains(&format!("{:?}", StateFilter::Open)));
+    }
+
+    #[test]
+    fn loading_state_renders_header_hint_and_animation_area() {
+        let mut state = AppState::loading();
+        state.loading.as_mut().unwrap().animation = LoadingAnimation::MatrixRain;
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Loading issues..."));
+        assert!(rendered.contains("q quit"));
+        assert!(
+            !rendered.contains("No issues found"),
+            "loading should use the animated body instead of the empty-list message"
+        );
     }
 
     #[test]

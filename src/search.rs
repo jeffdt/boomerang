@@ -41,14 +41,21 @@ mod tests {
     fn ranks_strong_match_above_weak_earlier_one() {
         let candidates = ["a-pretty-big-input", "api-gateway"];
         let ranked = rank("api", &candidates);
-        assert_eq!(ranked.first().copied(), Some(1), "consecutive prefix ranks first");
+        assert_eq!(
+            ranked.first().copied(),
+            Some(1),
+            "consecutive prefix ranks first"
+        );
     }
 
     #[test]
     fn omits_non_matches() {
         let candidates = ["alpha", "beta", "gamma"];
         let ranked = rank("zzz", &candidates);
-        assert!(ranked.is_empty(), "no candidate contains the subsequence zzz");
+        assert!(
+            ranked.is_empty(),
+            "no candidate contains the subsequence zzz"
+        );
     }
 
     #[test]

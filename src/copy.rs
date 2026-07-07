@@ -17,7 +17,11 @@ pub fn format_url(issue: &Issue) -> String {
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut child = Command::new("pbcopy").stdin(Stdio::piped()).spawn()?;
-    child.stdin.take().expect("piped stdin").write_all(text.as_bytes())?;
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(text.as_bytes())?;
     child.wait()?;
     Ok(())
 }
@@ -54,6 +58,9 @@ mod tests {
 
     #[test]
     fn formats_plain_url() {
-        assert_eq!(format_url(&sample_issue()), "https://github.com/owner/repo/issues/123");
+        assert_eq!(
+            format_url(&sample_issue()),
+            "https://github.com/owner/repo/issues/123"
+        );
     }
 }

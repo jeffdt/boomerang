@@ -11,7 +11,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use gh::{GhCliSource, IssueSource, StateFilter};
-use model::{AppState, FormState, Issue, Mode, PendingOperation};
+use model::{AppState, FormState, Issue, Label, Mode, PendingOperation};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::{self, stdout};
@@ -75,25 +75,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     let source = GhCliSource::new();
-    let issues_handle = std::thread::spawn(move || GhCliSource::new().list(StateFilter::Open));
-    let labels_handle = std::thread::spawn(move || GhCliSource::new().labels());
-    let issues = issues_handle.join().expect("issue list thread panicked")?;
-    let labels = labels_handle
-        .join()
-        .expect("label list thread panicked")
-        .unwrap_or_default();
-    let mut state = AppState::new(issues, labels);
+    let mut state = AppState::loading();
+    let initial_load_rx = spawn_initial_load(source.clone());
 
-    run_ui(&mut state, &source)
+    run_ui(&mut state, &source, initial_load_rx)
 }
 
-fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()> {
+fn run_ui<S: IssueSource>(
+    state: &mut AppState,
+    source: &S,
+    initial_load_rx: InitialLoadReceiver,
+) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
-    let result = event_loop(&mut terminal, state, source);
+    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx));
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -162,16 +160,30 @@ struct MutationSuccess {
 }
 
 type MutationReceiver = Receiver<anyhow::Result<MutationSuccess>>;
+type InitialLoadReceiver = Receiver<anyhow::Result<InitialLoadSuccess>>;
+
+#[derive(Debug)]
+struct InitialLoadSuccess {
+    issues: Vec<Issue>,
+    labels: Vec<Label>,
+    elapsed: Duration,
+}
 
 fn event_loop<S: IssueSource>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
     source: &S,
+    mut initial_load_rx: Option<InitialLoadReceiver>,
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
 
     loop {
+        if let Some(result) = poll_initial_load(&initial_load_rx) {
+            initial_load_rx = None;
+            finish_initial_load(state, result);
+        }
+
         if let Some(result) = poll_mutation(&mutation_rx) {
             mutation_rx = None;
             finish_mutation(state, mutation_draft.take(), result);
@@ -184,6 +196,12 @@ fn event_loop<S: IssueSource>(
         }
         if let Event::Key(key) = event::read()? {
             if key.kind != event::KeyEventKind::Press {
+                continue;
+            }
+            if state.is_loading() {
+                if map_list_key(key) == ListInput::Quit {
+                    return Ok(());
+                }
                 continue;
             }
             if state.is_pending() {
@@ -307,6 +325,63 @@ fn event_loop<S: IssueSource>(
                     ConfirmInput::None => {}
                 },
             }
+        }
+    }
+}
+
+fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let issues_source = source.clone();
+        let labels_source = source;
+        let issues_handle = std::thread::spawn(move || issues_source.list(StateFilter::Open));
+        let labels_handle = std::thread::spawn(move || labels_source.labels());
+        let issues_result = issues_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
+            .and_then(|result| result);
+        let result = match issues_result {
+            Ok(issues) => match labels_handle.join() {
+                Ok(labels_result) => Ok(InitialLoadSuccess {
+                    issues,
+                    labels: labels_result.unwrap_or_default(),
+                    elapsed: started.elapsed(),
+                }),
+                Err(_) => Err(anyhow::anyhow!("label list thread panicked")),
+            },
+            Err(e) => Err(e),
+        };
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn poll_initial_load(
+    rx: &Option<InitialLoadReceiver>,
+) -> Option<anyhow::Result<InitialLoadSuccess>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+            "initial issue load worker stopped before returning a result"
+        ))),
+    }
+}
+
+fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadSuccess>) {
+    match result {
+        Ok(success) => {
+            let count = success.issues.len();
+            state.set_loaded(success.issues, success.labels);
+            state.set_status(format!(
+                "loaded {count} issues in {}",
+                format_duration(success.elapsed)
+            ));
+        }
+        Err(e) => {
+            state.finish_loading();
+            state.set_status(gh_error_status(&e));
         }
     }
 }
@@ -493,6 +568,42 @@ mod tests {
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
         }
+    }
+
+    #[test]
+    fn finish_initial_load_populates_state_and_reports_timing() {
+        let loaded = issue(7, "Loaded issue");
+        let label = Label {
+            name: "priority".into(),
+            color: "faa29b".into(),
+        };
+        let mut state = AppState::loading();
+        finish_initial_load(
+            &mut state,
+            Ok(InitialLoadSuccess {
+                issues: vec![loaded.clone()],
+                labels: vec![label.clone()],
+                elapsed: Duration::from_millis(350),
+            }),
+        );
+        assert_eq!(state.issues, vec![loaded]);
+        assert_eq!(state.all_labels, vec![label]);
+        assert!(!state.is_loading());
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("loaded 1 issues in 350ms")
+        );
+    }
+
+    #[test]
+    fn finish_initial_load_failure_clears_loading_and_reports_error() {
+        let mut state = AppState::loading();
+        finish_initial_load(&mut state, Err(anyhow::anyhow!("repo unavailable")));
+        assert!(!state.is_loading());
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("gh error: repo unavailable")
+        );
     }
 
     #[test]
