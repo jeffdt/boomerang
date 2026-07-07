@@ -25,3 +25,10 @@ family as its sibling project, [rolomux](https://github.com/jeffdt/smux)
 - **Named ANSI colors only.** Use the 16 named terminal colors (e.g.
   `Color::Cyan`, `Color::DarkGray`), never `Color::Rgb`. This is what lets the
   picker inherit the user's terminal theme rather than imposing fixed colors.
+- **Plan approval is the quality gate, not spec approval.** When using the
+  brainstorming skill in this repo, skip the "user reviews written spec"
+  checkpoint — go straight from a written spec into the implementation plan.
+  Jeff reviews the plan, not the spec, before implementation starts.
+- **Commit directly to main.** This is a solo project; there's no need for
+  feature branches or PRs for routine work. Commit finished, verified changes
+  straight to main unless Jeff asks for a branch/PR explicitly.
