@@ -2,7 +2,7 @@ use crate::model::{AppState, FormField, Label, Mode};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -15,9 +15,7 @@ const LABEL_PALETTE: [Color; 6] =
 pub enum ListInput {
     Up,
     Down,
-    ToggleExpand,
-    Expand,
-    Collapse,
+    TogglePane,
     EnterSearch,
     CycleStateFilter,
     LittleCreate,
@@ -36,9 +34,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => ListInput::Down,
         KeyCode::Char('k') | KeyCode::Up => ListInput::Up,
-        KeyCode::Enter => ListInput::ToggleExpand,
-        KeyCode::Right => ListInput::Expand,
-        KeyCode::Left => ListInput::Collapse,
+        KeyCode::Enter => ListInput::TogglePane,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
         KeyCode::Char('c') => ListInput::LittleCreate,
@@ -176,14 +172,21 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
                 .split(inner);
-            draw_list(frame, chunks[0], state);
+            if state.pane_open {
+                let list_and_pane = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+                    .split(chunks[0]);
+                draw_list(frame, list_and_pane[0], state);
+                draw_pane(frame, list_and_pane[1], state);
+            } else {
+                draw_list(frame, chunks[0], state);
+            }
             draw_shortcuts_hint(frame, chunks[1], state);
             draw_toast(frame, chunks[2], state);
         }
     }
 }
-
-const BODY_INDENT: &str = "    ";
 
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
@@ -201,7 +204,6 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
     let available_width = list_area.width as usize;
-    let max_body_width = available_width.saturating_sub(BODY_INDENT.len());
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
@@ -236,68 +238,31 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Style::default()
         };
         items.push(ListItem::new(Line::from(spans)).style(style));
-        if state.expanded.contains(&issue.number) {
-            if issue.body.is_empty() {
-                items.push(ListItem::new(format!("{BODY_INDENT}(no description)")));
-            } else {
-                for line in issue.body.lines() {
-                    for wrapped in wrap_line(line, max_body_width) {
-                        items.push(ListItem::new(format!("{BODY_INDENT}{wrapped}")));
-                    }
-                }
-            }
-        }
     }
-    frame.render_widget(List::new(items), list_area);
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.cursor));
+    frame.render_stateful_widget(List::new(items), list_area, &mut list_state);
 }
 
-/// Word-wrap `line` into chunks no wider than `max_width`, breaking on
-/// whitespace. A single word longer than `max_width` is hard-broken on char
-/// boundaries since it has no whitespace to break at.
-fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        return vec![line.to_string()];
-    }
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in line.split_whitespace() {
-        let word_len = word.chars().count();
-        if word_len > max_width {
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-            }
-            let mut chars = word.chars().peekable();
-            while chars.peek().is_some() {
-                let chunk: String = chars.by_ref().take(max_width).collect();
-                if chars.peek().is_some() {
-                    lines.push(chunk);
-                } else {
-                    current = chunk;
-                }
-            }
-            continue;
-        }
-        let current_len = current.chars().count();
-        if current.is_empty() {
-            current = word.to_string();
-        } else if current_len + 1 + word_len <= max_width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(std::mem::take(&mut current));
-            current = word.to_string();
-        }
-    }
-    if !current.is_empty() || lines.is_empty() {
-        lines.push(current);
-    }
-    lines
+fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
+    let Some(issue) = state.selected_issue() else {
+        return;
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    let date = issue.created_at.split('T').next().unwrap_or(&issue.created_at);
+    let header = format!("#{} · opened {date}", issue.number);
+    frame.render_widget(Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)), chunks[0]);
+    let body = if issue.body.is_empty() { "(no description)" } else { issue.body.as_str() };
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[1]);
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = match &state.mode {
         Mode::Search => format!("/{}", state.search_query),
-        _ => "j/k move  enter/←/→ expand  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+        _ => "j/k move  enter toggle pane  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
     };
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
@@ -463,6 +428,17 @@ mod tests {
         assert_eq!(map_confirm_key(key(KeyCode::Esc)), ConfirmInput::No);
     }
 
+    #[test]
+    fn maps_enter_to_toggle_pane() {
+        assert_eq!(map_list_key(key(KeyCode::Enter)), ListInput::TogglePane);
+    }
+
+    #[test]
+    fn right_and_left_are_now_unbound() {
+        assert_eq!(map_list_key(key(KeyCode::Right)), ListInput::None);
+        assert_eq!(map_list_key(key(KeyCode::Left)), ListInput::None);
+    }
+
     use crate::gh::StateFilter;
     use crate::model::{Issue, IssueState, Label};
     use ratatui::backend::TestBackend;
@@ -511,13 +487,44 @@ mod tests {
     }
 
     #[test]
-    fn expanded_issue_shows_body_text() {
-        let mut issue = issue(1, "Fix bug");
-        issue.body = "steps to repro".into();
-        let mut state = AppState::new(vec![issue], vec![]);
-        state.toggle_expand();
+    fn pane_is_hidden_by_default() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
+        assert!(!rendered.contains("opened"), "pane should not render until toggled on");
+    }
+
+    #[test]
+    fn toggling_pane_shows_created_date_and_body() {
+        let mut selected = issue(1, "Fix bug");
+        selected.body = "steps to repro".into();
+        selected.created_at = "2026-06-01T12:00:00Z".into();
+        let mut state = AppState::new(vec![selected], vec![]);
+        state.toggle_pane();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("opened 2026-06-01"));
         assert!(rendered.contains("steps to repro"));
+    }
+
+    #[test]
+    fn pane_shows_placeholder_for_empty_body() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        state.toggle_pane();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("(no description)"));
+    }
+
+    #[test]
+    fn cursor_on_far_down_issue_stays_visible_in_small_viewport() {
+        let issues: Vec<Issue> = (1..=50).map(|n| issue(n, &format!("Issue number {n}"))).collect();
+        let mut state = AppState::new(issues, vec![]);
+        for _ in 0..40 {
+            state.move_cursor(1);
+        }
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Issue number 41"),
+            "selecting a far-down issue should scroll the viewport to keep its row visible"
+        );
     }
 
     #[test]
@@ -564,33 +571,6 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Close me"));
         assert!(rendered.contains("(y/n)"));
-    }
-
-    #[test]
-    fn maps_right_and_left_to_expand_and_collapse() {
-        assert_eq!(map_list_key(key(KeyCode::Right)), ListInput::Expand);
-        assert_eq!(map_list_key(key(KeyCode::Left)), ListInput::Collapse);
-    }
-
-    #[test]
-    fn wrap_line_leaves_short_line_unchanged() {
-        assert_eq!(wrap_line("short line", 40), vec!["short line".to_string()]);
-    }
-
-    #[test]
-    fn wrap_line_breaks_at_one_wrap_point() {
-        assert_eq!(
-            wrap_line("one two three", 7),
-            vec!["one two".to_string(), "three".to_string()]
-        );
-    }
-
-    #[test]
-    fn wrap_line_hard_breaks_a_single_overlong_word() {
-        assert_eq!(
-            wrap_line("supercalifragilisticexpialidocious", 10),
-            vec!["supercalif".to_string(), "ragilistic".to_string(), "expialidoc".to_string(), "ious".to_string()]
-        );
     }
 
     fn labels(names: &[&str]) -> Vec<Label> {
@@ -685,18 +665,6 @@ mod tests {
             long_col - long_row_start,
             "label badge should be right-aligned to the same column regardless of title length"
         );
-    }
-
-    #[test]
-    fn long_body_line_wraps_across_multiple_rows() {
-        let mut issue = issue(1, "Fix bug");
-        issue.body = "a ".repeat(60).trim().to_string();
-        let mut state = AppState::new(vec![issue], vec![]);
-        state.toggle_expand();
-        let rendered = render_to_string(&state);
-        let repeated_a_pattern = "a a a a a a a a a a";
-        let a_rows = rendered.lines().filter(|line| line.contains(repeated_a_pattern)).count();
-        assert!(a_rows > 1, "long body line should wrap across multiple rendered rows");
     }
 
     #[test]
