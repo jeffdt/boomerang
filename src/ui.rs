@@ -218,12 +218,9 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
                     label_spans.push(Span::raw(" "));
                     labels_width += 1;
                 }
-                let badge = format!(" {} ", label.name);
+                let badge = label.name.clone();
                 labels_width += badge.chars().count();
-                label_spans.push(Span::styled(
-                    badge,
-                    Style::default().bg(label_palette_color(&state.all_labels, &label.name)).fg(Color::Black),
-                ));
+                label_spans.push(Span::styled(badge, label_style(label_palette_color(&state.all_labels, &label.name))));
             }
             let left_width = left.chars().count();
             let pad = available_width.saturating_sub(left_width).saturating_sub(labels_width);
@@ -316,6 +313,10 @@ fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
 fn label_palette_color(all_labels: &[Label], name: &str) -> Color {
     let index = all_labels.iter().position(|l| l.name == name).unwrap_or(0);
     LABEL_PALETTE[index % LABEL_PALETTE.len()]
+}
+
+fn label_style(color: Color) -> Style {
+    Style::default().fg(color).add_modifier(Modifier::ITALIC)
 }
 
 fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str) {
@@ -607,6 +608,14 @@ mod tests {
         let colors: Vec<Color> = all.iter().map(|l| label_palette_color(&all, &l.name)).collect();
         let unique: std::collections::HashSet<_> = colors.iter().collect();
         assert_eq!(unique.len(), colors.len(), "with fewer labels than palette colors, none should collide");
+    }
+
+    #[test]
+    fn label_style_uses_colored_italic_text_with_no_background() {
+        let style = label_style(Color::Cyan);
+        assert_eq!(style.fg, Some(Color::Cyan));
+        assert_eq!(style.bg, None, "label style must not set a background color");
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
