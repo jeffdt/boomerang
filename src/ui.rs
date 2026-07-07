@@ -469,7 +469,15 @@ mod tests {
     use ratatui::Terminal;
 
     fn issue(number: u32, title: &str) -> Issue {
-        Issue { number, title: title.into(), body: String::new(), labels: vec![], state: IssueState::Open, url: String::new() }
+        Issue {
+            number,
+            title: title.into(),
+            body: String::new(),
+            labels: vec![],
+            state: IssueState::Open,
+            url: String::new(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
     }
 
     fn render_to_string(state: &AppState) -> String {

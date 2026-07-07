@@ -35,7 +35,7 @@ pub fn list_args(state: StateFilter) -> Vec<String> {
         "--state".into(),
         state.as_gh_arg().into(),
         "--json".into(),
-        "number,title,body,labels,state,url".into(),
+        "number,title,body,labels,state,url,createdAt".into(),
         "--limit".into(),
         "200".into(),
     ]
@@ -66,6 +66,8 @@ struct RawIssue {
     labels: Vec<RawLabel>,
     state: String,
     url: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
 }
 
 fn parse_state(raw: &str) -> Result<IssueState> {
@@ -91,6 +93,7 @@ pub fn parse_issues_json(json: &str) -> Result<Vec<Issue>> {
                     .collect(),
                 state: parse_state(&r.state)?,
                 url: r.url,
+                created_at: r.created_at,
             })
         })
         .collect()
@@ -197,13 +200,15 @@ mod tests {
         let json = r#"[
             {"number": 42, "title": "Fix login bug", "body": "Steps to repro...",
              "labels": [{"name": "bug", "color": "d73a4a"}], "state": "OPEN",
-             "url": "https://github.com/owner/repo/issues/42"}
+             "url": "https://github.com/owner/repo/issues/42",
+             "createdAt": "2026-06-01T12:00:00Z"}
         ]"#;
         let issues = parse_issues_json(json).unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].number, 42);
         assert_eq!(issues[0].title, "Fix login bug");
         assert_eq!(issues[0].state, crate::model::IssueState::Open);
+        assert_eq!(issues[0].created_at, "2026-06-01T12:00:00Z");
         assert_eq!(
             issues[0].labels,
             vec![crate::model::Label { name: "bug".into(), color: "d73a4a".into() }]
@@ -212,14 +217,14 @@ mod tests {
 
     #[test]
     fn parses_closed_state_case_insensitively() {
-        let json = r#"[{"number": 1, "title": "t", "body": "", "labels": [], "state": "closed", "url": "u"}]"#;
+        let json = r#"[{"number": 1, "title": "t", "body": "", "labels": [], "state": "closed", "url": "u", "createdAt": "2026-01-01T00:00:00Z"}]"#;
         let issues = parse_issues_json(json).unwrap();
         assert_eq!(issues[0].state, crate::model::IssueState::Closed);
     }
 
     #[test]
     fn rejects_unrecognized_state() {
-        let json = r#"[{"number": 1, "title": "t", "body": "", "labels": [], "state": "weird", "url": "u"}]"#;
+        let json = r#"[{"number": 1, "title": "t", "body": "", "labels": [], "state": "weird", "url": "u", "createdAt": "2026-01-01T00:00:00Z"}]"#;
         assert!(parse_issues_json(json).is_err());
     }
 
@@ -241,6 +246,7 @@ mod tests {
         let args = list_args(StateFilter::Closed);
         assert!(args.contains(&"--state".to_string()));
         assert!(args.contains(&"closed".to_string()));
+        assert!(args.iter().any(|a| a.contains("createdAt")), "must request createdAt for the description pane");
     }
 
     #[test]

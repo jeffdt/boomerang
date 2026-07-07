@@ -18,6 +18,7 @@ pub struct Issue {
     pub labels: Vec<Label>,
     pub state: IssueState,
     pub url: String,
+    pub created_at: String,
 }
 
 use crate::gh::StateFilter;
@@ -400,6 +401,7 @@ mod tests {
             labels: vec![],
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
+            created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
