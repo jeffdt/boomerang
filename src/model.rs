@@ -75,6 +75,7 @@ pub struct AppState {
     pub search_query: String,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, Instant)>,
+    pub pane_open: bool,
 }
 
 impl AppState {
@@ -89,6 +90,7 @@ impl AppState {
             search_query: String::new(),
             search_ranked: Vec::new(),
             status: None,
+            pane_open: false,
         }
     }
 
@@ -125,6 +127,10 @@ impl AppState {
                 self.expanded.insert(number);
             }
         }
+    }
+
+    pub fn toggle_pane(&mut self) {
+        self.pane_open = !self.pane_open;
     }
 
     pub fn expand_selected(&mut self) {
@@ -643,5 +649,15 @@ mod tests {
         state.status = Some(("copied: #1".to_string(), set_at));
         state.clear_expired_status();
         assert!(state.status.is_none(), "a status older than STATUS_TOAST_DURATION should be cleared");
+    }
+
+    #[test]
+    fn toggle_pane_flips_the_flag_and_starts_closed() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert!(!state.pane_open, "pane should be hidden on a fresh AppState");
+        state.toggle_pane();
+        assert!(state.pane_open);
+        state.toggle_pane();
+        assert!(!state.pane_open);
     }
 }
