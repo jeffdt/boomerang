@@ -45,20 +45,11 @@ pub struct PendingState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadingAnimation {
     MatrixRain,
-    Pipes,
-    Starfield,
-    BlackHole,
-    BonsaiSprout,
+    ColorRipple,
 }
 
 impl LoadingAnimation {
-    const ALL: [LoadingAnimation; 5] = [
-        LoadingAnimation::MatrixRain,
-        LoadingAnimation::Pipes,
-        LoadingAnimation::Starfield,
-        LoadingAnimation::BlackHole,
-        LoadingAnimation::BonsaiSprout,
-    ];
+    const ALL: [LoadingAnimation; 1] = [LoadingAnimation::MatrixRain];
 
     pub fn for_launch() -> Self {
         std::env::var("ISSUE_BROWSER_LOADING_ANIMATION")
@@ -70,10 +61,7 @@ impl LoadingAnimation {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "matrix" | "matrix-rain" | "rain" => Some(Self::MatrixRain),
-            "pipes" | "pipe" => Some(Self::Pipes),
-            "starfield" | "stars" | "hyperspace" => Some(Self::Starfield),
-            "black-hole" | "blackhole" | "hole" => Some(Self::BlackHole),
-            "bonsai" | "sprout" | "bonsai-sprout" => Some(Self::BonsaiSprout),
+            "ripple" | "color-ripple" | "bullseye" => Some(Self::ColorRipple),
             _ => None,
         }
     }
@@ -878,16 +866,10 @@ mod tests {
     fn loading_state_reports_message_and_selected_animation() {
         let state = AppState::loading();
         assert!(state.is_loading());
-        assert!(matches!(
+        assert_eq!(
             state.loading.as_ref().map(|loading| loading.animation),
-            Some(
-                LoadingAnimation::MatrixRain
-                    | LoadingAnimation::Pipes
-                    | LoadingAnimation::Starfield
-                    | LoadingAnimation::BlackHole
-                    | LoadingAnimation::BonsaiSprout
-            )
-        ));
+            Some(LoadingAnimation::MatrixRain)
+        );
         assert!(state
             .loading_message()
             .expect("loading message")
@@ -916,22 +898,11 @@ mod tests {
             Some(LoadingAnimation::MatrixRain)
         );
         assert_eq!(
-            LoadingAnimation::parse("pipes"),
-            Some(LoadingAnimation::Pipes)
-        );
-        assert_eq!(
-            LoadingAnimation::parse("hyperspace"),
-            Some(LoadingAnimation::Starfield)
-        );
-        assert_eq!(
-            LoadingAnimation::parse("black-hole"),
-            Some(LoadingAnimation::BlackHole)
-        );
-        assert_eq!(
-            LoadingAnimation::parse("bonsai"),
-            Some(LoadingAnimation::BonsaiSprout)
+            LoadingAnimation::parse("bullseye"),
+            Some(LoadingAnimation::ColorRipple)
         );
         assert_eq!(LoadingAnimation::parse("orbit"), None);
+        assert_eq!(LoadingAnimation::parse("pipes"), None);
         assert_eq!(LoadingAnimation::parse("unknown"), None);
     }
 

@@ -2,7 +2,7 @@ use crate::model::{AppState, LoadingAnimation};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 use std::time::Duration;
 
@@ -43,7 +43,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
     );
     draw_animation(frame, chunks[1], state);
     frame.render_widget(
-        Paragraph::new("q quit").wrap(ratatui::widgets::Wrap { trim: false }),
+        Paragraph::new("q quit").wrap(Wrap { trim: false }),
         chunks[2],
     );
 }
@@ -58,10 +58,7 @@ fn draw_animation(frame: &mut Frame, area: Rect, state: &AppState) {
     let elapsed = loading.started_at.elapsed();
     match loading.animation {
         LoadingAnimation::MatrixRain => draw_matrix_rain(frame, area, elapsed),
-        LoadingAnimation::Pipes => draw_pipes(frame, area, elapsed),
-        LoadingAnimation::Starfield => draw_starfield(frame, area, elapsed),
-        LoadingAnimation::BlackHole => draw_black_hole(frame, area, elapsed),
-        LoadingAnimation::BonsaiSprout => draw_bonsai_sprout(frame, area, elapsed),
+        LoadingAnimation::ColorRipple => draw_color_ripple(frame, area, elapsed),
     }
 }
 
@@ -158,6 +155,49 @@ fn matrix_rain_style(distance: usize, tail: usize) -> Style {
     }
 }
 
+fn draw_color_ripple(frame: &mut Frame, area: Rect, elapsed: Duration) {
+    let tick = (elapsed.as_millis() / 60) as usize;
+    let height = area.height as usize;
+    let width = area.width as usize;
+    let mut canvas = blank_canvas(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            if let Some(cell) = ripple_cell(x, y, width, height, tick) {
+                put_cell(&mut canvas, x as isize, y as isize, cell.ch, cell.style);
+            }
+        }
+    }
+    render_canvas(frame, area, canvas);
+}
+
+fn ripple_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> Option<Cell> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let center_x = width as isize / 2;
+    let center_y = height as isize / 2;
+    let dx = x as isize - center_x;
+    let dy = (y as isize - center_y) * 2;
+    let distance = (dx * dx + dy * dy) as usize;
+    let band = (distance / 7 + tick * 2) % 32;
+    let shimmer = (x * 11 + y * 17 + tick) % 29;
+    let (ch, color, bold) = match band {
+        0..=1 => ('●', Color::White, true),
+        2..=3 => ('◆', Color::Cyan, true),
+        4..=5 => ('◇', Color::Magenta, true),
+        6..=7 => ('·', Color::Blue, false),
+        8 if shimmer < 4 => ('.', Color::DarkGray, false),
+        _ if shimmer == 0 => ('.', Color::DarkGray, false),
+        _ => return None,
+    };
+    let style = if bold {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color)
+    };
+    Some(Cell { ch, style })
+}
+
 fn matrix_hash(a: u64, b: u64, c: u64, d: u64) -> u64 {
     let mut value = a.wrapping_mul(0x9E37_79B1_85EB_CA87)
         ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
@@ -168,287 +208,6 @@ fn matrix_hash(a: u64, b: u64, c: u64, d: u64) -> u64 {
     value ^= value >> 33;
     value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
     value ^ (value >> 33)
-}
-
-fn draw_pipes(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let tick = (elapsed.as_millis() / 80) as usize;
-    let height = area.height as usize;
-    let width = area.width as usize;
-    let pipe_count = (width / 12).clamp(4, 9);
-    let segment_count = ((width + height) / 2).clamp(24, 64);
-    let mut canvas = blank_canvas(width, height);
-    for pipe in 0..pipe_count {
-        let mut x = ((pipe * 11 + tick / 2) % width) as isize;
-        let mut y = ((pipe * 7 + tick / 3) % height) as isize;
-        let mut direction = (pipe + tick / 17) % 4;
-        let style = pipe_style(pipe);
-        for step in 0..segment_count {
-            let previous = direction;
-            let turn = (pipe * 3 + step * 5 + tick / 7) % 10;
-            if turn == 0 {
-                direction = (direction + 1) % 4;
-            } else if turn == 1 {
-                direction = (direction + 3) % 4;
-            }
-            put_cell(&mut canvas, x, y, pipe_glyph(previous, direction), style);
-            match direction {
-                0 => y = (y + height as isize - 1) % height as isize,
-                1 => x = (x + 1) % width as isize,
-                2 => y = (y + 1) % height as isize,
-                _ => x = (x + width as isize - 1) % width as isize,
-            }
-        }
-    }
-    render_canvas(frame, area, canvas);
-}
-
-fn draw_starfield(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let tick = (elapsed.as_millis() / 70) as isize;
-    let height = area.height as usize;
-    let width = area.width as usize;
-    let center_x = width as isize / 2;
-    let center_y = height as isize / 2;
-    let mut canvas = blank_canvas(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as isize - center_x;
-            let dy = y as isize - center_y;
-            let distance = dx * dx + dy * dy;
-            let shimmer = (distance + tick * 9 + x as isize * 3 + y as isize * 11).rem_euclid(61);
-            if x as isize == center_x && y as isize == center_y {
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    '✦',
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                );
-            } else if shimmer < 3 {
-                let (ch, color) = if distance < 30 {
-                    ('·', Color::White)
-                } else if distance < 160 {
-                    ('*', Color::Cyan)
-                } else {
-                    ('+', Color::Blue)
-                };
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    ch,
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                );
-            } else if shimmer < 6 {
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    '.',
-                    Style::default().fg(Color::DarkGray),
-                );
-            }
-        }
-    }
-    render_canvas(frame, area, canvas);
-}
-
-fn draw_black_hole(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let tick = (elapsed.as_millis() / 80) as isize;
-    let height = area.height as usize;
-    let width = area.width as usize;
-    let center_x = width as isize / 2;
-    let center_y = height as isize / 2;
-    let mut canvas = blank_canvas(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as isize - center_x;
-            let dy = y as isize - center_y;
-            let distance = dx * dx + dy * dy;
-            let swirl =
-                (distance + tick * 5 + x as isize * y as isize + dx * 7 - dy * 3).rem_euclid(67);
-            if distance < 7 {
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    '@',
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                );
-            } else if distance < 18 {
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    '#',
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                );
-            } else if swirl < 4 {
-                let index = (x * 13 + y * 5 + tick as usize) % MATRIX_CHARS.len();
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    MATRIX_CHARS[index] as char,
-                    Style::default().fg(Color::Magenta),
-                );
-            } else if swirl < 8 {
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    '.',
-                    Style::default().fg(Color::Blue),
-                );
-            }
-        }
-    }
-    render_canvas(frame, area, canvas);
-}
-
-fn draw_bonsai_sprout(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let tick = (elapsed.as_millis() / 120) as usize;
-    let height = area.height as usize;
-    let width = area.width as usize;
-    let mut canvas = blank_canvas(width, height);
-    let base_y = height.saturating_sub(2) as isize;
-    let trunk_x = width as isize / 2;
-    draw_pot(&mut canvas, trunk_x, height.saturating_sub(1) as isize);
-    let max_trunk = height.saturating_sub(4).min(12) as isize;
-    let growth = tick % (max_trunk.max(1) as usize + 26);
-    let trunk_height = growth.min(max_trunk.max(0) as usize) as isize;
-    for step in 0..=trunk_height {
-        put_cell(
-            &mut canvas,
-            trunk_x,
-            base_y - step,
-            '│',
-            Style::default().fg(Color::Yellow),
-        );
-    }
-    let branch_specs = [(2, -1, 5), (4, 1, 5), (7, -1, 7), (9, 1, 6)];
-    for (start, direction, length) in branch_specs {
-        draw_branch(
-            &mut canvas,
-            trunk_x,
-            base_y,
-            growth,
-            start,
-            direction,
-            length,
-        );
-    }
-    if trunk_height == max_trunk && max_trunk > 0 {
-        draw_leaf_cluster(&mut canvas, trunk_x, base_y - max_trunk, tick, 0);
-    }
-    render_canvas(frame, area, canvas);
-}
-
-fn draw_pot(canvas: &mut [Vec<Cell>], center_x: isize, y: isize) {
-    let style = Style::default().fg(Color::Blue);
-    for (offset, ch) in [(-2, '╰'), (-1, '─'), (0, '┴'), (1, '─'), (2, '╯')] {
-        put_cell(canvas, center_x + offset, y, ch, style);
-    }
-}
-
-fn draw_branch(
-    canvas: &mut [Vec<Cell>],
-    trunk_x: isize,
-    base_y: isize,
-    growth: usize,
-    start: isize,
-    direction: isize,
-    length: isize,
-) {
-    if growth < start as usize {
-        return;
-    }
-    let branch_growth = (growth - start as usize).min(length as usize) as isize;
-    let branch_y = base_y - start;
-    let glyph = if direction < 0 { '╱' } else { '╲' };
-    let style = Style::default().fg(Color::Yellow);
-    for step in 1..=branch_growth {
-        put_cell(
-            canvas,
-            trunk_x + direction * step,
-            branch_y - step / 2,
-            glyph,
-            style,
-        );
-    }
-    if growth > (start + length) as usize {
-        draw_leaf_cluster(
-            canvas,
-            trunk_x + direction * length,
-            branch_y - length / 2,
-            growth,
-            start as usize,
-        );
-    }
-}
-
-fn draw_leaf_cluster(
-    canvas: &mut [Vec<Cell>],
-    center_x: isize,
-    center_y: isize,
-    tick: usize,
-    seed: usize,
-) {
-    let leaves: [(isize, isize, char); 6] = [
-        (0, 0, '*'),
-        (-1, 0, 'o'),
-        (1, 0, 'o'),
-        (0, -1, '*'),
-        (-1, -1, '·'),
-        (1, -1, '·'),
-    ];
-    for (index, (dx, dy, ch)) in leaves.into_iter().enumerate() {
-        if (tick + seed + index) % 3 == 0 && ch == '·' {
-            continue;
-        }
-        let color = match (tick + seed + index) % 4 {
-            0 => Color::Green,
-            1 => Color::Cyan,
-            2 => Color::Magenta,
-            _ => Color::Green,
-        };
-        put_cell(
-            canvas,
-            center_x + dx,
-            center_y + dy,
-            ch,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        );
-    }
-}
-
-fn pipe_style(index: usize) -> Style {
-    let color = match index % 6 {
-        0 => Color::Cyan,
-        1 => Color::Magenta,
-        2 => Color::Yellow,
-        3 => Color::Green,
-        4 => Color::Blue,
-        _ => Color::Red,
-    };
-    Style::default().fg(color).add_modifier(Modifier::BOLD)
-}
-
-fn pipe_glyph(previous: usize, next: usize) -> char {
-    match (previous, next) {
-        (0, 0) | (2, 2) => '│',
-        (1, 1) | (3, 3) => '─',
-        (0, 1) | (3, 2) => '┌',
-        (1, 2) | (0, 3) => '┐',
-        (2, 1) | (3, 0) => '└',
-        (1, 0) | (2, 3) => '┘',
-        _ => '┼',
-    }
 }
 
 fn blank_canvas(width: usize, height: usize) -> Vec<Vec<Cell>> {
@@ -547,6 +306,28 @@ mod tests {
         assert!(
             saw_churn,
             "matrix rain glyphs should mutate inside existing trails"
+        );
+    }
+
+    #[test]
+    fn ripple_emits_center_weighted_bullseye_bands() {
+        let center = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
+        assert_eq!(center.ch, '●');
+        assert_eq!(center.style.fg, Some(Color::White));
+        assert!(center.style.add_modifier.contains(Modifier::BOLD));
+
+        let outer = ripple_cell(46, 9, 80, 18, 0).expect("outer ripple band");
+        assert_eq!(outer.ch, '◇');
+        assert_eq!(outer.style.fg, Some(Color::Magenta));
+    }
+
+    #[test]
+    fn ripple_bands_expand_over_time() {
+        let first = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
+        let later = ripple_cell(40, 9, 80, 18, 1);
+        assert!(
+            later.is_none_or(|cell| cell.ch != first.ch || cell.style.fg != first.style.fg),
+            "ripple center should change as the wave passes"
         );
     }
 }

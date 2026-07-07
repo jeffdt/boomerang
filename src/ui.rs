@@ -571,7 +571,7 @@ mod tests {
     use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     fn issue(number: u32, title: &str) -> Issue {
         Issue {
@@ -629,24 +629,14 @@ mod tests {
     }
 
     #[test]
-    fn loading_animation_variants_render_distinctive_content() {
-        let cases = [
-            (LoadingAnimation::Pipes, "─"),
-            (LoadingAnimation::Starfield, "✦"),
-            (LoadingAnimation::BlackHole, "@"),
-            (LoadingAnimation::BonsaiSprout, "╰"),
-        ];
-        for (animation, expected) in cases {
-            let mut state = AppState::loading();
-            let loading = state.loading.as_mut().expect("loading state");
-            loading.animation = animation;
-            loading.started_at = Instant::now() - Duration::from_millis(1_400);
-            let rendered = render_to_string(&state);
-            assert!(
-                rendered.contains(expected),
-                "{animation:?} should render its distinctive glyph {expected}"
-            );
-        }
+    fn color_ripple_loading_animation_renders_bullseye_content() {
+        let mut state = AppState::loading();
+        let loading = state.loading.as_mut().expect("loading state");
+        loading.animation = LoadingAnimation::ColorRipple;
+        loading.started_at = Instant::now();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("●"));
+        assert!(rendered.contains("◆") || rendered.contains("◇"));
     }
 
     #[test]
