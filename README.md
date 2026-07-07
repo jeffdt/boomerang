@@ -30,7 +30,7 @@ view; adjust `-w`/`-h` to taste.
 - Auto-detects the repo from the current directory via `gh`'s own git-remote
   detection — no config or `--repo` flag needed.
 - Fetches all open issues (including body and labels) in one `gh issue list`
-  call, so inline expand never needs a follow-up network call.
+  call, so the description pane never needs a follow-up network call.
 - All GitHub interaction shells out to the `gh` CLI, which must be installed
   and authenticated (`gh auth login`).
 
@@ -39,7 +39,7 @@ view; adjust `-w`/`-h` to taste.
 | Key | Action |
 | --- | --- |
 | `j`/`k` (or `↓`/`↑`) | Move the cursor |
-| `Enter` | Expand/collapse the selected issue's description |
+| `Enter` | Toggle the description pane for the selected issue |
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → closed → all |
 | `c` | Little create: title only, created immediately |
