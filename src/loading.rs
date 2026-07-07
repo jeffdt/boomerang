@@ -66,38 +66,108 @@ fn draw_animation(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_matrix_rain(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let tick = (elapsed.as_millis() / 80) as usize;
+    let tick = (elapsed.as_millis() / 70) as usize;
     let height = area.height as usize;
     let width = area.width as usize;
-    let tail = 6usize;
-    let cycle = height + tail + 6;
     let mut canvas = blank_canvas(width, height);
     for y in 0..height {
         for x in 0..width {
-            let column_seed = (x * 17 + 11) % cycle;
-            let active_column = (x + column_seed) % 4 == 0;
-            let head = ((tick + column_seed) % cycle) as isize - 3;
-            let distance = head - y as isize;
-            if active_column && (0..=tail as isize).contains(&distance) {
-                let index = (x * 13 + y * 7 + tick) % MATRIX_CHARS.len();
-                let style = match distance {
-                    0 => Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                    1 | 2 => Style::default().fg(Color::Green),
-                    _ => Style::default().fg(Color::DarkGray),
-                };
-                put_cell(
-                    &mut canvas,
-                    x as isize,
-                    y as isize,
-                    MATRIX_CHARS[index] as char,
-                    style,
-                );
+            if let Some(cell) = matrix_rain_cell(x, y, width, height, tick) {
+                put_cell(&mut canvas, x as isize, y as isize, cell.ch, cell.style);
             }
         }
     }
     render_canvas(frame, area, canvas);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MatrixColumn {
+    speed: usize,
+    base_tail: usize,
+    gap: usize,
+    phase: usize,
+}
+
+impl MatrixColumn {
+    fn cycle_len(&self, height: usize) -> usize {
+        height + self.base_tail + self.gap
+    }
+}
+
+fn matrix_rain_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> Option<Cell> {
+    let column = matrix_column(x, width, height)?;
+    let local_tick = tick / column.speed + column.phase;
+    let generation = local_tick / column.cycle_len(height);
+    let tail = matrix_tail_len(x, height, generation, column.base_tail);
+    let head = (local_tick % column.cycle_len(height)) as isize - tail as isize;
+    let distance = head - y as isize;
+    if !(0..=tail as isize).contains(&distance) {
+        return None;
+    }
+    let char_tick = tick / (column.speed + 1);
+    let index = matrix_hash(x as u64, y as u64, char_tick as u64, generation as u64)
+        % MATRIX_CHARS.len() as u64;
+    Some(Cell {
+        ch: MATRIX_CHARS[index as usize] as char,
+        style: matrix_rain_style(distance as usize, tail),
+    })
+}
+
+fn matrix_column(x: usize, width: usize, height: usize) -> Option<MatrixColumn> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let seed = matrix_hash(x as u64, width as u64, height as u64, 0);
+    let density = (width / 20).clamp(4, 7) as u64;
+    if seed % 10 >= density {
+        return None;
+    }
+    let max_tail = height.clamp(4, 14);
+    let base_tail = 4 + ((seed >> 8) as usize % max_tail);
+    let speed = 1 + ((seed >> 20) as usize % 3);
+    let gap = height / 2 + ((seed >> 32) as usize % height.max(1)) + speed * 2;
+    Some(MatrixColumn {
+        speed,
+        base_tail,
+        gap,
+        phase: (seed >> 44) as usize % (height + base_tail + gap),
+    })
+}
+
+fn matrix_tail_len(x: usize, height: usize, generation: usize, base_tail: usize) -> usize {
+    let max_tail = height.clamp(4, 14);
+    let variation = matrix_hash(x as u64, generation as u64, height as u64, 1) as usize % max_tail;
+    (base_tail / 2 + variation).clamp(3, height + 6)
+}
+
+fn matrix_rain_style(distance: usize, tail: usize) -> Style {
+    if distance == 0 {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else if distance <= 2 {
+        Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD)
+    } else if distance <= tail / 2 {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
+fn matrix_hash(a: u64, b: u64, c: u64, d: u64) -> u64 {
+    let mut value = a.wrapping_mul(0x9E37_79B1_85EB_CA87)
+        ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ c.wrapping_mul(0x1656_67B1_9E37_79F9)
+        ^ d.wrapping_mul(0x85EB_CA77_C2B2_AE63);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    value ^ (value >> 33)
 }
 
 fn draw_pipes(frame: &mut Frame, area: Rect, elapsed: Duration) {
@@ -407,4 +477,76 @@ fn render_canvas(frame: &mut Frame, area: Rect, canvas: Vec<Vec<Cell>>) {
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matrix_columns_vary_speed_tail_and_gap() {
+        let columns = (0..80)
+            .filter_map(|x| matrix_column(x, 80, 18))
+            .collect::<Vec<_>>();
+        assert!(
+            columns.len() >= 25,
+            "matrix rain should keep a rich column density at normal popup width"
+        );
+        assert!(
+            columns.iter().any(|column| column.speed == 1)
+                && columns.iter().any(|column| column.speed > 1),
+            "columns should not all fall at the same speed"
+        );
+        assert!(
+            columns
+                .windows(2)
+                .any(|pair| pair[0].base_tail != pair[1].base_tail),
+            "columns should not all share one tail length"
+        );
+        assert!(
+            columns.windows(2).any(|pair| pair[0].gap != pair[1].gap),
+            "columns should not all share one respawn gap"
+        );
+    }
+
+    #[test]
+    fn matrix_tail_length_changes_between_generations() {
+        let x = (0..80)
+            .find(|&x| matrix_column(x, 80, 18).is_some())
+            .expect("active matrix column");
+        let column = matrix_column(x, 80, 18).expect("active matrix column");
+        let first = matrix_tail_len(x, 18, 0, column.base_tail);
+        assert!(
+            (1..20).any(|generation| matrix_tail_len(x, 18, generation, column.base_tail) != first),
+            "respawned matrix columns should vary tail length across generations"
+        );
+    }
+
+    #[test]
+    fn matrix_cells_churn_glyphs_while_using_head_and_tail_styles() {
+        let mut saw_head = false;
+        let mut saw_tail = false;
+        let mut saw_churn = false;
+        for x in 0..80 {
+            for y in 0..18 {
+                let first = matrix_rain_cell(x, y, 80, 18, 120);
+                let later = matrix_rain_cell(x, y, 80, 18, 126);
+                if let Some(cell) = first {
+                    saw_head |= cell.style.fg == Some(Color::White)
+                        && cell.style.add_modifier.contains(Modifier::BOLD);
+                    saw_tail |= cell.style.fg == Some(Color::DarkGray)
+                        && cell.style.add_modifier.contains(Modifier::DIM);
+                    if let Some(later) = later {
+                        saw_churn |= cell.ch != later.ch;
+                    }
+                }
+            }
+        }
+        assert!(saw_head, "matrix rain should render bright heads");
+        assert!(saw_tail, "matrix rain should render dim fading tails");
+        assert!(
+            saw_churn,
+            "matrix rain glyphs should mutate inside existing trails"
+        );
+    }
 }
