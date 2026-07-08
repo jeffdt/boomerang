@@ -342,10 +342,10 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = if state.is_loading() {
+    let text = if state.is_loading() || state.is_pending() {
+        // The pending spinner text itself renders in draw_toast; repeating it
+        // here would show it twice stacked in the footer.
         "q quit".to_string()
-    } else if let Some(pending) = state.pending_message() {
-        format!("{pending}  q quit")
     } else {
         match &state.mode {
             Mode::Search => format!("/{}", state.search_query),
@@ -1124,6 +1124,39 @@ mod tests {
             .find(|line| line.contains("Issues (Open)"))
             .expect("list header rendered");
         assert!(header.contains("Updating issue..."));
+    }
+
+    #[test]
+    fn pending_close_shows_spinner_in_list_header_and_toast_only() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        let rendered = render_to_string(&state);
+        assert_eq!(
+            rendered.matches("Closing issue...").count(),
+            2,
+            "expected the spinner text once in the list header and once in the toast row, got: {rendered:?}"
+        );
+        let shortcuts_line = rendered
+            .lines()
+            .find(|line| line.contains("q quit"))
+            .expect("shortcuts hint rendered");
+        assert!(
+            !shortcuts_line.contains("Closing issue..."),
+            "shortcuts hint row should not repeat the spinner text"
+        );
+    }
+
+    #[test]
+    fn pending_edit_in_form_mode_shows_spinner_only_once() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.enter_edit();
+        state.begin_pending(PendingOperation::EditIssue);
+        let rendered = render_to_string(&state);
+        let occurrences = rendered.matches("Updating issue...").count();
+        assert_eq!(
+            occurrences, 1,
+            "spinner text should render exactly once, got: {rendered:?}"
+        );
     }
 
     #[test]

@@ -34,6 +34,7 @@ const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 pub enum PendingOperation {
     CreateIssue,
     EditIssue,
+    CloseIssue,
 }
 
 #[derive(Debug, Clone)]
@@ -718,6 +719,7 @@ impl AppState {
         let action = match pending.operation {
             PendingOperation::CreateIssue => "Creating issue",
             PendingOperation::EditIssue => "Updating issue",
+            PendingOperation::CloseIssue => "Closing issue",
         };
         Some(format!(
             "{} {action}...",
@@ -1458,6 +1460,14 @@ mod tests {
             .pending_message()
             .unwrap()
             .contains("Updating issue..."));
+    }
+
+    #[test]
+    fn begin_close_pending_reports_spinner_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        assert!(state.is_pending());
+        assert!(state.pending_message().unwrap().contains("Closing issue..."));
     }
 
     #[test]

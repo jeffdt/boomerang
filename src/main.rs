@@ -233,6 +233,7 @@ fn run_loading_preview(
 enum MutationDraft {
     LittleCreate { title: String },
     Form(FormState),
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +256,7 @@ struct EditRequest {
 enum MutationRequest {
     Create(CreateRequest),
     Edit(EditRequest),
+    Close(u32),
 }
 
 impl MutationRequest {
@@ -262,6 +264,7 @@ impl MutationRequest {
         match self {
             MutationRequest::Create(_) => PendingOperation::CreateIssue,
             MutationRequest::Edit(_) => PendingOperation::EditIssue,
+            MutationRequest::Close(_) => PendingOperation::CloseIssue,
         }
     }
 
@@ -277,6 +280,7 @@ impl MutationRequest {
                 &request.add_labels,
                 &request.remove_labels,
             ),
+            MutationRequest::Close(number) => source.close(number),
         }
     }
 }
@@ -456,8 +460,14 @@ fn event_loop<S: IssueSource>(
                 Mode::ConfirmClose(_) => match map_confirm_key(key) {
                     ConfirmInput::Yes => {
                         if let Some(number) = state.confirm_close_yes() {
-                            let result = source.close(number);
-                            apply_result(state, source, result);
+                            start_mutation(
+                                state,
+                                &mut mutation_rx,
+                                &mut mutation_draft,
+                                (*source).clone(),
+                                MutationDraft::None,
+                                MutationRequest::Close(number),
+                            );
                         }
                     }
                     ConfirmInput::No => state.confirm_close_no(),
@@ -615,6 +625,7 @@ fn success_status_action(operation: PendingOperation) -> &'static str {
     match operation {
         PendingOperation::CreateIssue => "created issue",
         PendingOperation::EditIssue => "updated issue",
+        PendingOperation::CloseIssue => "closed issue",
     }
 }
 
@@ -628,6 +639,7 @@ fn show_pending_draft(state: &mut AppState, draft: &MutationDraft) {
     match draft {
         MutationDraft::LittleCreate { title } => state.mode = Mode::LittleCreate(title.clone()),
         MutationDraft::Form(form) => state.mode = Mode::Form(Box::new(form.clone())),
+        MutationDraft::None => {}
     }
 }
 
@@ -682,15 +694,6 @@ fn submit_form<S: IssueSource>(
                 labels: submission.add_labels,
             }),
         ),
-    }
-}
-
-/// Refresh the issue list on success, or surface the error on the toast line.
-/// Used by synchronous close actions.
-fn apply_result<S: IssueSource>(state: &mut AppState, source: &S, result: anyhow::Result<()>) {
-    match result {
-        Ok(()) => refresh(state, source),
-        Err(e) => state.set_status(gh_error_status(&e)),
     }
 }
 
@@ -929,6 +932,47 @@ mod tests {
         assert_eq!(
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("updated issue in 950ms, refresh 75ms")
+        );
+    }
+
+    #[test]
+    fn finish_close_success_updates_issues_and_reports_timing() {
+        let remaining = issue(7, "Still open");
+        let mut state = AppState::new(vec![issue(42, "To be closed"), remaining.clone()], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        finish_mutation(
+            &mut state,
+            Some(MutationDraft::None),
+            Ok(MutationSuccess {
+                operation: PendingOperation::CloseIssue,
+                issues: vec![remaining.clone()],
+                action_elapsed: Duration::from_millis(400),
+                refresh_elapsed: Duration::from_millis(30),
+            }),
+        );
+        assert_eq!(state.issues, vec![remaining]);
+        assert!(!state.is_pending());
+        assert_eq!(state.mode, Mode::List);
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("closed issue in 400ms, refresh 30ms")
+        );
+    }
+
+    #[test]
+    fn finish_close_failure_leaves_list_mode_and_reports_error() {
+        let mut state = AppState::new(vec![issue(42, "To be closed")], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        finish_mutation(
+            &mut state,
+            Some(MutationDraft::None),
+            Err(anyhow::anyhow!("close failed")),
+        );
+        assert!(!state.is_pending());
+        assert_eq!(state.mode, Mode::List);
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("gh error: close failed")
         );
     }
 
