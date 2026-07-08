@@ -290,6 +290,8 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
+        // 2 rows reserved for the title: most titles wrap to 1 line, leaving
+        // a blank row, but longer titles need the second line.
         .constraints([
             Constraint::Length(2),
             Constraint::Length(1),
