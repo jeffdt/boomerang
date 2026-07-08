@@ -132,6 +132,7 @@ pub struct AppState {
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
     pub pane_open: bool,
+    pub repo_name_with_owner: Option<String>,
 }
 
 impl AppState {
@@ -148,6 +149,7 @@ impl AppState {
             loading: None,
             pending: None,
             pane_open: false,
+            repo_name_with_owner: None,
         }
     }
 
@@ -923,5 +925,11 @@ mod tests {
         assert!(state.pane_open);
         state.toggle_pane();
         assert!(!state.pane_open);
+    }
+
+    #[test]
+    fn repo_name_with_owner_defaults_to_none() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.repo_name_with_owner, None);
     }
 }
