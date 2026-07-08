@@ -1088,23 +1088,20 @@ mod tests {
     }
 
     #[test]
-    fn detail_pane_shows_full_bold_title_above_meta_line() {
-        let mut selected = issue(1, "Fix bug");
-        selected.created_at = "2026-06-01T12:00:00Z".into();
-        let mut state = AppState::new(vec![selected], vec![]);
+    fn detail_pane_shows_full_title_as_an_additional_occurrence() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let closed_rendered = render_to_string(&state);
+        assert_eq!(
+            closed_rendered.matches("Fix bug").count(),
+            1,
+            "title should appear exactly once (in the list) when the pane is closed"
+        );
         state.toggle_pane();
-        let rendered = render_to_string(&state);
-        let title_row = rendered
-            .lines()
-            .position(|line| line.contains("Fix bug"))
-            .expect("title rendered");
-        let meta_row = rendered
-            .lines()
-            .position(|line| line.contains("opened 2026-06-01"))
-            .expect("meta line rendered");
-        assert!(
-            title_row < meta_row,
-            "title should render above the meta line"
+        let open_rendered = render_to_string(&state);
+        assert_eq!(
+            open_rendered.matches("Fix bug").count(),
+            2,
+            "title should appear a second time (in the pane) once it's open"
         );
     }
 
