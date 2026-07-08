@@ -377,7 +377,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         match &state.mode {
             Mode::Search => format!("/{}", state.search_query),
             Mode::Form(_) => "tab/shift+tab field  ctrl+s submit  ctrl+w delete word  ctrl+u clear line  esc cancel".to_string(),
-            _ => "j/k move  enter toggle pane  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+            _ => "j/k move  h hide pane  / search  a state  c/C create  enter/e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
         }
     };
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
@@ -1397,5 +1397,13 @@ mod tests {
             !list_rendered.contains(&long_title),
             "list should truncate this title once the pane is hidden"
         );
+    }
+
+    #[test]
+    fn list_mode_hint_mentions_h_to_hide_and_enter_or_e_to_edit() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("h hide pane"));
+        assert!(rendered.contains("enter/e edit"));
     }
 }
