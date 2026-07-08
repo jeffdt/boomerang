@@ -170,21 +170,22 @@ fn draw_color_ripple(frame: &mut Frame, area: Rect, elapsed: Duration) {
     render_canvas(frame, area, canvas);
 }
 
+const RIPPLE_COUNT: usize = 3;
+const RIPPLE_CORE_WIDTH: isize = 1;
+const RIPPLE_HALO_WIDTH: isize = 3;
+
 fn ripple_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> Option<Cell> {
     if width == 0 || height == 0 {
         return None;
     }
     let max_radius = ripple_max_radius(width, height);
-    let radius = tick % (max_radius + 8);
-    if radius > max_radius + 2 {
-        return None;
-    }
     let center_x = width as isize / 2;
     let center_y = height as isize / 2;
     let dx = x as isize - center_x;
     let dy = (y as isize - center_y) * 2;
     let distance = (((dx * dx + dy * dy) as f64).sqrt().round()) as isize;
-    if radius <= 1 && distance <= 1 {
+    let (delta, radius) = closest_ripple(distance, max_radius, tick)?;
+    if radius <= 1 && distance <= RIPPLE_CORE_WIDTH {
         return Some(Cell {
             ch: '●',
             style: Style::default()
@@ -192,20 +193,40 @@ fn ripple_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> 
                 .add_modifier(Modifier::BOLD),
         });
     }
-    let delta = (distance - radius as isize).abs();
-    match delta {
-        0 => Some(Cell {
+    if delta <= RIPPLE_CORE_WIDTH {
+        Some(Cell {
             ch: '●',
             style: Style::default()
                 .fg(ripple_color(radius))
                 .add_modifier(Modifier::BOLD),
-        }),
-        1 => Some(Cell {
+        })
+    } else if delta <= RIPPLE_HALO_WIDTH {
+        Some(Cell {
             ch: '·',
-            style: Style::default().fg(Color::DarkGray),
-        }),
-        _ => None,
+            style: Style::default().fg(ripple_color(radius)),
+        })
+    } else {
+        None
     }
+}
+
+fn closest_ripple(distance: isize, max_radius: usize, tick: usize) -> Option<(isize, usize)> {
+    let spacing = ripple_spacing(max_radius);
+    (0..RIPPLE_COUNT)
+        .filter_map(|index| ripple_radius(max_radius, spacing, tick, index))
+        .map(|radius| ((distance - radius as isize).abs(), radius))
+        .filter(|(delta, _)| *delta <= RIPPLE_HALO_WIDTH)
+        .min_by_key(|(delta, radius)| (*delta, *radius))
+}
+
+fn ripple_radius(max_radius: usize, spacing: usize, tick: usize, index: usize) -> Option<usize> {
+    let cycle = max_radius + spacing;
+    let radius = (tick + index * spacing) % cycle;
+    (radius <= max_radius + RIPPLE_HALO_WIDTH as usize).then_some(radius)
+}
+
+fn ripple_spacing(max_radius: usize) -> usize {
+    (max_radius / RIPPLE_COUNT).max(8)
 }
 
 fn ripple_max_radius(width: usize, height: usize) -> usize {
@@ -337,34 +358,41 @@ mod tests {
     }
 
     #[test]
-    fn ripple_emits_one_clean_centered_ring() {
+    fn ripple_emits_multiple_thick_centered_rings() {
         let center = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
         assert_eq!(center.ch, '●');
         assert_eq!(center.style.fg, Some(Color::White));
         assert!(center.style.add_modifier.contains(Modifier::BOLD));
 
-        let ring = ripple_cell(46, 9, 80, 18, 6).expect("single ripple ring");
-        assert_eq!(ring.ch, '●');
-        assert_eq!(ring.style.fg, Some(Color::Blue));
+        let first_outer_ring = ripple_cell(54, 9, 80, 18, 0).expect("first outer ripple ring");
+        assert_eq!(first_outer_ring.ch, '●');
+        assert_eq!(first_outer_ring.style.fg, Some(Color::Cyan));
+
+        let first_outer_halo = ripple_cell(56, 9, 80, 18, 0).expect("thick ripple halo");
+        assert_eq!(first_outer_halo.ch, '·');
+        assert_eq!(first_outer_halo.style.fg, Some(Color::Cyan));
+
+        let second_outer_ring = ripple_cell(68, 9, 80, 18, 0).expect("second outer ripple ring");
+        assert_eq!(second_outer_ring.ch, '●');
+        assert_eq!(second_outer_ring.style.fg, Some(Color::Blue));
 
         assert_eq!(
-            ripple_cell(60, 9, 80, 18, 6).map(|cell| cell.ch),
+            ripple_cell(62, 9, 80, 18, 0).map(|cell| cell.ch),
             None,
-            "ripple should render one ring, not repeated bullseye bands"
+            "there should still be quiet space between the thicker rings"
         );
     }
 
     #[test]
-    fn ripple_ring_moves_outward_over_time() {
+    fn ripple_rings_move_outward_over_time() {
         let first = ripple_cell(40, 9, 80, 18, 0).expect("center ripple cell");
         let later = ripple_cell(40, 9, 80, 18, 2);
         assert!(
             later.is_none_or(|cell| cell.ch != first.ch || cell.style.fg != first.style.fg),
             "ripple center should change as the wave passes"
         );
-        assert!(
-            ripple_cell(42, 9, 80, 18, 2).is_some(),
-            "ripple should move outward from the center"
-        );
+        let moved_ring = ripple_cell(42, 9, 80, 18, 2).expect("moved ripple ring");
+        assert_eq!(moved_ring.ch, '●');
+        assert_eq!(moved_ring.style.fg, Some(Color::Cyan));
     }
 }
