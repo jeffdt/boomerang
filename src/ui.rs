@@ -41,12 +41,12 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => ListInput::Down,
         KeyCode::Char('k') | KeyCode::Up => ListInput::Up,
-        KeyCode::Enter => ListInput::TogglePane,
+        KeyCode::Char('h') => ListInput::TogglePane,
+        KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
         KeyCode::Char('c') => ListInput::LittleCreate,
         KeyCode::Char('C') => ListInput::BigCreate,
-        KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
@@ -693,8 +693,18 @@ mod tests {
     }
 
     #[test]
-    fn maps_enter_to_toggle_pane() {
-        assert_eq!(map_list_key(key(KeyCode::Enter)), ListInput::TogglePane);
+    fn maps_h_to_toggle_pane() {
+        assert_eq!(map_list_key(key(KeyCode::Char('h'))), ListInput::TogglePane);
+    }
+
+    #[test]
+    fn maps_enter_to_edit() {
+        assert_eq!(map_list_key(key(KeyCode::Enter)), ListInput::Edit);
+    }
+
+    #[test]
+    fn maps_lowercase_e_to_edit() {
+        assert_eq!(map_list_key(key(KeyCode::Char('e'))), ListInput::Edit);
     }
 
     #[test]
