@@ -157,6 +157,21 @@ fn char_byte_index(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
 }
 
+fn delete_word_before(s: &mut String, cursor: &mut usize) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = *cursor;
+    while i > 0 && chars[i - 1] == ' ' {
+        i -= 1;
+    }
+    while i > 0 && chars[i - 1] != ' ' && chars[i - 1] != '\n' {
+        i -= 1;
+    }
+    let start_byte = char_byte_index(s, i);
+    let end_byte = char_byte_index(s, *cursor);
+    s.replace_range(start_byte..end_byte, "");
+    *cursor = i;
+}
+
 impl AppState {
     pub fn new(issues: Vec<Issue>, all_labels: Vec<Label>) -> Self {
         AppState {
@@ -499,6 +514,40 @@ impl AppState {
                 }
                 let next_line_len = next_line_end - next_line_start;
                 form.body_cursor = next_line_start + column.min(next_line_len);
+            }
+        }
+    }
+
+    pub fn form_delete_word(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => delete_word_before(&mut form.title, &mut form.title_cursor),
+                FormField::Body => delete_word_before(&mut form.body, &mut form.body_cursor),
+                FormField::Labels | FormField::Submit => {}
+            }
+        }
+    }
+
+    pub fn form_clear_to_line_start(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => {
+                    let end_byte = char_byte_index(&form.title, form.title_cursor);
+                    form.title.replace_range(0..end_byte, "");
+                    form.title_cursor = 0;
+                }
+                FormField::Body => {
+                    let chars: Vec<char> = form.body.chars().collect();
+                    let mut line_start = form.body_cursor;
+                    while line_start > 0 && chars[line_start - 1] != '\n' {
+                        line_start -= 1;
+                    }
+                    let start_byte = char_byte_index(&form.body, line_start);
+                    let end_byte = char_byte_index(&form.body, form.body_cursor);
+                    form.body.replace_range(start_byte..end_byte, "");
+                    form.body_cursor = line_start;
+                }
+                FormField::Labels | FormField::Submit => {}
             }
         }
     }
@@ -1072,6 +1121,88 @@ mod tests {
         state.form_move_cursor_vertical(-1);
         if let Mode::Form(form) = &state.mode {
             assert_eq!(form.title_cursor, 1);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn delete_word_removes_word_immediately_before_cursor() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        for c in "fix the bug".chars() {
+            state.form_push_char(c);
+        }
+        state.form_delete_word();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "fix the ");
+            assert_eq!(form.title_cursor, 8);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn delete_word_skips_trailing_spaces_before_the_word() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        for c in "fix   ".chars() {
+            state.form_push_char(c);
+        }
+        state.form_delete_word();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "");
+            assert_eq!(form.title_cursor, 0);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn delete_word_in_body_does_not_cross_a_newline() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "one\ntwo".chars() {
+            state.form_push_char(c);
+        }
+        state.form_delete_word();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body, "one\n", "word delete must stop at the preceding newline, not eat \"one\" too");
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn clear_to_line_start_on_title_clears_whole_field() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        for c in "hello world".chars() {
+            state.form_push_char(c);
+        }
+        state.form_move_cursor(-5); // between "hello " and "world"
+        state.form_clear_to_line_start();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "world");
+            assert_eq!(form.title_cursor, 0);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn clear_to_line_start_on_body_is_scoped_to_current_line() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "one\ntwo".chars() {
+            state.form_push_char(c);
+        }
+        state.form_clear_to_line_start();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body, "one\n", "clearing on the second line must not touch the first line");
+            assert_eq!(form.body_cursor, 4);
         } else {
             panic!("expected Form mode");
         }
