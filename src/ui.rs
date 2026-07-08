@@ -914,7 +914,7 @@ mod tests {
         let state = AppState::new(vec![issue(42, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(
-            rendered.contains("#42"),
+            rendered.contains("‹ #42 ›"),
             "pane border title should show the selected issue's number"
         );
     }
@@ -941,9 +941,22 @@ mod tests {
         selected.body = "steps to repro".into();
         let state = AppState::new(vec![selected], vec![]);
         let rendered = render_to_string(&state);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let metadata_line = lines
+            .iter()
+            .position(|line| line.contains("opened"))
+            .expect("metadata line should be present");
+        let body_line = lines
+            .iter()
+            .position(|line| line.contains("steps to repro"))
+            .expect("body line should be present");
+        let has_rule_between = lines[metadata_line + 1..body_line].iter().any(|line| {
+            let interior = line.trim_matches(|c: char| c == ' ' || c == '│');
+            !interior.is_empty() && interior.chars().all(|c| c == '─')
+        });
         assert!(
-            rendered.contains("───"),
-            "pane should render a horizontal rule between metadata and body"
+            has_rule_between,
+            "expected a rule line made entirely of '─' between the metadata line and the body"
         );
     }
 
