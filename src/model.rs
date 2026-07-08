@@ -46,6 +46,7 @@ pub struct PendingState {
 pub enum LoadingAnimation {
     MatrixRain,
     ColorRipple,
+    RainbowRipple,
 }
 
 impl LoadingAnimation {
@@ -62,6 +63,7 @@ impl LoadingAnimation {
         match value.trim().to_ascii_lowercase().as_str() {
             "matrix" | "matrix-rain" | "rain" => Some(Self::MatrixRain),
             "ripple" | "color-ripple" | "bullseye" => Some(Self::ColorRipple),
+            "rainbow" | "rainbow-ripple" | "rings" => Some(Self::RainbowRipple),
             _ => None,
         }
     }
@@ -900,6 +902,10 @@ mod tests {
         assert_eq!(
             LoadingAnimation::parse("bullseye"),
             Some(LoadingAnimation::ColorRipple)
+        );
+        assert_eq!(
+            LoadingAnimation::parse("rainbow-ripple"),
+            Some(LoadingAnimation::RainbowRipple)
         );
         assert_eq!(LoadingAnimation::parse("orbit"), None);
         assert_eq!(LoadingAnimation::parse("pipes"), None);

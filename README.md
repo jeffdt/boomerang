@@ -84,13 +84,15 @@ passed to `gh` are redacted.
 
 Startup defaults to the Matrix rain animation because it reads best during the
 brief initial load. Set `ISSUE_BROWSER_LOADING_ANIMATION=ripple` to try the
-experimental color-ripple bullseye loader.
+experimental color-ripple bullseye loader, or `rainbow` for continuous thick
+color-locked bands.
 
 Preview a loader without touching `gh`:
 
 ```sh
 issue-browser --preview-loading matrix 10s
 issue-browser --preview-loading ripple 1500ms
+issue-browser --preview-loading rainbow 10s
 ```
 
 Bare durations are seconds, so `issue-browser --preview-loading 10` previews the

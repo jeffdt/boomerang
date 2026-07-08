@@ -59,6 +59,7 @@ fn draw_animation(frame: &mut Frame, area: Rect, state: &AppState) {
     match loading.animation {
         LoadingAnimation::MatrixRain => draw_matrix_rain(frame, area, elapsed),
         LoadingAnimation::ColorRipple => draw_color_ripple(frame, area, elapsed),
+        LoadingAnimation::RainbowRipple => draw_rainbow_ripple(frame, area, elapsed),
     }
 }
 
@@ -248,6 +249,85 @@ fn ripple_color(radius: usize) -> Color {
     }
 }
 
+const RAINBOW_RIPPLE_SPACING: usize = 8;
+const RAINBOW_RIPPLE_CORE_WIDTH: isize = 2;
+const RAINBOW_RIPPLE_HALO_WIDTH: isize = 4;
+
+fn draw_rainbow_ripple(frame: &mut Frame, area: Rect, elapsed: Duration) {
+    let tick = (elapsed.as_millis() / 60) as usize;
+    let height = area.height as usize;
+    let width = area.width as usize;
+    let mut canvas = blank_canvas(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            if let Some(cell) = rainbow_ripple_cell(x, y, width, height, tick) {
+                put_cell(&mut canvas, x as isize, y as isize, cell.ch, cell.style);
+            }
+        }
+    }
+    render_canvas(frame, area, canvas);
+}
+
+fn rainbow_ripple_cell(
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    tick: usize,
+) -> Option<Cell> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let center_x = width as isize / 2;
+    let center_y = height as isize / 2;
+    let dx = x as isize - center_x;
+    let dy = (y as isize - center_y) * 2;
+    let distance = (((dx * dx + dy * dy) as f64).sqrt().round()) as isize;
+    let max_radius = ripple_max_radius(width, height);
+    let (delta, ring_id) = closest_rainbow_ripple(distance, max_radius, tick)?;
+    let color = rainbow_ripple_color(ring_id);
+    if delta <= RAINBOW_RIPPLE_CORE_WIDTH {
+        Some(Cell {
+            ch: '●',
+            style: Style::default().fg(color).add_modifier(Modifier::BOLD),
+        })
+    } else if delta <= RAINBOW_RIPPLE_HALO_WIDTH {
+        Some(Cell {
+            ch: '·',
+            style: Style::default().fg(color),
+        })
+    } else {
+        None
+    }
+}
+
+fn closest_rainbow_ripple(
+    distance: isize,
+    max_radius: usize,
+    tick: usize,
+) -> Option<(isize, usize)> {
+    let latest_ring_id = tick / RAINBOW_RIPPLE_SPACING;
+    let progress = tick % RAINBOW_RIPPLE_SPACING;
+    let max_age = max_radius / RAINBOW_RIPPLE_SPACING + 2;
+    (0..=max_age)
+        .filter_map(|age| {
+            let ring_id = latest_ring_id.checked_sub(age)?;
+            let radius = progress + age * RAINBOW_RIPPLE_SPACING;
+            (radius <= max_radius + RAINBOW_RIPPLE_HALO_WIDTH as usize).then_some((radius, ring_id))
+        })
+        .map(|(radius, ring_id)| ((distance - radius as isize).abs(), ring_id))
+        .filter(|(delta, _)| *delta <= RAINBOW_RIPPLE_HALO_WIDTH)
+        .min_by_key(|(delta, ring_id)| (*delta, *ring_id))
+}
+
+fn rainbow_ripple_color(ring_id: usize) -> Color {
+    match ring_id % 3 {
+        0 => Color::Blue,
+        1 => Color::Green,
+        _ => Color::Red,
+    }
+}
+
 fn matrix_hash(a: u64, b: u64, c: u64, d: u64) -> u64 {
     let mut value = a.wrapping_mul(0x9E37_79B1_85EB_CA87)
         ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
@@ -409,5 +489,40 @@ mod tests {
         let moved_ring = ripple_cell(42, 9, 80, 18, 2).expect("moved ripple ring");
         assert_eq!(moved_ring.ch, '●');
         assert_eq!(moved_ring.style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn rainbow_ripple_emits_thick_color_locked_bands() {
+        let blue_center = rainbow_ripple_cell(40, 9, 80, 18, 0).expect("blue center ring");
+        assert_eq!(blue_center.ch, '●');
+        assert_eq!(blue_center.style.fg, Some(Color::Blue));
+
+        let green_center = rainbow_ripple_cell(40, 9, 80, 18, 8).expect("green center ring");
+        assert_eq!(green_center.ch, '●');
+        assert_eq!(green_center.style.fg, Some(Color::Green));
+
+        let blue_expanded = rainbow_ripple_cell(48, 9, 80, 18, 8).expect("expanded blue ring");
+        assert_eq!(blue_expanded.ch, '●');
+        assert_eq!(blue_expanded.style.fg, Some(Color::Blue));
+
+        let red_center = rainbow_ripple_cell(40, 9, 80, 18, 16).expect("red center ring");
+        assert_eq!(red_center.ch, '●');
+        assert_eq!(red_center.style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn rainbow_ripple_bands_stay_evenly_spaced() {
+        let tick = 24;
+        let centers = [
+            (40, Color::Blue),
+            (48, Color::Red),
+            (56, Color::Green),
+            (64, Color::Blue),
+        ];
+        for (x, color) in centers {
+            let cell = rainbow_ripple_cell(x, 9, 80, 18, tick).expect("rainbow band center");
+            assert_eq!(cell.ch, '●');
+            assert_eq!(cell.style.fg, Some(color));
+        }
     }
 }
