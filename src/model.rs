@@ -99,6 +99,7 @@ pub enum FormField {
     Title,
     Body,
     Labels,
+    Submit,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -113,6 +114,8 @@ pub struct FormState {
     pub original_title: String,
     pub original_body: String,
     pub original_labels: HashSet<String>,
+    pub title_cursor: usize,
+    pub body_cursor: usize,
 }
 
 impl FormState {
@@ -330,6 +333,8 @@ impl AppState {
             ),
             None => (String::new(), String::new(), HashSet::new()),
         };
+        let title_cursor = title.chars().count();
+        let body_cursor = body.chars().count();
         FormState {
             editing,
             title: title.clone(),
@@ -341,6 +346,8 @@ impl AppState {
             original_title: title,
             original_body: body,
             original_labels: selected_labels,
+            title_cursor,
+            body_cursor,
         }
     }
 
@@ -360,6 +367,7 @@ impl AppState {
                 FormField::Title => form.title.push(c),
                 FormField::Body => form.body.push(c),
                 FormField::Labels => {}
+                FormField::Submit => {}
             }
         }
     }
@@ -374,6 +382,7 @@ impl AppState {
                     form.body.pop();
                 }
                 FormField::Labels => {}
+                FormField::Submit => {}
             }
         }
     }
@@ -383,7 +392,8 @@ impl AppState {
             form.field = match form.field {
                 FormField::Title => FormField::Body,
                 FormField::Body => FormField::Labels,
-                FormField::Labels => FormField::Title,
+                FormField::Labels => FormField::Submit,
+                FormField::Submit => FormField::Title,
             };
         }
     }
@@ -391,9 +401,10 @@ impl AppState {
     pub fn form_prev_field(&mut self) {
         if let Mode::Form(form) = &mut self.mode {
             form.field = match form.field {
-                FormField::Title => FormField::Labels,
+                FormField::Title => FormField::Submit,
                 FormField::Body => FormField::Title,
                 FormField::Labels => FormField::Body,
+                FormField::Submit => FormField::Labels,
             };
         }
     }
@@ -475,6 +486,7 @@ impl AppState {
                 self.mode = Mode::List;
                 Some(submission)
             }
+            FormField::Submit => None,
         }
     }
 
@@ -741,6 +753,52 @@ mod tests {
         state.form_toggle_label();
         if let Mode::Form(form) = &state.mode {
             assert!(form.selected_labels.contains("bug"));
+        }
+    }
+
+    #[test]
+    fn tab_cycle_now_includes_submit_after_labels() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        state.form_next_field(); // Labels
+        state.form_next_field(); // Submit
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.field, FormField::Submit);
+        } else {
+            panic!("expected Form mode");
+        }
+        state.form_next_field(); // wraps back to Title
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.field, FormField::Title);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn shift_tab_from_title_reaches_submit() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_prev_field();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.field, FormField::Submit);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn new_form_state_starts_cursors_at_end_of_existing_text() {
+        let mut issue1 = issue(1, "Fix bug");
+        issue1.body = "line one".to_string();
+        let mut state = AppState::new(vec![issue1], vec![]);
+        state.enter_edit();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_cursor, "Fix bug".chars().count());
+            assert_eq!(form.body_cursor, "line one".chars().count());
+        } else {
+            panic!("expected Form mode");
         }
     }
 
