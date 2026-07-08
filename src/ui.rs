@@ -159,6 +159,11 @@ fn inset(area: Rect, margin: u16) -> Rect {
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default();
+    let title_text = state
+        .repo_name_with_owner
+        .as_deref()
+        .map(format_repo_title)
+        .unwrap_or_else(|| "issue-browser".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -166,7 +171,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                "‹ issue-browser ›",
+                format!("‹ {title_text} ›"),
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -350,6 +355,12 @@ fn truncate_title(title: &str, max_width: usize) -> String {
     }
     let kept: String = title.chars().take(max_width - 3).collect();
     format!("{kept}...")
+}
+
+/// Seam for a future settings feature (e.g. showing the repo name without its
+/// owner) to hook into without touching call sites; today it's a passthrough.
+fn format_repo_title(repo: &str) -> String {
+    repo.to_string()
 }
 
 fn label_style(color: Color) -> Style {
@@ -813,6 +824,29 @@ mod tests {
             "label style must not set a background color"
         );
         assert!(style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn format_repo_title_is_a_passthrough_today() {
+        assert_eq!(
+            format_repo_title("jeffdt/issue-browser"),
+            "jeffdt/issue-browser"
+        );
+    }
+
+    #[test]
+    fn border_title_shows_repo_name_when_available() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/issue-browser".to_string());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ jeffdt/issue-browser ›"));
+    }
+
+    #[test]
+    fn border_title_falls_back_to_app_name_when_repo_unknown() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ issue-browser ›"));
     }
 
     #[test]
