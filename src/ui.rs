@@ -290,8 +290,18 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
         .split(area);
+    frame.render_widget(
+        Paragraph::new(issue.title.as_str())
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .wrap(Wrap { trim: false }),
+        chunks[0],
+    );
     let date = issue
         .created_at
         .split('T')
@@ -300,14 +310,14 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let header = format!("#{} · opened {date}", issue.number);
     frame.render_widget(
         Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[0],
+        chunks[1],
     );
     let body = if issue.body.is_empty() {
         "(no description)"
     } else {
         issue.body.as_str()
     };
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[1]);
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[2]);
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -1075,5 +1085,47 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Short title"));
         assert!(!rendered.contains("Short title..."));
+    }
+
+    #[test]
+    fn detail_pane_shows_full_bold_title_above_meta_line() {
+        let mut selected = issue(1, "Fix bug");
+        selected.created_at = "2026-06-01T12:00:00Z".into();
+        let mut state = AppState::new(vec![selected], vec![]);
+        state.toggle_pane();
+        let rendered = render_to_string(&state);
+        let title_row = rendered
+            .lines()
+            .position(|line| line.contains("Fix bug"))
+            .expect("title rendered");
+        let meta_row = rendered
+            .lines()
+            .position(|line| line.contains("opened 2026-06-01"))
+            .expect("meta line rendered");
+        assert!(
+            title_row < meta_row,
+            "title should render above the meta line"
+        );
+    }
+
+    #[test]
+    fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
+        // 70 chars: longer than the list's title budget at this fixed 80x24
+        // TestBackend size (74-char inner width minus the 6-char number
+        // column = 68), but short enough to fit on one line at the detail
+        // pane's full 74-char width, so it renders unwrapped and unclipped.
+        let long_title = "a".repeat(70);
+        let mut state = AppState::new(vec![issue(1, &long_title)], vec![]);
+        let list_rendered = render_to_string(&state);
+        assert!(
+            !list_rendered.contains(&long_title),
+            "list should truncate this title"
+        );
+        state.toggle_pane();
+        let pane_rendered = render_to_string(&state);
+        assert!(
+            pane_rendered.contains(&long_title),
+            "detail pane should show the full untruncated title"
+        );
     }
 }
