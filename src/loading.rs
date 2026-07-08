@@ -211,22 +211,24 @@ fn ripple_cell(x: usize, y: usize, width: usize, height: usize, tick: usize) -> 
 }
 
 fn closest_ripple(distance: isize, max_radius: usize, tick: usize) -> Option<(isize, usize)> {
-    let spacing = ripple_spacing(max_radius);
     (0..RIPPLE_COUNT)
-        .filter_map(|index| ripple_radius(max_radius, spacing, tick, index))
+        .map(|index| ripple_radius(max_radius, tick, index))
         .map(|radius| ((distance - radius as isize).abs(), radius))
         .filter(|(delta, _)| *delta <= RIPPLE_HALO_WIDTH)
         .min_by_key(|(delta, radius)| (*delta, *radius))
 }
 
-fn ripple_radius(max_radius: usize, spacing: usize, tick: usize, index: usize) -> Option<usize> {
-    let cycle = max_radius + spacing;
-    let radius = (tick + index * spacing) % cycle;
-    (radius <= max_radius + RIPPLE_HALO_WIDTH as usize).then_some(radius)
+fn ripple_radius(max_radius: usize, tick: usize, index: usize) -> usize {
+    let cycle = ripple_cycle(max_radius);
+    (tick + index * ripple_spacing(max_radius)) % cycle
+}
+
+fn ripple_cycle(max_radius: usize) -> usize {
+    max_radius + 1
 }
 
 fn ripple_spacing(max_radius: usize) -> usize {
-    (max_radius / RIPPLE_COUNT).max(8)
+    (ripple_cycle(max_radius) / RIPPLE_COUNT).max(1)
 }
 
 fn ripple_max_radius(width: usize, height: usize) -> usize {
@@ -364,23 +366,36 @@ mod tests {
         assert_eq!(center.style.fg, Some(Color::White));
         assert!(center.style.add_modifier.contains(Modifier::BOLD));
 
-        let first_outer_ring = ripple_cell(54, 9, 80, 18, 0).expect("first outer ripple ring");
+        let first_outer_ring = ripple_cell(55, 9, 80, 18, 0).expect("first outer ripple ring");
         assert_eq!(first_outer_ring.ch, '●');
         assert_eq!(first_outer_ring.style.fg, Some(Color::Cyan));
 
-        let first_outer_halo = ripple_cell(56, 9, 80, 18, 0).expect("thick ripple halo");
+        let first_outer_halo = ripple_cell(57, 9, 80, 18, 0).expect("thick ripple halo");
         assert_eq!(first_outer_halo.ch, '·');
         assert_eq!(first_outer_halo.style.fg, Some(Color::Cyan));
 
-        let second_outer_ring = ripple_cell(68, 9, 80, 18, 0).expect("second outer ripple ring");
+        let second_outer_ring = ripple_cell(70, 9, 80, 18, 0).expect("second outer ripple ring");
         assert_eq!(second_outer_ring.ch, '●');
         assert_eq!(second_outer_ring.style.fg, Some(Color::Blue));
 
         assert_eq!(
-            ripple_cell(62, 9, 80, 18, 0).map(|cell| cell.ch),
+            ripple_cell(63, 9, 80, 18, 0).map(|cell| cell.ch),
             None,
             "there should still be quiet space between the thicker rings"
         );
+    }
+
+    #[test]
+    fn ripple_rings_are_evenly_spaced_around_the_cycle() {
+        let max_radius = ripple_max_radius(80, 18);
+        assert_eq!(max_radius, 44);
+        assert_eq!(ripple_spacing(max_radius), 15);
+        assert_eq!(ripple_radius(max_radius, 0, 0), 0);
+        assert_eq!(ripple_radius(max_radius, 0, 1), 15);
+        assert_eq!(ripple_radius(max_radius, 0, 2), 30);
+        assert_eq!(ripple_radius(max_radius, 40, 0), 40);
+        assert_eq!(ripple_radius(max_radius, 40, 1), 10);
+        assert_eq!(ripple_radius(max_radius, 40, 2), 25);
     }
 
     #[test]
