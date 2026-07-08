@@ -395,36 +395,34 @@ fn event_loop<S: IssueSource>(
                         FormInput::MoveDown => state.form_move_label_cursor(1),
                         FormInput::ToggleLabel => state.form_toggle_label(),
                         FormInput::Cancel => state.cancel_form_or_create(),
+                        FormInput::MoveCursor(delta) => state.form_move_cursor(delta),
+                        FormInput::CursorHome => state.form_cursor_home(),
+                        FormInput::CursorEnd => state.form_cursor_end(),
+                        FormInput::MoveCursorVertical(delta) => state.form_move_cursor_vertical(delta),
+                        FormInput::DeleteWord => state.form_delete_word(),
+                        FormInput::ClearToLineStart => state.form_clear_to_line_start(),
                         FormInput::Enter => {
                             if let Some(submission) = state.form_enter() {
-                                match submission.editing {
-                                    Some(number) => start_mutation(
-                                        state,
-                                        &mut mutation_rx,
-                                        &mut mutation_draft,
-                                        (*source).clone(),
-                                        MutationDraft::Form(form_draft),
-                                        MutationRequest::Edit(EditRequest {
-                                            number,
-                                            title: submission.title,
-                                            body: submission.body,
-                                            add_labels: submission.add_labels,
-                                            remove_labels: submission.remove_labels,
-                                        }),
-                                    ),
-                                    None => start_mutation(
-                                        state,
-                                        &mut mutation_rx,
-                                        &mut mutation_draft,
-                                        (*source).clone(),
-                                        MutationDraft::Form(form_draft),
-                                        MutationRequest::Create(CreateRequest {
-                                            title: submission.title,
-                                            body: submission.body,
-                                            labels: submission.add_labels,
-                                        }),
-                                    ),
-                                }
+                                submit_form(
+                                    state,
+                                    &mut mutation_rx,
+                                    &mut mutation_draft,
+                                    (*source).clone(),
+                                    form_draft,
+                                    submission,
+                                );
+                            }
+                        }
+                        FormInput::SubmitNow => {
+                            if let Some(submission) = state.form_submit_now() {
+                                submit_form(
+                                    state,
+                                    &mut mutation_rx,
+                                    &mut mutation_draft,
+                                    (*source).clone(),
+                                    form_draft,
+                                    submission,
+                                );
                             }
                         }
                         FormInput::None => {}
@@ -617,6 +615,44 @@ fn refresh<S: IssueSource>(state: &mut AppState, source: &S) {
     match source.list(state.state_filter) {
         Ok(issues) => state.set_issues(issues),
         Err(e) => state.set_status(gh_error_status(&e)),
+    }
+}
+
+fn submit_form<S: IssueSource>(
+    state: &mut AppState,
+    mutation_rx: &mut Option<MutationReceiver>,
+    mutation_draft: &mut Option<MutationDraft>,
+    source: S,
+    form_draft: FormState,
+    submission: crate::model::FormSubmission,
+) {
+    match submission.editing {
+        Some(number) => start_mutation(
+            state,
+            mutation_rx,
+            mutation_draft,
+            source,
+            MutationDraft::Form(form_draft),
+            MutationRequest::Edit(EditRequest {
+                number,
+                title: submission.title,
+                body: submission.body,
+                add_labels: submission.add_labels,
+                remove_labels: submission.remove_labels,
+            }),
+        ),
+        None => start_mutation(
+            state,
+            mutation_rx,
+            mutation_draft,
+            source,
+            MutationDraft::Form(form_draft),
+            MutationRequest::Create(CreateRequest {
+                title: submission.title,
+                body: submission.body,
+                labels: submission.add_labels,
+            }),
+        ),
     }
 }
 

@@ -110,20 +110,38 @@ pub enum FormInput {
     MoveDown,
     ToggleLabel,
     Cancel,
+    MoveCursor(isize),
+    CursorHome,
+    CursorEnd,
+    MoveCursorVertical(isize),
+    DeleteWord,
+    ClearToLineStart,
+    SubmitNow,
     None,
 }
 
 pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
+        KeyCode::Char('s') if ctrl => FormInput::SubmitNow,
+        KeyCode::Char('w') if ctrl => FormInput::DeleteWord,
+        KeyCode::Char('u') if ctrl => FormInput::ClearToLineStart,
         KeyCode::Tab => FormInput::NextField,
         KeyCode::BackTab => FormInput::PrevField,
         KeyCode::Esc => FormInput::Cancel,
+        KeyCode::Enter | KeyCode::Char(' ') if field == FormField::Submit => FormInput::Enter,
         KeyCode::Enter => FormInput::Enter,
         KeyCode::Backspace => FormInput::Backspace,
+        KeyCode::Left if matches!(field, FormField::Title | FormField::Body) => FormInput::MoveCursor(-1),
+        KeyCode::Right if matches!(field, FormField::Title | FormField::Body) => FormInput::MoveCursor(1),
+        KeyCode::Home if matches!(field, FormField::Title | FormField::Body) => FormInput::CursorHome,
+        KeyCode::End if matches!(field, FormField::Title | FormField::Body) => FormInput::CursorEnd,
         KeyCode::Up if field == FormField::Labels => FormInput::MoveUp,
         KeyCode::Down if field == FormField::Labels => FormInput::MoveDown,
+        KeyCode::Up if field == FormField::Body => FormInput::MoveCursorVertical(-1),
+        KeyCode::Down if field == FormField::Body => FormInput::MoveCursorVertical(1),
         KeyCode::Char(' ') if field == FormField::Labels => FormInput::ToggleLabel,
-        KeyCode::Char(c) => FormInput::Char(c),
+        KeyCode::Char(c) if !ctrl => FormInput::Char(c),
         _ => FormInput::None,
     }
 }
@@ -560,6 +578,37 @@ mod tests {
             map_form_key(key(KeyCode::Down), FormField::Labels),
             FormInput::MoveDown
         );
+    }
+
+    #[test]
+    fn form_key_mapping_covers_cursor_movement() {
+        assert_eq!(map_form_key(key(KeyCode::Left), FormField::Title), FormInput::MoveCursor(-1));
+        assert_eq!(map_form_key(key(KeyCode::Right), FormField::Body), FormInput::MoveCursor(1));
+        assert_eq!(map_form_key(key(KeyCode::Home), FormField::Title), FormInput::CursorHome);
+        assert_eq!(map_form_key(key(KeyCode::End), FormField::Body), FormInput::CursorEnd);
+        assert_eq!(map_form_key(key(KeyCode::Up), FormField::Body), FormInput::MoveCursorVertical(-1));
+        assert_eq!(map_form_key(key(KeyCode::Down), FormField::Body), FormInput::MoveCursorVertical(1));
+        assert_eq!(
+            map_form_key(key(KeyCode::Up), FormField::Labels),
+            FormInput::MoveUp,
+            "Labels keeps its own Up/Down for list navigation"
+        );
+    }
+
+    #[test]
+    fn form_key_mapping_covers_delete_and_submit_shortcuts() {
+        let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        let ctrl_s = key_with(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert_eq!(map_form_key(ctrl_w, FormField::Title), FormInput::DeleteWord);
+        assert_eq!(map_form_key(ctrl_u, FormField::Body), FormInput::ClearToLineStart);
+        assert_eq!(map_form_key(ctrl_s, FormField::Labels), FormInput::SubmitNow);
+    }
+
+    #[test]
+    fn form_key_mapping_enter_and_space_on_submit_both_confirm() {
+        assert_eq!(map_form_key(key(KeyCode::Enter), FormField::Submit), FormInput::Enter);
+        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Submit), FormInput::Enter);
     }
 
     #[test]
