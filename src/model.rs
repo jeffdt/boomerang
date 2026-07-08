@@ -186,7 +186,7 @@ impl AppState {
             status: None,
             loading: None,
             pending: None,
-            pane_open: false,
+            pane_open: true,
             repo_name_with_owner: None,
         }
     }
@@ -1518,16 +1518,16 @@ mod tests {
     }
 
     #[test]
-    fn toggle_pane_flips_the_flag_and_starts_closed() {
+    fn toggle_pane_flips_the_flag_and_starts_open() {
         let mut state = AppState::new(vec![], vec![]);
         assert!(
-            !state.pane_open,
-            "pane should be hidden on a fresh AppState"
+            state.pane_open,
+            "pane should be visible on a fresh AppState"
         );
         state.toggle_pane();
-        assert!(state.pane_open);
-        state.toggle_pane();
         assert!(!state.pane_open);
+        state.toggle_pane();
+        assert!(state.pane_open);
     }
 
     #[test]
