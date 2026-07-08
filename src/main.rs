@@ -141,13 +141,18 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let source = GhCliSource::new();
+    let mut state = AppState::loading();
+    run_ui(&mut state, &source)
+}
+
+fn check_gh_cli() -> Result<(), String> {
     if std::process::Command::new("gh")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("issue-browser: `gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.");
-        std::process::exit(1);
+        return Err("`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.".to_string());
     }
     let authenticated = std::process::Command::new("gh")
         .args(["auth", "status"])
@@ -155,28 +160,37 @@ fn main() -> anyhow::Result<()> {
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !authenticated {
-        eprintln!("issue-browser: `gh` is not authenticated. Run `gh auth login` first.");
-        std::process::exit(1);
+        return Err("`gh` is not authenticated. Run `gh auth login` first.".to_string());
     }
-
-    let source = GhCliSource::new();
-    let mut state = AppState::loading();
-    let initial_load_rx = spawn_initial_load(source.clone());
-
-    run_ui(&mut state, &source, initial_load_rx)
+    Ok(())
 }
 
-fn run_ui<S: IssueSource>(
-    state: &mut AppState,
-    source: &S,
-    initial_load_rx: InitialLoadReceiver,
-) -> anyhow::Result<()> {
+fn spawn_preflight_check() -> PreflightReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(check_gh_cli());
+    });
+    rx
+}
+
+fn poll_preflight(rx: &Option<PreflightReceiver>) -> Option<Result<(), String>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(
+            "preflight check worker stopped before returning a result".to_string(),
+        )),
+    }
+}
+
+fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
-    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx));
+    let preflight_rx = spawn_preflight_check();
+    let result = event_loop(&mut terminal, state, source, None, Some(preflight_rx));
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -277,6 +291,7 @@ struct MutationSuccess {
 
 type MutationReceiver = Receiver<anyhow::Result<MutationSuccess>>;
 type InitialLoadReceiver = Receiver<anyhow::Result<InitialLoadSuccess>>;
+type PreflightReceiver = Receiver<Result<(), String>>;
 
 #[derive(Debug)]
 struct InitialLoadSuccess {
@@ -291,11 +306,20 @@ fn event_loop<S: IssueSource>(
     state: &mut AppState,
     source: &S,
     mut initial_load_rx: Option<InitialLoadReceiver>,
+    mut preflight_rx: Option<PreflightReceiver>,
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
 
     loop {
+        if let Some(result) = poll_preflight(&preflight_rx) {
+            preflight_rx = None;
+            match result {
+                Ok(()) => initial_load_rx = Some(spawn_initial_load(source.clone())),
+                Err(message) => return Err(anyhow::anyhow!(message)),
+            }
+        }
+
         if let Some(result) = poll_initial_load(&initial_load_rx) {
             initial_load_rx = None;
             finish_initial_load(state, result);
