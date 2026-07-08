@@ -391,7 +391,12 @@ mod tests {
         assert_eq!(
             args,
             strs(&[
-                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"
+                "repo",
+                "view",
+                "--json",
+                "nameWithOwner",
+                "--jq",
+                ".nameWithOwner"
             ])
         );
     }
