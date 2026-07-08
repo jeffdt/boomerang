@@ -149,6 +149,14 @@ pub struct AppState {
     pub pane_open: bool,
 }
 
+fn char_len(s: &str) -> usize {
+    s.chars().count()
+}
+
+fn char_byte_index(s: &str, char_idx: usize) -> usize {
+    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
+}
+
 impl AppState {
     pub fn new(issues: Vec<Issue>, all_labels: Vec<Label>) -> Self {
         AppState {
@@ -364,10 +372,17 @@ impl AppState {
     pub fn form_push_char(&mut self, c: char) {
         if let Mode::Form(form) = &mut self.mode {
             match form.field {
-                FormField::Title => form.title.push(c),
-                FormField::Body => form.body.push(c),
-                FormField::Labels => {}
-                FormField::Submit => {}
+                FormField::Title => {
+                    let idx = char_byte_index(&form.title, form.title_cursor);
+                    form.title.insert(idx, c);
+                    form.title_cursor += 1;
+                }
+                FormField::Body => {
+                    let idx = char_byte_index(&form.body, form.body_cursor);
+                    form.body.insert(idx, c);
+                    form.body_cursor += 1;
+                }
+                FormField::Labels | FormField::Submit => {}
             }
         }
     }
@@ -376,13 +391,38 @@ impl AppState {
         if let Mode::Form(form) = &mut self.mode {
             match form.field {
                 FormField::Title => {
-                    form.title.pop();
+                    if form.title_cursor > 0 {
+                        let start = char_byte_index(&form.title, form.title_cursor - 1);
+                        let end = char_byte_index(&form.title, form.title_cursor);
+                        form.title.replace_range(start..end, "");
+                        form.title_cursor -= 1;
+                    }
                 }
                 FormField::Body => {
-                    form.body.pop();
+                    if form.body_cursor > 0 {
+                        let start = char_byte_index(&form.body, form.body_cursor - 1);
+                        let end = char_byte_index(&form.body, form.body_cursor);
+                        form.body.replace_range(start..end, "");
+                        form.body_cursor -= 1;
+                    }
                 }
-                FormField::Labels => {}
-                FormField::Submit => {}
+                FormField::Labels | FormField::Submit => {}
+            }
+        }
+    }
+
+    pub fn form_move_cursor(&mut self, delta: isize) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => {
+                    let len = char_len(&form.title) as isize;
+                    form.title_cursor = (form.title_cursor as isize + delta).clamp(0, len) as usize;
+                }
+                FormField::Body => {
+                    let len = char_len(&form.body) as isize;
+                    form.body_cursor = (form.body_cursor as isize + delta).clamp(0, len) as usize;
+                }
+                FormField::Labels | FormField::Submit => {}
             }
         }
     }
@@ -797,6 +837,55 @@ mod tests {
         if let Mode::Form(form) = &state.mode {
             assert_eq!(form.title_cursor, "Fix bug".chars().count());
             assert_eq!(form.body_cursor, "line one".chars().count());
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_push_char_inserts_at_cursor_not_always_at_end() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('f');
+        state.form_push_char('o');
+        state.form_push_char('o');
+        state.form_move_cursor(-1); // between the two 'o's
+        state.form_push_char('X');
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "foXo");
+            assert_eq!(form.title_cursor, 3);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_backspace_deletes_char_before_cursor_not_always_last_char() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('f');
+        state.form_push_char('o');
+        state.form_push_char('o');
+        state.form_move_cursor(-1);
+        state.form_backspace();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "fo");
+            assert_eq!(form.title_cursor, 1);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_backspace_at_start_of_field_is_a_no_op() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('a');
+        state.form_move_cursor(-10); // clamps to 0
+        state.form_backspace();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title, "a");
+            assert_eq!(form.title_cursor, 0);
         } else {
             panic!("expected Form mode");
         }
