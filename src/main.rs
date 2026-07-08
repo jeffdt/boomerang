@@ -12,7 +12,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use gh::{GhCliSource, IssueSource, StateFilter};
-use model::{AppState, FormState, Issue, Label, Mode, PendingOperation};
+use model::{AppState, FormState, Issue, Label, LoadingAnimation, Mode, PendingOperation};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::{self, stdout};
@@ -27,33 +27,117 @@ const HELP: &str = "\
 issue-browser - a tmux-popup TUI for GitHub issues
 
 Usage:
-  issue-browser            Launch the picker (intended via `tmux popup -E`)
-  issue-browser --doctor   Print gh, repo, auth, and logging diagnostics
-  issue-browser --version  Print version and exit
-  issue-browser --help     Print this help and exit
+  issue-browser                                   Launch the picker (intended via `tmux popup -E`)
+  issue-browser --preview-loading [ANIMATION] [DURATION]
+                                                  Play a loading animation preview and exit
+  issue-browser --doctor                          Print gh, repo, auth, and logging diagnostics
+  issue-browser --version                         Print version and exit
+  issue-browser --help                            Print this help and exit
 
 Bind it in ~/.tmux.conf, e.g.:
   bind i display-popup -E -B -w 84 -h 60% \"exec issue-browser\"";
 
+#[derive(Debug, PartialEq)]
+enum StartupCommand {
+    Launch,
+    Version,
+    Help,
+    Doctor,
+    PreviewLoading {
+        animation: Option<LoadingAnimation>,
+        duration: Duration,
+    },
+}
+
+fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupCommand, String> {
+    let args = args.into_iter().collect::<Vec<_>>();
+    match args.as_slice() {
+        [] => Ok(StartupCommand::Launch),
+        [arg] if matches!(arg.as_str(), "-V" | "--version") => Ok(StartupCommand::Version),
+        [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(StartupCommand::Help),
+        [arg] if arg == "--doctor" => Ok(StartupCommand::Doctor),
+        [arg, rest @ ..] if arg == "--preview-loading" => parse_loading_preview(rest),
+        [arg, ..] => Err(format!("unknown argument '{arg}'")),
+    }
+}
+
+fn parse_loading_preview(args: &[String]) -> Result<StartupCommand, String> {
+    const DEFAULT_PREVIEW_DURATION: Duration = Duration::from_secs(5);
+    match args {
+        [] => Ok(StartupCommand::PreviewLoading {
+            animation: None,
+            duration: DEFAULT_PREVIEW_DURATION,
+        }),
+        [single] => {
+            if let Some(animation) = LoadingAnimation::parse(single) {
+                return Ok(StartupCommand::PreviewLoading {
+                    animation: Some(animation),
+                    duration: DEFAULT_PREVIEW_DURATION,
+                });
+            }
+            Ok(StartupCommand::PreviewLoading {
+                animation: None,
+                duration: parse_preview_duration(single)?,
+            })
+        }
+        [animation, duration] => Ok(StartupCommand::PreviewLoading {
+            animation: Some(
+                LoadingAnimation::parse(animation)
+                    .ok_or_else(|| format!("unknown loading animation '{animation}'"))?,
+            ),
+            duration: parse_preview_duration(duration)?,
+        }),
+        _ => Err("--preview-loading accepts at most ANIMATION and DURATION".to_string()),
+    }
+}
+
+fn parse_preview_duration(value: &str) -> Result<Duration, String> {
+    let trimmed = value.trim();
+    let duration = if let Some(milliseconds) = trimmed.strip_suffix("ms") {
+        milliseconds
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .map_err(|_| format!("invalid preview duration '{value}'"))?
+    } else if let Some(seconds) = trimmed.strip_suffix('s') {
+        seconds
+            .parse::<u64>()
+            .map(Duration::from_secs)
+            .map_err(|_| format!("invalid preview duration '{value}'"))?
+    } else {
+        trimmed
+            .parse::<u64>()
+            .map(Duration::from_secs)
+            .map_err(|_| format!("invalid preview duration '{value}'"))?
+    };
+    if duration.is_zero() {
+        Err("preview duration must be greater than zero".to_string())
+    } else {
+        Ok(duration)
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    if let Some(arg) = std::env::args().nth(1) {
-        match arg.as_str() {
-            "-V" | "--version" => {
-                println!("issue-browser {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "-h" | "--help" => {
-                println!("{HELP}");
-                return Ok(());
-            }
-            "--doctor" => {
-                diagnostics::run_doctor()?;
-                return Ok(());
-            }
-            other => {
-                eprintln!("issue-browser: unknown argument '{other}'\n\n{HELP}");
-                std::process::exit(2);
-            }
+    match parse_command(std::env::args().skip(1)) {
+        Ok(StartupCommand::Launch) => {}
+        Ok(StartupCommand::Version) => {
+            println!("issue-browser {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Ok(StartupCommand::Help) => {
+            println!("{HELP}");
+            return Ok(());
+        }
+        Ok(StartupCommand::Doctor) => {
+            diagnostics::run_doctor()?;
+            return Ok(());
+        }
+        Ok(StartupCommand::PreviewLoading {
+            animation,
+            duration,
+        }) => return run_loading_preview(animation, duration),
+        Err(message) => {
+            eprintln!("issue-browser: {message}\n\n{HELP}");
+            std::process::exit(2);
         }
     }
 
@@ -93,6 +177,37 @@ fn run_ui<S: IssueSource>(
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let result = event_loop(&mut terminal, state, source, Some(initial_load_rx));
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn run_loading_preview(
+    animation: Option<LoadingAnimation>,
+    duration: Duration,
+) -> anyhow::Result<()> {
+    let mut state = AppState::loading();
+    if let Some(animation) = animation {
+        if let Some(loading) = state.loading.as_mut() {
+            loading.animation = animation;
+        }
+    }
+
+    enable_raw_mode()?;
+    let mut out = stdout();
+    execute!(out, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
+
+    let started = Instant::now();
+    let result = loop {
+        terminal.draw(|f| ui::draw(f, &state))?;
+        if started.elapsed() >= duration {
+            break Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -569,6 +684,56 @@ mod tests {
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
         }
+    }
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_command_defaults_to_launch() {
+        assert_eq!(parse_command(args(&[])), Ok(StartupCommand::Launch));
+    }
+
+    #[test]
+    fn parse_command_accepts_loading_preview_default() {
+        assert_eq!(
+            parse_command(args(&["--preview-loading"])),
+            Ok(StartupCommand::PreviewLoading {
+                animation: None,
+                duration: Duration::from_secs(5),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_loading_preview_animation_and_duration() {
+        assert_eq!(
+            parse_command(args(&["--preview-loading", "ripple", "250ms"])),
+            Ok(StartupCommand::PreviewLoading {
+                animation: Some(LoadingAnimation::ColorRipple),
+                duration: Duration::from_millis(250),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_loading_preview_duration_only() {
+        assert_eq!(
+            parse_command(args(&["--preview-loading", "2s"])),
+            Ok(StartupCommand::PreviewLoading {
+                animation: None,
+                duration: Duration::from_secs(2),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_rejects_zero_loading_preview_duration() {
+        assert_eq!(
+            parse_command(args(&["--preview-loading", "0"])),
+            Err("preview duration must be greater than zero".to_string())
+        );
     }
 
     #[test]
