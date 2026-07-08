@@ -427,6 +427,82 @@ impl AppState {
         }
     }
 
+    pub fn form_cursor_home(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => form.title_cursor = 0,
+                FormField::Body => {
+                    let chars: Vec<char> = form.body.chars().collect();
+                    let mut i = form.body_cursor;
+                    while i > 0 && chars[i - 1] != '\n' {
+                        i -= 1;
+                    }
+                    form.body_cursor = i;
+                }
+                FormField::Labels | FormField::Submit => {}
+            }
+        }
+    }
+
+    pub fn form_cursor_end(&mut self) {
+        if let Mode::Form(form) = &mut self.mode {
+            match form.field {
+                FormField::Title => form.title_cursor = char_len(&form.title),
+                FormField::Body => {
+                    let chars: Vec<char> = form.body.chars().collect();
+                    let mut i = form.body_cursor;
+                    while i < chars.len() && chars[i] != '\n' {
+                        i += 1;
+                    }
+                    form.body_cursor = i;
+                }
+                FormField::Labels | FormField::Submit => {}
+            }
+        }
+    }
+
+    pub fn form_move_cursor_vertical(&mut self, delta: isize) {
+        if let Mode::Form(form) = &mut self.mode {
+            if form.field != FormField::Body {
+                return;
+            }
+            let chars: Vec<char> = form.body.chars().collect();
+            let mut line_start = form.body_cursor;
+            while line_start > 0 && chars[line_start - 1] != '\n' {
+                line_start -= 1;
+            }
+            let column = form.body_cursor - line_start;
+
+            if delta < 0 {
+                if line_start == 0 {
+                    return;
+                }
+                let prev_line_end = line_start - 1;
+                let mut prev_line_start = prev_line_end;
+                while prev_line_start > 0 && chars[prev_line_start - 1] != '\n' {
+                    prev_line_start -= 1;
+                }
+                let prev_line_len = prev_line_end - prev_line_start;
+                form.body_cursor = prev_line_start + column.min(prev_line_len);
+            } else if delta > 0 {
+                let mut line_end = form.body_cursor;
+                while line_end < chars.len() && chars[line_end] != '\n' {
+                    line_end += 1;
+                }
+                if line_end == chars.len() {
+                    return;
+                }
+                let next_line_start = line_end + 1;
+                let mut next_line_end = next_line_start;
+                while next_line_end < chars.len() && chars[next_line_end] != '\n' {
+                    next_line_end += 1;
+                }
+                let next_line_len = next_line_end - next_line_start;
+                form.body_cursor = next_line_start + column.min(next_line_len);
+            }
+        }
+    }
+
     pub fn form_next_field(&mut self) {
         if let Mode::Form(form) = &mut self.mode {
             form.field = match form.field {
@@ -886,6 +962,116 @@ mod tests {
         if let Mode::Form(form) = &state.mode {
             assert_eq!(form.title, "a");
             assert_eq!(form.title_cursor, 0);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn cursor_home_and_end_on_title_go_to_field_boundaries() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        for c in "hello".chars() {
+            state.form_push_char(c);
+        }
+        state.form_cursor_home();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_cursor, 0);
+        } else {
+            panic!("expected Form mode");
+        }
+        state.form_cursor_end();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_cursor, 5);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn cursor_home_and_end_on_body_are_scoped_to_current_line() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "one\ntwo".chars() {
+            state.form_push_char(c);
+        }
+        // cursor is at the end, on the "two" line
+        state.form_cursor_home();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body_cursor, 4, "home should land right after the \\n, not at index 0");
+        } else {
+            panic!("expected Form mode");
+        }
+        state.form_cursor_end();
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body_cursor, 7, "end should land at the end of the string");
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn vertical_movement_preserves_column_across_explicit_lines() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "abcdef\nxy".chars() {
+            state.form_push_char(c);
+        }
+        state.form_cursor_home(); // column 0 of "xy" line (index 7)
+        state.form_move_cursor(2); // column 2 of "xy" line (index 9, end of "xy")
+        state.form_move_cursor_vertical(-1);
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body_cursor, 2, "should land at column 2 on the first line (\"abcdef\")");
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn vertical_movement_clamps_to_shorter_line_length() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "abcdef\nxy".chars() {
+            state.form_push_char(c);
+        }
+        // cursor at end of "xy" (index 9); go up then back down
+        state.form_move_cursor_vertical(-1); // column 2 on "abcdef" -> index 2
+        state.form_move_cursor_vertical(1); // back down to "xy", column 2 doesn't exist (len 2) -> clamp to end, index 9
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body_cursor, 9);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn vertical_movement_is_a_no_op_past_first_or_last_line() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        for c in "only one line".chars() {
+            state.form_push_char(c);
+        }
+        state.form_move_cursor_vertical(-1);
+        state.form_move_cursor_vertical(1);
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.body_cursor, "only one line".chars().count());
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn vertical_movement_on_title_is_a_no_op() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('a');
+        state.form_move_cursor_vertical(-1);
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_cursor, 1);
         } else {
             panic!("expected Form mode");
         }
