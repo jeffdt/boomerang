@@ -385,7 +385,7 @@ fn event_loop<S: IssueSource>(
                 },
                 Mode::Form(form) => {
                     let field = form.field;
-                    let form_draft = form.clone();
+                    let form_draft = (**form).clone();
                     match map_form_key(key, field) {
                         FormInput::Char(c) => state.form_push_char(c),
                         FormInput::Backspace => state.form_backspace(),
@@ -438,6 +438,11 @@ fn event_loop<S: IssueSource>(
                         }
                     }
                     ConfirmInput::No => state.confirm_close_no(),
+                    ConfirmInput::None => {}
+                },
+                Mode::ConfirmDiscard(_) => match map_confirm_key(key) {
+                    ConfirmInput::Yes => state.confirm_discard_yes(),
+                    ConfirmInput::No => state.confirm_discard_no(),
                     ConfirmInput::None => {}
                 },
             }
@@ -595,7 +600,7 @@ fn restore_mutation_draft(state: &mut AppState, draft: Option<MutationDraft>) {
 fn show_pending_draft(state: &mut AppState, draft: &MutationDraft) {
     match draft {
         MutationDraft::LittleCreate { title } => state.mode = Mode::LittleCreate(title.clone()),
-        MutationDraft::Form(form) => state.mode = Mode::Form(form.clone()),
+        MutationDraft::Form(form) => state.mode = Mode::Form(Box::new(form.clone())),
     }
 }
 
@@ -807,7 +812,7 @@ mod tests {
             ..Default::default()
         };
         let mut state = AppState::new(vec![], vec![]);
-        state.mode = Mode::Form(draft);
+        state.mode = Mode::Form(Box::new(draft));
         state.begin_pending(PendingOperation::EditIssue);
         finish_mutation(
             &mut state,
@@ -839,7 +844,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         show_pending_draft(&mut state, &MutationDraft::Form(draft.clone()));
         state.begin_pending(PendingOperation::EditIssue);
-        assert_eq!(state.mode, Mode::Form(draft));
+        assert_eq!(state.mode, Mode::Form(Box::new(draft)));
         assert!(state
             .pending_message()
             .unwrap()
@@ -896,7 +901,7 @@ mod tests {
             Some(MutationDraft::Form(draft.clone())),
             Err(anyhow::anyhow!("network failed")),
         );
-        assert_eq!(state.mode, Mode::Form(draft));
+        assert_eq!(state.mode, Mode::Form(Box::new(draft)));
         assert_eq!(
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("gh error: network failed")

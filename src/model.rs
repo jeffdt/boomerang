@@ -88,8 +88,9 @@ pub enum Mode {
     List,
     Search,
     LittleCreate(String),
-    Form(FormState),
+    Form(Box<FormState>),
     ConfirmClose(u32),
+    ConfirmDiscard(Box<Mode>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -109,6 +110,17 @@ pub struct FormState {
     pub selected_labels: HashSet<String>,
     pub label_cursor: usize,
     pub field: FormField,
+    pub original_title: String,
+    pub original_body: String,
+    pub original_labels: HashSet<String>,
+}
+
+impl FormState {
+    pub fn is_dirty(&self) -> bool {
+        self.title != self.original_title
+            || self.body != self.original_body
+            || self.selected_labels != self.original_labels
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -283,7 +295,29 @@ impl AppState {
     }
 
     pub fn cancel_form_or_create(&mut self) {
-        self.mode = Mode::List;
+        let dirty = match &self.mode {
+            Mode::Form(form) => form.is_dirty(),
+            Mode::LittleCreate(buf) => !buf.trim().is_empty(),
+            _ => false,
+        };
+        if dirty {
+            let previous = std::mem::replace(&mut self.mode, Mode::List);
+            self.mode = Mode::ConfirmDiscard(Box::new(previous));
+        } else {
+            self.mode = Mode::List;
+        }
+    }
+
+    pub fn confirm_discard_yes(&mut self) {
+        if matches!(self.mode, Mode::ConfirmDiscard(_)) {
+            self.mode = Mode::List;
+        }
+    }
+
+    pub fn confirm_discard_no(&mut self) {
+        if let Mode::ConfirmDiscard(previous) = std::mem::replace(&mut self.mode, Mode::List) {
+            self.mode = *previous;
+        }
     }
 
     fn new_form_state(&self, editing: Option<u32>) -> FormState {
@@ -298,22 +332,25 @@ impl AppState {
         };
         FormState {
             editing,
-            title,
-            body,
+            title: title.clone(),
+            body: body.clone(),
             all_label_names,
-            selected_labels,
+            selected_labels: selected_labels.clone(),
             label_cursor: 0,
             field: FormField::Title,
+            original_title: title,
+            original_body: body,
+            original_labels: selected_labels,
         }
     }
 
     pub fn enter_big_create(&mut self) {
-        self.mode = Mode::Form(self.new_form_state(None));
+        self.mode = Mode::Form(Box::new(self.new_form_state(None)));
     }
 
     pub fn enter_edit(&mut self) {
         if let Some(number) = self.selected_issue().map(|i| i.number) {
-            self.mode = Mode::Form(self.new_form_state(Some(number)));
+            self.mode = Mode::Form(Box::new(self.new_form_state(Some(number))));
         }
     }
 
@@ -779,6 +816,86 @@ mod tests {
         assert_eq!(submission.editing, Some(1));
         assert_eq!(submission.add_labels, vec!["docs".to_string()]);
         assert_eq!(submission.remove_labels, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn cancel_on_clean_form_returns_directly_to_list() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.cancel_form_or_create();
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn cancel_on_dirty_form_asks_for_confirmation() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.cancel_form_or_create();
+        assert!(matches!(state.mode, Mode::ConfirmDiscard(_)), "typed title should be treated as dirty");
+    }
+
+    #[test]
+    fn cancel_on_dirty_form_via_label_toggle_asks_for_confirmation() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        state.form_next_field(); // Labels
+        state.form_toggle_label();
+        state.cancel_form_or_create();
+        assert!(matches!(state.mode, Mode::ConfirmDiscard(_)), "a checked label box should be treated as dirty");
+    }
+
+    #[test]
+    fn confirm_discard_yes_abandons_changes_and_returns_to_list() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.cancel_form_or_create();
+        state.confirm_discard_yes();
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn confirm_discard_no_restores_the_in_progress_form() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.cancel_form_or_create();
+        state.confirm_discard_no();
+        match &state.mode {
+            Mode::Form(form) => assert_eq!(form.title, "T"),
+            other => panic!("expected to return to Form mode with typed content intact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancel_on_dirty_little_create_asks_for_confirmation() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.little_create_push('F');
+        state.cancel_form_or_create();
+        assert!(matches!(state.mode, Mode::ConfirmDiscard(_)));
+        state.confirm_discard_no();
+        assert_eq!(state.mode, Mode::LittleCreate("F".to_string()));
+    }
+
+    #[test]
+    fn cancel_on_blank_little_create_returns_directly_to_list() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.cancel_form_or_create();
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn editing_an_issue_without_changes_is_not_dirty() {
+        let mut issue1 = issue(1, "Fix bug");
+        issue1.labels = vec![Label { name: "bug".into(), color: "d73a4a".into() }];
+        let mut state = AppState::new(vec![issue1], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_edit();
+        state.cancel_form_or_create();
+        assert_eq!(state.mode, Mode::List, "re-opening an edit form unchanged should not be considered dirty");
     }
 
     #[test]

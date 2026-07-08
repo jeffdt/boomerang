@@ -181,6 +181,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     match &state.mode {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
+        Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
         Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf, state),
         _ => {
             let chunks = Layout::default()
@@ -433,6 +434,18 @@ fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppSta
             .block(Block::default().borders(Borders::ALL).title("Confirm")),
         area,
     );
+}
+
+fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
+    let text = match previous {
+        Mode::Form(form) => match form.editing {
+            Some(number) => format!("Discard unsaved changes to #{number}? (y/n)"),
+            None => "Discard this new issue? (y/n)".to_string(),
+        },
+        Mode::LittleCreate(_) => "Discard this new issue title? (y/n)".to_string(),
+        _ => "Discard unsaved changes? (y/n)".to_string(),
+    };
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
 }
 
 #[cfg(test)]
@@ -963,6 +976,26 @@ mod tests {
         state.set_status("gh error: create failed".to_string());
         let rendered = render_to_string(&state);
         assert!(rendered.contains("gh error: create failed"));
+    }
+
+    #[test]
+    fn confirm_discard_renders_for_dirty_new_issue_form() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.cancel_form_or_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Discard this new issue?"));
+    }
+
+    #[test]
+    fn confirm_discard_renders_issue_number_for_dirty_edit_form() {
+        let mut state = AppState::new(vec![issue(9, "Fix bug")], vec![]);
+        state.enter_edit();
+        state.form_push_char('!');
+        state.cancel_form_or_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Discard unsaved changes to #9?"));
     }
 
     #[test]
