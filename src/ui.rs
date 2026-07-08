@@ -177,6 +177,11 @@ fn inset(area: Rect, margin: u16) -> Rect {
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default();
+    let title_text = state
+        .repo_name_with_owner
+        .as_deref()
+        .map(format_repo_title)
+        .unwrap_or_else(|| "issue-browser".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -184,7 +189,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                "‹ issue-browser ›",
+                format!("‹ {title_text} ›"),
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -252,14 +257,13 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
-        let left = format!("{:<6}{}", format!("#{}", issue.number), issue.title);
-        let mut spans = vec![Span::raw(left.clone())];
+        let number_col = format!("{:<6}", format!("#{}", issue.number));
+        let mut label_spans = Vec::new();
+        let mut labels_width = 0usize;
         if !issue.labels.is_empty() {
             // Tally the labels' rendered width in the same pass that builds their
             // spans, so the padding calculation can never drift from what's
             // actually drawn (no separate width formula to keep in sync).
-            let mut label_spans = Vec::new();
-            let mut labels_width = 0usize;
             for (i, label) in issue.labels.iter().enumerate() {
                 if i > 0 {
                     label_spans.push(Span::raw(" "));
@@ -272,6 +276,14 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
                     label_style(label_palette_color(&state.all_labels, &label.name)),
                 ));
             }
+        }
+        let max_title_width = available_width
+            .saturating_sub(number_col.chars().count())
+            .saturating_sub(labels_width);
+        let title = truncate_title(&issue.title, max_title_width);
+        let left = format!("{number_col}{title}");
+        let mut spans = vec![Span::raw(left.clone())];
+        if !label_spans.is_empty() {
             let left_width = left.chars().count();
             let pad = available_width
                 .saturating_sub(left_width)
@@ -297,8 +309,20 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        // 2 rows reserved for the title: most titles wrap to 1 line, leaving
+        // a blank row, but longer titles need the second line.
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
         .split(area);
+    frame.render_widget(
+        Paragraph::new(issue.title.as_str())
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .wrap(Wrap { trim: false }),
+        chunks[0],
+    );
     let date = issue
         .created_at
         .split('T')
@@ -307,14 +331,14 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let header = format!("#{} · opened {date}", issue.number);
     frame.render_widget(
         Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[0],
+        chunks[1],
     );
     let body = if issue.body.is_empty() {
         "(no description)"
     } else {
         issue.body.as_str()
     };
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[1]);
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[2]);
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -349,6 +373,26 @@ fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
 fn label_palette_color(all_labels: &[Label], name: &str) -> Color {
     let index = all_labels.iter().position(|l| l.name == name).unwrap_or(0);
     LABEL_PALETTE[index % LABEL_PALETTE.len()]
+}
+
+/// Truncate `title` to `max_width` characters, replacing the tail with `...`
+/// when it doesn't fit. `max_width` is a character count, not a byte count,
+/// so multi-byte titles truncate at character boundaries.
+fn truncate_title(title: &str, max_width: usize) -> String {
+    if title.chars().count() <= max_width {
+        return title.to_string();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+    let kept: String = title.chars().take(max_width - 3).collect();
+    format!("{kept}...")
+}
+
+/// Seam for a future settings feature (e.g. showing the repo name without its
+/// owner) to hook into without touching call sites; today it's a passthrough.
+fn format_repo_title(repo: &str) -> String {
+    repo.to_string()
 }
 
 fn label_style(color: Color) -> Style {
@@ -898,6 +942,29 @@ mod tests {
     }
 
     #[test]
+    fn format_repo_title_is_a_passthrough_today() {
+        assert_eq!(
+            format_repo_title("jeffdt/issue-browser"),
+            "jeffdt/issue-browser"
+        );
+    }
+
+    #[test]
+    fn border_title_shows_repo_name_when_available() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/issue-browser".to_string());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ jeffdt/issue-browser ›"));
+    }
+
+    #[test]
+    fn border_title_falls_back_to_app_name_when_repo_unknown() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ issue-browser ›"));
+    }
+
+    #[test]
     fn renders_outer_rounded_frame_with_title() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let rendered = render_to_string(&state);
@@ -1097,6 +1164,90 @@ mod tests {
         assert!(
             rendered.contains("(y/n)"),
             "confirm close dialog should show (y/n) prompt even with long title"
+        );
+    }
+
+    #[test]
+    fn truncate_title_returns_unchanged_when_it_fits() {
+        assert_eq!(truncate_title("Short title", 20), "Short title");
+    }
+
+    #[test]
+    fn truncate_title_returns_unchanged_at_exact_width() {
+        assert_eq!(truncate_title("Exactly ten", 11), "Exactly ten");
+    }
+
+    #[test]
+    fn truncate_title_appends_ellipsis_when_too_long() {
+        let title = "abcdefghijklmnopqrstuvwxyz";
+        assert_eq!(truncate_title(title, 10), "abcdefg...");
+    }
+
+    #[test]
+    fn truncate_title_handles_tiny_width_without_panicking() {
+        assert_eq!(truncate_title("Anything", 2), "..");
+        assert_eq!(truncate_title("Anything", 0), "");
+    }
+
+    #[test]
+    fn long_titles_are_truncated_with_ellipsis_in_the_list() {
+        let long_title = "This issue title is intentionally far too long to fit inside the available list width without any truncation applied to it at all";
+        let state = AppState::new(vec![issue(1, long_title)], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("..."),
+            "long title should be truncated with an ellipsis, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(long_title),
+            "the full untruncated title should not appear in the list row"
+        );
+    }
+
+    #[test]
+    fn short_titles_are_not_truncated_in_the_list() {
+        let state = AppState::new(vec![issue(1, "Short title")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Short title"));
+        assert!(!rendered.contains("Short title..."));
+    }
+
+    #[test]
+    fn detail_pane_shows_full_title_as_an_additional_occurrence() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let closed_rendered = render_to_string(&state);
+        assert_eq!(
+            closed_rendered.matches("Fix bug").count(),
+            1,
+            "title should appear exactly once (in the list) when the pane is closed"
+        );
+        state.toggle_pane();
+        let open_rendered = render_to_string(&state);
+        assert_eq!(
+            open_rendered.matches("Fix bug").count(),
+            2,
+            "title should appear a second time (in the pane) once it's open"
+        );
+    }
+
+    #[test]
+    fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
+        // 70 chars: longer than the list's title budget at this fixed 80x24
+        // TestBackend size (74-char inner width minus the 6-char number
+        // column = 68), but short enough to fit on one line at the detail
+        // pane's full 74-char width, so it renders unwrapped and unclipped.
+        let long_title = "a".repeat(70);
+        let mut state = AppState::new(vec![issue(1, &long_title)], vec![]);
+        let list_rendered = render_to_string(&state);
+        assert!(
+            !list_rendered.contains(&long_title),
+            "list should truncate this title"
+        );
+        state.toggle_pane();
+        let pane_rendered = render_to_string(&state);
+        assert!(
+            pane_rendered.contains(&long_title),
+            "detail pane should show the full untruncated title"
         );
     }
 }

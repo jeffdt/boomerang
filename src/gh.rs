@@ -54,6 +54,17 @@ pub fn labels_args() -> Vec<String> {
     ]
 }
 
+pub fn repo_name_args() -> Vec<String> {
+    vec![
+        "repo".into(),
+        "view".into(),
+        "--json".into(),
+        "nameWithOwner".into(),
+        "--jq".into(),
+        ".nameWithOwner".into(),
+    ]
+}
+
 #[derive(Deserialize)]
 struct RawLabel {
     name: String,
@@ -115,6 +126,10 @@ pub fn parse_labels_json(json: &str) -> Result<Vec<Label>> {
         .collect())
 }
 
+pub fn parse_repo_name(raw: &str) -> String {
+    raw.trim().to_string()
+}
+
 pub fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<String> {
     let mut args = vec![
         "issue".into(),
@@ -165,6 +180,7 @@ pub fn close_args(number: u32) -> Vec<String> {
 pub trait IssueSource: Clone + Send + 'static {
     fn list(&self, state: StateFilter) -> Result<Vec<Issue>>;
     fn labels(&self) -> Result<Vec<Label>>;
+    fn repo_name(&self) -> Result<String>;
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<()>;
     fn edit(
         &self,
@@ -213,6 +229,10 @@ impl IssueSource for GhCliSource {
 
     fn labels(&self) -> Result<Vec<Label>> {
         parse_labels_json(&self.run(&labels_args())?)
+    }
+
+    fn repo_name(&self) -> Result<String> {
+        Ok(parse_repo_name(&self.run(&repo_name_args())?))
     }
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<()> {
@@ -363,5 +383,29 @@ mod tests {
     #[test]
     fn close_args_targets_issue_number() {
         assert_eq!(close_args(7), strs(&["issue", "close", "7"]));
+    }
+
+    #[test]
+    fn repo_name_args_requests_name_with_owner() {
+        let args = repo_name_args();
+        assert_eq!(
+            args,
+            strs(&[
+                "repo",
+                "view",
+                "--json",
+                "nameWithOwner",
+                "--jq",
+                ".nameWithOwner"
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_trims_trailing_newline() {
+        assert_eq!(
+            parse_repo_name("jeffdt/issue-browser\n"),
+            "jeffdt/issue-browser"
+        );
     }
 }
