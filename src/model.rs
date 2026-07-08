@@ -51,7 +51,11 @@ pub enum LoadingAnimation {
 }
 
 impl LoadingAnimation {
-    const ALL: [LoadingAnimation; 1] = [LoadingAnimation::MatrixRain];
+    const ALL: [LoadingAnimation; 3] = [
+        LoadingAnimation::MatrixRain,
+        LoadingAnimation::ColorRipple,
+        LoadingAnimation::RainbowRipple,
+    ];
 
     pub fn for_launch() -> Self {
         std::env::var("ISSUE_BROWSER_LOADING_ANIMATION")
@@ -1483,10 +1487,9 @@ mod tests {
     fn loading_state_reports_message_and_selected_animation() {
         let state = AppState::loading();
         assert!(state.is_loading());
-        assert_eq!(
-            state.loading.as_ref().map(|loading| loading.animation),
-            Some(LoadingAnimation::MatrixRain)
-        );
+        assert!(state.loading.as_ref().is_some_and(|loading| {
+            LoadingAnimation::ALL.contains(&loading.animation)
+        }));
         assert!(state
             .loading_message()
             .expect("loading message")
