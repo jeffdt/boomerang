@@ -233,14 +233,13 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
-        let left = format!("{:<6}{}", format!("#{}", issue.number), issue.title);
-        let mut spans = vec![Span::raw(left.clone())];
+        let number_col = format!("{:<6}", format!("#{}", issue.number));
+        let mut label_spans = Vec::new();
+        let mut labels_width = 0usize;
         if !issue.labels.is_empty() {
             // Tally the labels' rendered width in the same pass that builds their
             // spans, so the padding calculation can never drift from what's
             // actually drawn (no separate width formula to keep in sync).
-            let mut label_spans = Vec::new();
-            let mut labels_width = 0usize;
             for (i, label) in issue.labels.iter().enumerate() {
                 if i > 0 {
                     label_spans.push(Span::raw(" "));
@@ -253,6 +252,14 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
                     label_style(label_palette_color(&state.all_labels, &label.name)),
                 ));
             }
+        }
+        let max_title_width = available_width
+            .saturating_sub(number_col.chars().count())
+            .saturating_sub(labels_width);
+        let title = truncate_title(&issue.title, max_title_width);
+        let left = format!("{number_col}{title}");
+        let mut spans = vec![Span::raw(left.clone())];
+        if !label_spans.is_empty() {
             let left_width = left.chars().count();
             let pad = available_width
                 .saturating_sub(left_width)
@@ -1011,5 +1018,28 @@ mod tests {
     fn truncate_title_handles_tiny_width_without_panicking() {
         assert_eq!(truncate_title("Anything", 2), "..");
         assert_eq!(truncate_title("Anything", 0), "");
+    }
+
+    #[test]
+    fn long_titles_are_truncated_with_ellipsis_in_the_list() {
+        let long_title = "This issue title is intentionally far too long to fit inside the available list width without any truncation applied to it at all";
+        let state = AppState::new(vec![issue(1, long_title)], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("..."),
+            "long title should be truncated with an ellipsis, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(long_title),
+            "the full untruncated title should not appear in the list row"
+        );
+    }
+
+    #[test]
+    fn short_titles_are_not_truncated_in_the_list() {
+        let state = AppState::new(vec![issue(1, "Short title")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Short title"));
+        assert!(!rendered.contains("Short title..."));
     }
 }
