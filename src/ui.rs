@@ -132,9 +132,15 @@ pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
         KeyCode::Enter | KeyCode::Char(' ') if field == FormField::Submit => FormInput::Enter,
         KeyCode::Enter => FormInput::Enter,
         KeyCode::Backspace => FormInput::Backspace,
-        KeyCode::Left if matches!(field, FormField::Title | FormField::Body) => FormInput::MoveCursor(-1),
-        KeyCode::Right if matches!(field, FormField::Title | FormField::Body) => FormInput::MoveCursor(1),
-        KeyCode::Home if matches!(field, FormField::Title | FormField::Body) => FormInput::CursorHome,
+        KeyCode::Left if matches!(field, FormField::Title | FormField::Body) => {
+            FormInput::MoveCursor(-1)
+        }
+        KeyCode::Right if matches!(field, FormField::Title | FormField::Body) => {
+            FormInput::MoveCursor(1)
+        }
+        KeyCode::Home if matches!(field, FormField::Title | FormField::Body) => {
+            FormInput::CursorHome
+        }
         KeyCode::End if matches!(field, FormField::Title | FormField::Body) => FormInput::CursorEnd,
         KeyCode::Up if field == FormField::Labels => FormInput::MoveUp,
         KeyCode::Down if field == FormField::Labels => FormInput::MoveDown,
@@ -307,6 +313,21 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(issue) = state.selected_issue() else {
         return;
     };
+    let border_style = Style::default();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Line::from(vec![
+            Span::styled("─", border_style),
+            Span::styled(
+                format!("‹ #{} ›", issue.number),
+                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
+            ),
+        ]));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         // 2 rows reserved for the title: most titles wrap to 1 line, leaving
@@ -314,9 +335,10 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
         .constraints([
             Constraint::Length(2),
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
         ])
-        .split(area);
+        .split(inner);
     frame.render_widget(
         Paragraph::new(issue.title.as_str())
             .style(Style::default().add_modifier(Modifier::BOLD))
@@ -328,17 +350,22 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
         .split('T')
         .next()
         .unwrap_or(&issue.created_at);
-    let header = format!("#{} · opened {date}", issue.number);
+    let metadata = format!("opened {date}");
     frame.render_widget(
-        Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(metadata).style(Style::default().add_modifier(Modifier::DIM)),
         chunks[1],
+    );
+    let rule = "─".repeat(chunks[2].width as usize);
+    frame.render_widget(
+        Paragraph::new(rule).style(Style::default().add_modifier(Modifier::DIM)),
+        chunks[2],
     );
     let body = if issue.body.is_empty() {
         "(no description)"
     } else {
         issue.body.as_str()
     };
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[2]);
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[3]);
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -431,7 +458,11 @@ fn cursor_row_col(text: &str, cursor: usize) -> (u16, u16) {
 fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
     let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -443,19 +474,31 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         ])
         .split(outer_chunks[0]);
 
-    let title_block =
-        Block::default().borders(Borders::ALL).title("Title").border_style(field_style(form.field == FormField::Title));
+    let title_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Title")
+        .border_style(field_style(form.field == FormField::Title));
     let title_inner = title_block.inner(chunks[0]);
-    frame.render_widget(Paragraph::new(form.title.as_str()).block(title_block), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(form.title.as_str()).block(title_block),
+        chunks[0],
+    );
     if form.field == FormField::Title {
         let (row, col) = cursor_row_col(&form.title, form.title_cursor);
         frame.set_cursor_position((title_inner.x + col, title_inner.y + row));
     }
 
-    let body_block =
-        Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body));
+    let body_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Body")
+        .border_style(field_style(form.field == FormField::Body));
     let body_inner = body_block.inner(chunks[1]);
-    frame.render_widget(Paragraph::new(form.body.as_str()).wrap(Wrap { trim: false }).block(body_block), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(form.body.as_str())
+            .wrap(Wrap { trim: false })
+            .block(body_block),
+        chunks[1],
+    );
     if form.field == FormField::Body {
         let (row, col) = cursor_row_col(&form.body, form.body_cursor);
         frame.set_cursor_position((body_inner.x + col, body_inner.y + row));
@@ -498,7 +541,11 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
     frame.render_widget(
         Paragraph::new(Line::from(submit_text))
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_style(field_style(submit_focused))),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(field_style(submit_focused)),
+            ),
         chunks[3],
     );
 
@@ -537,7 +584,12 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
         Mode::LittleCreate(_) => "Discard this new issue title? (y/n)".to_string(),
         _ => "Discard unsaved changes? (y/n)".to_string(),
     };
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::ALL).title("Confirm")), area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Confirm")),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -656,12 +708,30 @@ mod tests {
 
     #[test]
     fn form_key_mapping_covers_cursor_movement() {
-        assert_eq!(map_form_key(key(KeyCode::Left), FormField::Title), FormInput::MoveCursor(-1));
-        assert_eq!(map_form_key(key(KeyCode::Right), FormField::Body), FormInput::MoveCursor(1));
-        assert_eq!(map_form_key(key(KeyCode::Home), FormField::Title), FormInput::CursorHome);
-        assert_eq!(map_form_key(key(KeyCode::End), FormField::Body), FormInput::CursorEnd);
-        assert_eq!(map_form_key(key(KeyCode::Up), FormField::Body), FormInput::MoveCursorVertical(-1));
-        assert_eq!(map_form_key(key(KeyCode::Down), FormField::Body), FormInput::MoveCursorVertical(1));
+        assert_eq!(
+            map_form_key(key(KeyCode::Left), FormField::Title),
+            FormInput::MoveCursor(-1)
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Right), FormField::Body),
+            FormInput::MoveCursor(1)
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Home), FormField::Title),
+            FormInput::CursorHome
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::End), FormField::Body),
+            FormInput::CursorEnd
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Up), FormField::Body),
+            FormInput::MoveCursorVertical(-1)
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Down), FormField::Body),
+            FormInput::MoveCursorVertical(1)
+        );
         assert_eq!(
             map_form_key(key(KeyCode::Up), FormField::Labels),
             FormInput::MoveUp,
@@ -674,15 +744,30 @@ mod tests {
         let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
         let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
         let ctrl_s = key_with(KeyCode::Char('s'), KeyModifiers::CONTROL);
-        assert_eq!(map_form_key(ctrl_w, FormField::Title), FormInput::DeleteWord);
-        assert_eq!(map_form_key(ctrl_u, FormField::Body), FormInput::ClearToLineStart);
-        assert_eq!(map_form_key(ctrl_s, FormField::Labels), FormInput::SubmitNow);
+        assert_eq!(
+            map_form_key(ctrl_w, FormField::Title),
+            FormInput::DeleteWord
+        );
+        assert_eq!(
+            map_form_key(ctrl_u, FormField::Body),
+            FormInput::ClearToLineStart
+        );
+        assert_eq!(
+            map_form_key(ctrl_s, FormField::Labels),
+            FormInput::SubmitNow
+        );
     }
 
     #[test]
     fn form_key_mapping_enter_and_space_on_submit_both_confirm() {
-        assert_eq!(map_form_key(key(KeyCode::Enter), FormField::Submit), FormInput::Enter);
-        assert_eq!(map_form_key(key(KeyCode::Char(' ')), FormField::Submit), FormInput::Enter);
+        assert_eq!(
+            map_form_key(key(KeyCode::Enter), FormField::Submit),
+            FormInput::Enter
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Char(' ')), FormField::Submit),
+            FormInput::Enter
+        );
     }
 
     #[test]
@@ -786,22 +871,32 @@ mod tests {
     }
 
     #[test]
-    fn pane_is_hidden_by_default() {
+    fn pane_is_shown_by_default() {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(
-            !rendered.contains("opened"),
-            "pane should not render until toggled on"
+            rendered.contains("opened"),
+            "pane should render on a fresh AppState"
         );
     }
 
     #[test]
-    fn toggling_pane_shows_created_date_and_body() {
+    fn hiding_pane_removes_it() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        state.toggle_pane();
+        let rendered = render_to_string(&state);
+        assert!(
+            !rendered.contains("opened"),
+            "pane should not render once hidden"
+        );
+    }
+
+    #[test]
+    fn pane_shows_created_date_and_body() {
         let mut selected = issue(1, "Fix bug");
         selected.body = "steps to repro".into();
         selected.created_at = "2026-06-01T12:00:00Z".into();
-        let mut state = AppState::new(vec![selected], vec![]);
-        state.toggle_pane();
+        let state = AppState::new(vec![selected], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("opened 2026-06-01"));
         assert!(rendered.contains("steps to repro"));
@@ -809,10 +904,47 @@ mod tests {
 
     #[test]
     fn pane_shows_placeholder_for_empty_body() {
-        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
-        state.toggle_pane();
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("(no description)"));
+    }
+
+    #[test]
+    fn pane_border_title_shows_the_issue_number() {
+        let state = AppState::new(vec![issue(42, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("#42"),
+            "pane border title should show the selected issue's number"
+        );
+    }
+
+    #[test]
+    fn pane_metadata_line_has_no_duplicate_issue_number() {
+        let mut selected = issue(42, "Fix bug");
+        selected.created_at = "2026-06-01T12:00:00Z".into();
+        let state = AppState::new(vec![selected], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("opened 2026-06-01"),
+            "metadata line should show the opened date"
+        );
+        assert!(
+            !rendered.contains("#42 · opened"),
+            "issue number should live in the border title, not repeated in the metadata line"
+        );
+    }
+
+    #[test]
+    fn pane_has_a_rule_between_metadata_and_body() {
+        let mut selected = issue(1, "Fix bug");
+        selected.body = "steps to repro".into();
+        let state = AppState::new(vec![selected], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("───"),
+            "pane should render a horizontal rule between metadata and body"
+        );
     }
 
     #[test]
@@ -1027,7 +1159,13 @@ mod tests {
                 box_glyph_lines += 1;
             }
         }
-        assert_eq!(box_glyph_lines, 2, "expected exactly one outer box (one top corner row, one bottom corner row), found evidence of nested boxes");
+        // 4 = 2 corner rows for the outer app frame + 2 for the detail
+        // pane's own border (shown by default), not a stray box around the
+        // list header.
+        assert_eq!(
+            box_glyph_lines, 4,
+            "expected exactly two boxes (outer frame + detail pane border), found evidence of an unexpected extra box"
+        );
     }
 
     #[test]
@@ -1225,18 +1363,18 @@ mod tests {
     #[test]
     fn detail_pane_shows_full_title_as_an_additional_occurrence() {
         let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
-        let closed_rendered = render_to_string(&state);
-        assert_eq!(
-            closed_rendered.matches("Fix bug").count(),
-            1,
-            "title should appear exactly once (in the list) when the pane is closed"
-        );
-        state.toggle_pane();
         let open_rendered = render_to_string(&state);
         assert_eq!(
             open_rendered.matches("Fix bug").count(),
             2,
-            "title should appear a second time (in the pane) once it's open"
+            "title should appear twice (list + pane) by default"
+        );
+        state.toggle_pane();
+        let closed_rendered = render_to_string(&state);
+        assert_eq!(
+            closed_rendered.matches("Fix bug").count(),
+            1,
+            "title should appear exactly once (in the list) once the pane is hidden"
         );
     }
 
@@ -1245,19 +1383,19 @@ mod tests {
         // 70 chars: longer than the list's title budget at this fixed 80x24
         // TestBackend size (74-char inner width minus the 6-char number
         // column = 68), but short enough to fit on one line at the detail
-        // pane's full 74-char width, so it renders unwrapped and unclipped.
+        // pane's full width, so it renders unwrapped and unclipped.
         let long_title = "a".repeat(70);
         let mut state = AppState::new(vec![issue(1, &long_title)], vec![]);
-        let list_rendered = render_to_string(&state);
-        assert!(
-            !list_rendered.contains(&long_title),
-            "list should truncate this title"
-        );
-        state.toggle_pane();
         let pane_rendered = render_to_string(&state);
         assert!(
             pane_rendered.contains(&long_title),
             "detail pane should show the full untruncated title"
+        );
+        state.toggle_pane();
+        let list_rendered = render_to_string(&state);
+        assert!(
+            !list_rendered.contains(&long_title),
+            "list should truncate this title once the pane is hidden"
         );
     }
 }
