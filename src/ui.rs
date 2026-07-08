@@ -1,7 +1,7 @@
 use crate::loading;
 use crate::model::{AppState, FormField, Label, Mode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
@@ -325,6 +325,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         match &state.mode {
             Mode::Search => format!("/{}", state.search_query),
+            Mode::Form(_) => "tab/shift+tab field  ctrl+s submit  ctrl+w delete word  ctrl+u clear line  esc cancel".to_string(),
             _ => "j/k move  enter toggle pane  / search  a state  c/C create  e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
         }
     };
@@ -366,10 +367,27 @@ fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState
     draw_toast(frame, chunks[1], state);
 }
 
+fn cursor_row_col(text: &str, cursor: usize) -> (u16, u16) {
+    let mut row: u16 = 0;
+    let mut col: u16 = 0;
+    for (i, ch) in text.chars().enumerate() {
+        if i == cursor {
+            break;
+        }
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (row, col)
+}
+
 fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
     let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
         .split(area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -377,30 +395,27 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
             Constraint::Length(3),
             Constraint::Min(3),
             Constraint::Min(3),
+            Constraint::Length(3),
         ])
         .split(outer_chunks[0]);
 
-    frame.render_widget(
-        Paragraph::new(form.title.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Title")
-                .border_style(field_style(form.field == FormField::Title)),
-        ),
-        chunks[0],
-    );
+    let title_block =
+        Block::default().borders(Borders::ALL).title("Title").border_style(field_style(form.field == FormField::Title));
+    let title_inner = title_block.inner(chunks[0]);
+    frame.render_widget(Paragraph::new(form.title.as_str()).block(title_block), chunks[0]);
+    if form.field == FormField::Title {
+        let (row, col) = cursor_row_col(&form.title, form.title_cursor);
+        frame.set_cursor_position((title_inner.x + col, title_inner.y + row));
+    }
 
-    frame.render_widget(
-        Paragraph::new(form.body.as_str())
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Body")
-                    .border_style(field_style(form.field == FormField::Body)),
-            ),
-        chunks[1],
-    );
+    let body_block =
+        Block::default().borders(Borders::ALL).title("Body").border_style(field_style(form.field == FormField::Body));
+    let body_inner = body_block.inner(chunks[1]);
+    frame.render_widget(Paragraph::new(form.body.as_str()).wrap(Wrap { trim: false }).block(body_block), chunks[1]);
+    if form.field == FormField::Body {
+        let (row, col) = cursor_row_col(&form.body, form.body_cursor);
+        frame.set_cursor_position((body_inner.x + col, body_inner.y + row));
+    }
 
     let items: Vec<ListItem> = form
         .all_label_names
@@ -429,7 +444,22 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         ),
         chunks[2],
     );
-    draw_toast(frame, outer_chunks[1], state);
+
+    let submit_focused = form.field == FormField::Submit;
+    let submit_text = if submit_focused {
+        Span::styled("Submit", Style::default().add_modifier(Modifier::REVERSED))
+    } else {
+        Span::raw("Submit")
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(submit_text))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).border_style(field_style(submit_focused))),
+        chunks[3],
+    );
+
+    draw_shortcuts_hint(frame, outer_chunks[1], state);
+    draw_toast(frame, outer_chunks[2], state);
 }
 
 fn field_style(focused: bool) -> Style {
@@ -788,6 +818,17 @@ mod tests {
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Body"));
         assert!(rendered.contains("bug"));
+    }
+
+    #[test]
+    fn form_renders_submit_control_and_footer_shortcuts() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Submit"));
+        assert!(rendered.contains("ctrl+s submit"));
+        assert!(rendered.contains("ctrl+w delete word"));
+        assert!(rendered.contains("ctrl+u clear line"));
     }
 
     #[test]
