@@ -282,6 +282,7 @@ type InitialLoadReceiver = Receiver<anyhow::Result<InitialLoadSuccess>>;
 struct InitialLoadSuccess {
     issues: Vec<Issue>,
     labels: Vec<Label>,
+    repo_name: Option<String>,
     elapsed: Duration,
 }
 
@@ -450,9 +451,11 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
     std::thread::spawn(move || {
         let started = Instant::now();
         let issues_source = source.clone();
-        let labels_source = source;
+        let labels_source = source.clone();
+        let repo_name_source = source;
         let issues_handle = std::thread::spawn(move || issues_source.list(StateFilter::Open));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
+        let repo_name_handle = std::thread::spawn(move || repo_name_source.repo_name());
         let issues_result = issues_handle
             .join()
             .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
@@ -462,6 +465,7 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
                 Ok(labels_result) => Ok(InitialLoadSuccess {
                     issues,
                     labels: labels_result.unwrap_or_default(),
+                    repo_name: repo_name_handle.join().ok().and_then(|r| r.ok()),
                     elapsed: started.elapsed(),
                 }),
                 Err(_) => Err(anyhow::anyhow!("label list thread panicked")),
@@ -489,6 +493,7 @@ fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadS
     match result {
         Ok(success) => {
             let count = success.issues.len();
+            state.repo_name_with_owner = success.repo_name.clone();
             state.set_loaded(success.issues, success.labels);
             state.set_status(format!(
                 "loaded {count} issues in {}",
@@ -749,6 +754,7 @@ mod tests {
             Ok(InitialLoadSuccess {
                 issues: vec![loaded.clone()],
                 labels: vec![label.clone()],
+                repo_name: None,
                 elapsed: Duration::from_millis(350),
             }),
         );
@@ -759,6 +765,39 @@ mod tests {
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("loaded 1 issues in 350ms")
         );
+    }
+
+    #[test]
+    fn finish_initial_load_sets_repo_name_when_available() {
+        let mut state = AppState::loading();
+        finish_initial_load(
+            &mut state,
+            Ok(InitialLoadSuccess {
+                issues: vec![],
+                labels: vec![],
+                repo_name: Some("jeffdt/issue-browser".to_string()),
+                elapsed: Duration::from_millis(10),
+            }),
+        );
+        assert_eq!(
+            state.repo_name_with_owner,
+            Some("jeffdt/issue-browser".to_string())
+        );
+    }
+
+    #[test]
+    fn finish_initial_load_leaves_repo_name_none_when_unavailable() {
+        let mut state = AppState::loading();
+        finish_initial_load(
+            &mut state,
+            Ok(InitialLoadSuccess {
+                issues: vec![],
+                labels: vec![],
+                repo_name: None,
+                elapsed: Duration::from_millis(10),
+            }),
+        );
+        assert_eq!(state.repo_name_with_owner, None);
     }
 
     #[test]
