@@ -331,6 +331,20 @@ fn label_palette_color(all_labels: &[Label], name: &str) -> Color {
     LABEL_PALETTE[index % LABEL_PALETTE.len()]
 }
 
+/// Truncate `title` to `max_width` characters, replacing the tail with `...`
+/// when it doesn't fit. `max_width` is a character count, not a byte count,
+/// so multi-byte titles truncate at character boundaries.
+fn truncate_title(title: &str, max_width: usize) -> String {
+    if title.chars().count() <= max_width {
+        return title.to_string();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+    let kept: String = title.chars().take(max_width - 3).collect();
+    format!("{kept}...")
+}
+
 fn label_style(color: Color) -> Style {
     Style::default().fg(color).add_modifier(Modifier::ITALIC)
 }
@@ -975,5 +989,27 @@ mod tests {
             rendered.contains("(y/n)"),
             "confirm close dialog should show (y/n) prompt even with long title"
         );
+    }
+
+    #[test]
+    fn truncate_title_returns_unchanged_when_it_fits() {
+        assert_eq!(truncate_title("Short title", 20), "Short title");
+    }
+
+    #[test]
+    fn truncate_title_returns_unchanged_at_exact_width() {
+        assert_eq!(truncate_title("Exactly ten", 11), "Exactly ten");
+    }
+
+    #[test]
+    fn truncate_title_appends_ellipsis_when_too_long() {
+        let title = "abcdefghijklmnopqrstuvwxyz";
+        assert_eq!(truncate_title(title, 10), "abcdefg...");
+    }
+
+    #[test]
+    fn truncate_title_handles_tiny_width_without_panicking() {
+        assert_eq!(truncate_title("Anything", 2), "..");
+        assert_eq!(truncate_title("Anything", 0), "");
     }
 }
