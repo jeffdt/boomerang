@@ -599,8 +599,8 @@ impl AppState {
     }
 
     pub fn form_enter(&mut self) -> Option<FormSubmission> {
-        let (editing, field) = match &self.mode {
-            Mode::Form(form) => (form.editing, form.field),
+        let field = match &self.mode {
+            Mode::Form(form) => form.field,
             _ => return None,
         };
         match field {
@@ -612,47 +612,42 @@ impl AppState {
             }
             FormField::Body => {
                 if let Mode::Form(form) = &mut self.mode {
-                    form.body.push('\n');
+                    let idx = char_byte_index(&form.body, form.body_cursor);
+                    form.body.insert(idx, '\n');
+                    form.body_cursor += 1;
                 }
                 None
             }
             FormField::Labels => {
-                let original: HashSet<String> = editing
-                    .and_then(|n| self.find_issue(n))
-                    .map(|issue| issue.labels.iter().map(|l| l.name.clone()).collect())
-                    .unwrap_or_default();
-                let (title, body, add_labels, remove_labels) = match &self.mode {
-                    Mode::Form(form) => {
-                        let add_labels: Vec<String> = form
-                            .selected_labels
-                            .difference(&original)
-                            .cloned()
-                            .collect();
-                        let remove_labels: Vec<String> = original
-                            .difference(&form.selected_labels)
-                            .cloned()
-                            .collect();
-                        (
-                            form.title.clone(),
-                            form.body.clone(),
-                            add_labels,
-                            remove_labels,
-                        )
-                    }
-                    _ => return None,
-                };
-                let submission = FormSubmission {
-                    editing,
-                    title,
-                    body,
-                    add_labels,
-                    remove_labels,
-                };
-                self.mode = Mode::List;
-                Some(submission)
+                if let Mode::Form(form) = &mut self.mode {
+                    form.field = FormField::Submit;
+                }
+                None
             }
-            FormField::Submit => None,
+            FormField::Submit => self.form_submit_now(),
         }
+    }
+
+    pub fn form_submit_now(&mut self) -> Option<FormSubmission> {
+        let editing = match &self.mode {
+            Mode::Form(form) => form.editing,
+            _ => return None,
+        };
+        let original: HashSet<String> = editing
+            .and_then(|n| self.find_issue(n))
+            .map(|issue| issue.labels.iter().map(|l| l.name.clone()).collect())
+            .unwrap_or_default();
+        let (title, body, add_labels, remove_labels) = match &self.mode {
+            Mode::Form(form) => {
+                let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
+                let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
+                (form.title.clone(), form.body.clone(), add_labels, remove_labels)
+            }
+            _ => return None,
+        };
+        let submission = FormSubmission { editing, title, body, add_labels, remove_labels };
+        self.mode = Mode::List;
+        Some(submission)
     }
 
     pub fn request_close(&mut self) {
@@ -1219,26 +1214,52 @@ mod tests {
     }
 
     #[test]
-    fn form_enter_on_labels_submits_and_returns_to_list() {
-        let mut state = AppState::new(
-            vec![],
-            vec![Label {
-                name: "bug".into(),
-                color: "d73a4a".into(),
-            }],
-        );
+    fn form_enter_on_labels_advances_to_submit() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
         state.enter_big_create();
         state.form_push_char('T');
         state.form_next_field();
         state.form_push_char('B');
         state.form_next_field();
         state.form_toggle_label();
-        let submission = state.form_enter().expect("labels field submits on enter");
+        assert_eq!(state.form_enter(), None, "Enter on Labels should advance, not submit");
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.field, FormField::Submit);
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_enter_on_submit_builds_submission_and_returns_to_list() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.form_next_field();
+        state.form_push_char('B');
+        state.form_next_field();
+        state.form_toggle_label();
+        state.form_next_field(); // Submit
+        let submission = state.form_enter().expect("submit field submits on enter");
         assert_eq!(submission.editing, None);
         assert_eq!(submission.title, "T");
         assert_eq!(submission.body, "B");
         assert_eq!(submission.add_labels, vec!["bug".to_string()]);
         assert!(submission.remove_labels.is_empty());
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn form_submit_now_submits_regardless_of_focused_field() {
+        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        state.enter_big_create();
+        state.form_push_char('T');
+        state.form_next_field();
+        state.form_push_char('B');
+        // still on Body, not Submit
+        let submission = state.form_submit_now().expect("Ctrl+S submits from any field");
+        assert_eq!(submission.title, "T");
+        assert_eq!(submission.body, "B");
         assert_eq!(state.mode, Mode::List);
     }
 
@@ -1276,6 +1297,7 @@ mod tests {
         state.form_toggle_label(); // toggle "bug" off
         state.form_move_label_cursor(2); // to "docs"
         state.form_toggle_label(); // toggle "docs" on
+        state.form_next_field(); // Submit
         let submission = state.form_enter().unwrap();
         assert_eq!(submission.editing, Some(1));
         assert_eq!(submission.add_labels, vec!["docs".to_string()]);
