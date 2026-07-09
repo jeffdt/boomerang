@@ -86,6 +86,7 @@ impl LoadingAnimation {
 pub struct LoadingState {
     pub started_at: Instant,
     pub animation: LoadingAnimation,
+    pub what: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,7 +199,7 @@ impl AppState {
 
     pub fn loading() -> Self {
         let mut state = Self::new(vec![], vec![]);
-        state.begin_loading();
+        state.begin_loading("issues");
         state
     }
 
@@ -680,10 +681,11 @@ impl AppState {
         self.status = Some((message, Instant::now()));
     }
 
-    pub fn begin_loading(&mut self) {
+    pub fn begin_loading(&mut self, what: &'static str) {
         self.loading = Some(LoadingState {
             started_at: Instant::now(),
             animation: LoadingAnimation::for_launch(),
+            what,
         });
     }
 
@@ -698,8 +700,9 @@ impl AppState {
     pub fn loading_message(&self) -> Option<String> {
         let loading = self.loading.as_ref()?;
         Some(format!(
-            "{} Loading issues...",
-            spinner_frame(&loading.started_at)
+            "{} Loading {}...",
+            spinner_frame(&loading.started_at),
+            loading.what
         ))
     }
 
@@ -1494,6 +1497,16 @@ mod tests {
             .loading_message()
             .expect("loading message")
             .contains("Loading issues..."));
+    }
+
+    #[test]
+    fn loading_message_uses_custom_what_label() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_loading("labels");
+        assert!(state
+            .loading_message()
+            .expect("loading message")
+            .contains("Loading labels..."));
     }
 
     #[test]
