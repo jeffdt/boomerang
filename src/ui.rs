@@ -19,6 +19,8 @@ const LABEL_PALETTE: [Color; 6] = [
     Color::Red,
 ];
 
+const ACCENT: Color = Color::Cyan;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListInput {
     Up,
@@ -168,7 +170,7 @@ fn inset(area: Rect, margin: u16) -> Rect {
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let area = inset(frame.area(), POPUP_MARGIN);
-    let border_style = Style::default();
+    let border_style = Style::default().fg(ACCENT);
     let title_text = state
         .repo_name_with_owner
         .as_deref()
@@ -299,7 +301,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(issue) = state.selected_issue() else {
         return;
     };
-    let border_style = Style::default();
+    let border_style = Style::default().fg(ACCENT);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -787,11 +789,15 @@ mod tests {
         }
     }
 
-    fn render_to_string(state: &AppState) -> String {
+    fn render_buffer(state: &AppState) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
-        let buf = terminal.backend().buffer().clone();
+        terminal.backend().buffer().clone()
+    }
+
+    fn render_to_string(state: &AppState) -> String {
+        let buf = render_buffer(state);
         let mut out = String::new();
         for y in 0..buf.area.height {
             for x in 0..buf.area.width {
@@ -1420,5 +1426,29 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
         assert!(rendered.contains("enter/e edit"));
+    }
+
+    #[test]
+    fn borders_use_accent_color() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let buf = render_buffer(&state);
+        let mut found_corner = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "╭" {
+                    found_corner = true;
+                    assert_eq!(
+                        cell.style().fg,
+                        Some(Color::Cyan),
+                        "border corner at ({x}, {y}) should use the ACCENT color"
+                    );
+                }
+            }
+        }
+        assert!(
+            found_corner,
+            "expected at least one rounded corner in the rendered frame"
+        );
     }
 }
