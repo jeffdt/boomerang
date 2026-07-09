@@ -33,6 +33,7 @@ pub enum ListInput {
     CopyMarkdownLink,
     CopyUrl,
     OpenInBrowser,
+    Refresh,
     Quit,
     None,
 }
@@ -49,6 +50,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('C') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
+        KeyCode::Char('r') => ListInput::Refresh,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -635,6 +637,11 @@ mod tests {
     fn maps_ctrl_y_to_copy_url() {
         let k = key_with(KeyCode::Char('y'), KeyModifiers::CONTROL);
         assert_eq!(map_list_key(k), ListInput::CopyUrl);
+    }
+
+    #[test]
+    fn maps_lowercase_r_to_refresh() {
+        assert_eq!(map_list_key(key(KeyCode::Char('r'))), ListInput::Refresh);
     }
 
     #[test]

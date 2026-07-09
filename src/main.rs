@@ -664,6 +664,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::CopyMarkdownLink => copy_selected(state, copy::format_markdown_link),
                     ListInput::CopyUrl => copy_selected(state, copy::format_url),
                     ListInput::OpenInBrowser => open_in_browser(state),
+                    ListInput::Refresh => {} // wired up in Task 4
                     ListInput::Quit => return Ok(()),
                     ListInput::None => {}
                 },
