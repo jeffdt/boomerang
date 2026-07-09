@@ -47,12 +47,12 @@ view; adjust `-w`/`-h` to taste.
 | Key | Action |
 | --- | --- |
 | `j`/`k` (or `↓`/`↑`) | Move the cursor |
-| `Enter` | Toggle the description pane for the selected issue |
+| `h` | Hide/show the description pane (shown by default) |
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → closed → all |
 | `c` | Little create: title only, created immediately |
 | `C` (shift+c) | Big create: title + body + label picker |
-| `e` | Edit the selected issue's title/body/labels |
+| `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `y` | Copy `#123` to the clipboard |
 | `Y` (shift+y) | Copy a markdown link to the clipboard |
