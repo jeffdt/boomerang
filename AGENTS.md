@@ -29,6 +29,11 @@ family as its sibling project, [rolomux](https://github.com/jeffdt/smux)
   brainstorming skill in this repo, skip the "user reviews written spec"
   checkpoint — go straight from a written spec into the implementation plan.
   Jeff reviews the plan, not the spec, before implementation starts.
-- **Commit directly to main.** This is a solo project; there's no need for
-  feature branches or PRs for routine work. Commit finished, verified changes
-  straight to main unless Jeff asks for a branch/PR explicitly.
+- **Always work in a worktree; never implement directly on `main`.** Before
+  starting any implementation work (not just investigation/Q&A), check
+  whether the session is already running in a worktree. If it isn't, create
+  one immediately with `wt switch --create jeffdt/<domain>-<brief-description>`
+  before touching code — don't ask first, just do it, then mention it. This
+  is still a solo project, so there's no need for PRs on routine work; merge
+  the worktree branch back into `main` (or fast-forward it) once the change
+  is finished and verified, unless Jeff asks for a PR explicitly.
