@@ -32,6 +32,7 @@ Usage:
                                                   Play a loading animation preview and exit
   issue-browser --doctor                          Print gh, repo, auth, and logging diagnostics
   issue-browser --capture                         Instant title-only capture, then exit
+  issue-browser --capture-full                    Full create form (title/body/labels), then exit
   issue-browser --version                         Print version and exit
   issue-browser --help                            Print this help and exit
 
@@ -45,6 +46,7 @@ enum StartupCommand {
     Help,
     Doctor,
     Capture,
+    CaptureFull,
     PreviewLoading {
         animation: Option<LoadingAnimation>,
         duration: Duration,
@@ -59,6 +61,7 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupComman
         [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(StartupCommand::Help),
         [arg] if arg == "--doctor" => Ok(StartupCommand::Doctor),
         [arg] if arg == "--capture" => Ok(StartupCommand::Capture),
+        [arg] if arg == "--capture-full" => Ok(StartupCommand::CaptureFull),
         [arg, rest @ ..] if arg == "--preview-loading" => parse_loading_preview(rest),
         [arg, ..] => Err(format!("unknown argument '{arg}'")),
     }
@@ -137,6 +140,10 @@ fn main() -> anyhow::Result<()> {
         Ok(StartupCommand::Capture) => {
             let source = GhCliSource::new();
             return run_capture(&source);
+        }
+        Ok(StartupCommand::CaptureFull) => {
+            let source = GhCliSource::new();
+            return run_capture_full(&source);
         }
         Ok(StartupCommand::PreviewLoading {
             animation,
@@ -329,6 +336,174 @@ fn capture_loop<S: IssueSource>(
                 }
                 LittleCreateInput::Cancel => return Ok(()),
                 LittleCreateInput::None => {}
+            }
+        }
+    }
+}
+
+type LabelsReceiver = Receiver<anyhow::Result<Vec<Label>>>;
+
+fn spawn_labels_fetch<S: IssueSource>(source: S) -> LabelsReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(source.labels());
+    });
+    rx
+}
+
+fn poll_labels(rx: &Option<LabelsReceiver>) -> Option<anyhow::Result<Vec<Label>>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+            "label fetch worker stopped before returning a result"
+        ))),
+    }
+}
+
+fn run_capture_full<S: IssueSource>(source: &S) -> anyhow::Result<()> {
+    enable_raw_mode()?;
+    let mut out = stdout();
+    execute!(out, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
+
+    let mut state = AppState::new(vec![], vec![]);
+    state.begin_loading("labels");
+    let labels_rx = spawn_labels_fetch(source.clone());
+
+    let result = capture_full_loop(&mut terminal, &mut state, source, Some(labels_rx));
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn begin_full_create<S: IssueSource>(
+    state: &mut AppState,
+    create_rx: &mut Option<CreateReceiver>,
+    source: S,
+    form_draft: FormState,
+    submission: crate::model::FormSubmission,
+) {
+    state.mode = Mode::Form(Box::new(form_draft));
+    state.begin_pending(PendingOperation::CreateIssue);
+    *create_rx = Some(spawn_create(
+        source,
+        submission.title,
+        submission.body,
+        submission.add_labels,
+    ));
+}
+
+fn capture_full_loop<S: IssueSource>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    source: &S,
+    mut labels_rx: Option<LabelsReceiver>,
+) -> anyhow::Result<()> {
+    let mut create_rx: Option<CreateReceiver> = None;
+
+    loop {
+        if let Some(result) = poll_labels(&labels_rx) {
+            labels_rx = None;
+            match result {
+                Ok(labels) => {
+                    state.all_labels = labels;
+                    state.finish_loading();
+                    state.enter_big_create();
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        if let Some(result) = poll_create(&create_rx) {
+            create_rx = None;
+            match result {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    state.finish_pending();
+                    state.set_status(gh_error_status(&e));
+                }
+            }
+        }
+
+        terminal.draw(|f| ui::draw(f, state))?;
+        state.clear_expired_status();
+        if !event::poll(Duration::from_millis(100))? {
+            continue;
+        }
+        if let Event::Key(key) = event::read()? {
+            if key.kind != event::KeyEventKind::Press {
+                continue;
+            }
+            if state.is_loading() {
+                if map_list_key(key) == ListInput::Quit {
+                    return Ok(());
+                }
+                continue;
+            }
+            if state.is_pending() {
+                if map_list_key(key) == ListInput::Quit {
+                    return Ok(());
+                }
+                continue;
+            }
+            match &state.mode {
+                Mode::Form(form) => {
+                    let field = form.field;
+                    let form_draft = (**form).clone();
+                    match map_form_key(key, field) {
+                        FormInput::Char(c) => state.form_push_char(c),
+                        FormInput::Backspace => state.form_backspace(),
+                        FormInput::NextField => state.form_next_field(),
+                        FormInput::PrevField => state.form_prev_field(),
+                        FormInput::MoveUp => state.form_move_label_cursor(-1),
+                        FormInput::MoveDown => state.form_move_label_cursor(1),
+                        FormInput::ToggleLabel => state.form_toggle_label(),
+                        FormInput::Cancel => state.cancel_form_or_create(),
+                        FormInput::MoveCursor(delta) => state.form_move_cursor(delta),
+                        FormInput::CursorHome => state.form_cursor_home(),
+                        FormInput::CursorEnd => state.form_cursor_end(),
+                        FormInput::MoveCursorVertical(delta) => {
+                            state.form_move_cursor_vertical(delta)
+                        }
+                        FormInput::DeleteWord => state.form_delete_word(),
+                        FormInput::ClearToLineStart => state.form_clear_to_line_start(),
+                        FormInput::Enter => {
+                            if let Some(submission) = state.form_enter() {
+                                begin_full_create(
+                                    state,
+                                    &mut create_rx,
+                                    (*source).clone(),
+                                    form_draft,
+                                    submission,
+                                );
+                            }
+                        }
+                        FormInput::SubmitNow => {
+                            if let Some(submission) = state.form_submit_now() {
+                                begin_full_create(
+                                    state,
+                                    &mut create_rx,
+                                    (*source).clone(),
+                                    form_draft,
+                                    submission,
+                                );
+                            }
+                        }
+                        FormInput::None => {}
+                    }
+                }
+                Mode::ConfirmDiscard(_) => match map_confirm_key(key) {
+                    ConfirmInput::Yes => state.confirm_discard_yes(),
+                    ConfirmInput::No => state.confirm_discard_no(),
+                    ConfirmInput::None => {}
+                },
+                _ => {}
+            }
+            if state.mode == Mode::List {
+                return Ok(());
             }
         }
     }
@@ -889,6 +1064,14 @@ mod tests {
         assert_eq!(
             parse_command(args(&["--capture"])),
             Ok(StartupCommand::Capture)
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_capture_full() {
+        assert_eq!(
+            parse_command(args(&["--capture-full"])),
+            Ok(StartupCommand::CaptureFull)
         );
     }
 
