@@ -36,6 +36,7 @@ pub enum PendingOperation {
     CreateIssue,
     EditIssue,
     CloseIssue,
+    RefreshList,
 }
 
 #[derive(Debug, Clone)]
@@ -728,6 +729,7 @@ impl AppState {
             PendingOperation::CreateIssue => "Creating issue",
             PendingOperation::EditIssue => "Updating issue",
             PendingOperation::CloseIssue => "Closing issue",
+            PendingOperation::RefreshList => "Refreshing issues",
         };
         Some(format!(
             "{} {action}...",
@@ -1476,6 +1478,17 @@ mod tests {
         state.begin_pending(PendingOperation::CloseIssue);
         assert!(state.is_pending());
         assert!(state.pending_message().unwrap().contains("Closing issue..."));
+    }
+
+    #[test]
+    fn begin_refresh_pending_reports_spinner_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        assert!(state.is_pending());
+        assert!(state
+            .pending_message()
+            .unwrap()
+            .contains("Refreshing issues..."));
     }
 
     #[test]

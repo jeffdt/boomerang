@@ -914,6 +914,9 @@ fn success_status_action(operation: PendingOperation) -> &'static str {
         PendingOperation::CreateIssue => "created issue",
         PendingOperation::EditIssue => "updated issue",
         PendingOperation::CloseIssue => "closed issue",
+        PendingOperation::RefreshList => {
+            unreachable!("RefreshList never flows through the mutation success path")
+        }
     }
 }
 
