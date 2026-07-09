@@ -456,22 +456,13 @@ fn capture_full_loop<S: IssueSource>(
                     let field = form.field;
                     let form_draft = (**form).clone();
                     match map_form_key(key, field) {
-                        FormInput::Char(c) => state.form_push_char(c),
-                        FormInput::Backspace => state.form_backspace(),
+                        FormInput::TextEdit(input) => state.form_input(input),
                         FormInput::NextField => state.form_next_field(),
                         FormInput::PrevField => state.form_prev_field(),
                         FormInput::MoveUp => state.form_move_label_cursor(-1),
                         FormInput::MoveDown => state.form_move_label_cursor(1),
                         FormInput::ToggleLabel => state.form_toggle_label(),
                         FormInput::Cancel => state.cancel_form_or_create(),
-                        FormInput::MoveCursor(delta) => state.form_move_cursor(delta),
-                        FormInput::CursorHome => state.form_cursor_home(),
-                        FormInput::CursorEnd => state.form_cursor_end(),
-                        FormInput::MoveCursorVertical(delta) => {
-                            state.form_move_cursor_vertical(delta)
-                        }
-                        FormInput::DeleteWord => state.form_delete_word(),
-                        FormInput::ClearToLineStart => state.form_clear_to_line_start(),
                         FormInput::Enter => {
                             if let Some(submission) = state.form_enter() {
                                 begin_full_create(
@@ -703,20 +694,13 @@ fn event_loop<S: IssueSource>(
                     let field = form.field;
                     let form_draft = (**form).clone();
                     match map_form_key(key, field) {
-                        FormInput::Char(c) => state.form_push_char(c),
-                        FormInput::Backspace => state.form_backspace(),
+                        FormInput::TextEdit(input) => state.form_input(input),
                         FormInput::NextField => state.form_next_field(),
                         FormInput::PrevField => state.form_prev_field(),
                         FormInput::MoveUp => state.form_move_label_cursor(-1),
                         FormInput::MoveDown => state.form_move_label_cursor(1),
                         FormInput::ToggleLabel => state.form_toggle_label(),
                         FormInput::Cancel => state.cancel_form_or_create(),
-                        FormInput::MoveCursor(delta) => state.form_move_cursor(delta),
-                        FormInput::CursorHome => state.form_cursor_home(),
-                        FormInput::CursorEnd => state.form_cursor_end(),
-                        FormInput::MoveCursorVertical(delta) => state.form_move_cursor_vertical(delta),
-                        FormInput::DeleteWord => state.form_delete_word(),
-                        FormInput::ClearToLineStart => state.form_clear_to_line_start(),
                         FormInput::Enter => {
                             if let Some(submission) = state.form_enter() {
                                 submit_form(
@@ -1213,8 +1197,7 @@ mod tests {
         let updated = issue(42, "Updated issue");
         let draft = FormState {
             editing: Some(42),
-            title: "Pending edit".into(),
-            ..Default::default()
+            ..FormState::with_title_body("Pending edit", "")
         };
         let mut state = AppState::new(vec![], vec![]);
         state.mode = Mode::Form(Box::new(draft));
@@ -1283,9 +1266,7 @@ mod tests {
     fn pending_mutation_keeps_form_draft_visible() {
         let draft = FormState {
             editing: Some(42),
-            title: "Pending title".into(),
-            body: "Pending body".into(),
-            ..Default::default()
+            ..FormState::with_title_body("Pending title", "Pending body")
         };
         let mut state = AppState::new(vec![], vec![]);
         show_pending_draft(&mut state, &MutationDraft::Form(Box::new(draft.clone())));
@@ -1335,11 +1316,7 @@ mod tests {
 
     #[test]
     fn finish_mutation_failure_restores_form_draft() {
-        let draft = FormState {
-            title: "Draft title".into(),
-            body: "Draft body".into(),
-            ..Default::default()
-        };
+        let draft = FormState::with_title_body("Draft title", "Draft body");
         let mut state = AppState::new(vec![], vec![]);
         state.begin_pending(PendingOperation::EditIssue);
         finish_mutation(

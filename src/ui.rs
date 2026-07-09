@@ -6,6 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
+use ratatui_textarea::Input;
 
 const POPUP_MARGIN: u16 = 2;
 
@@ -99,10 +100,8 @@ pub fn map_little_create_key(key: KeyEvent) -> LittleCreateInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormInput {
-    Char(char),
-    Backspace,
     NextField,
     PrevField,
     Enter,
@@ -110,45 +109,30 @@ pub enum FormInput {
     MoveDown,
     ToggleLabel,
     Cancel,
-    MoveCursor(isize),
-    CursorHome,
-    CursorEnd,
-    MoveCursorVertical(isize),
-    DeleteWord,
-    ClearToLineStart,
     SubmitNow,
+    TextEdit(Input),
     None,
 }
 
 pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char('s') if ctrl => FormInput::SubmitNow,
-        KeyCode::Char('w') if ctrl => FormInput::DeleteWord,
-        KeyCode::Char('u') if ctrl => FormInput::ClearToLineStart,
-        KeyCode::Tab => FormInput::NextField,
-        KeyCode::BackTab => FormInput::PrevField,
-        KeyCode::Esc => FormInput::Cancel,
-        KeyCode::Enter | KeyCode::Char(' ') if field == FormField::Submit => FormInput::Enter,
-        KeyCode::Enter => FormInput::Enter,
-        KeyCode::Backspace => FormInput::Backspace,
-        KeyCode::Left if matches!(field, FormField::Title | FormField::Body) => {
-            FormInput::MoveCursor(-1)
+        KeyCode::Char('s') if ctrl => return FormInput::SubmitNow,
+        KeyCode::Tab => return FormInput::NextField,
+        KeyCode::BackTab => return FormInput::PrevField,
+        KeyCode::Esc => return FormInput::Cancel,
+        KeyCode::Enter | KeyCode::Char(' ') if field == FormField::Submit => {
+            return FormInput::Enter
         }
-        KeyCode::Right if matches!(field, FormField::Title | FormField::Body) => {
-            FormInput::MoveCursor(1)
-        }
-        KeyCode::Home if matches!(field, FormField::Title | FormField::Body) => {
-            FormInput::CursorHome
-        }
-        KeyCode::End if matches!(field, FormField::Title | FormField::Body) => FormInput::CursorEnd,
-        KeyCode::Up if field == FormField::Labels => FormInput::MoveUp,
-        KeyCode::Down if field == FormField::Labels => FormInput::MoveDown,
-        KeyCode::Up if field == FormField::Body => FormInput::MoveCursorVertical(-1),
-        KeyCode::Down if field == FormField::Body => FormInput::MoveCursorVertical(1),
-        KeyCode::Char(' ') if field == FormField::Labels => FormInput::ToggleLabel,
-        KeyCode::Char(c) if !ctrl => FormInput::Char(c),
-        _ => FormInput::None,
+        KeyCode::Enter if field == FormField::Title => return FormInput::Enter,
+        KeyCode::Up if field == FormField::Labels => return FormInput::MoveUp,
+        KeyCode::Down if field == FormField::Labels => return FormInput::MoveDown,
+        KeyCode::Char(' ') if field == FormField::Labels => return FormInput::ToggleLabel,
+        _ => {}
+    }
+    match field {
+        FormField::Title | FormField::Body => FormInput::TextEdit(Input::from(key)),
+        FormField::Labels | FormField::Submit => FormInput::None,
     }
 }
 
@@ -438,23 +422,6 @@ fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState
     draw_toast(frame, chunks[1], state);
 }
 
-fn cursor_row_col(text: &str, cursor: usize) -> (u16, u16) {
-    let mut row: u16 = 0;
-    let mut col: u16 = 0;
-    for (i, ch) in text.chars().enumerate() {
-        if i == cursor {
-            break;
-        }
-        if ch == '\n' {
-            row += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (row, col)
-}
-
 fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
     let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -479,30 +446,16 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .title("Title")
         .border_style(field_style(form.field == FormField::Title));
     let title_inner = title_block.inner(chunks[0]);
-    frame.render_widget(
-        Paragraph::new(form.title.as_str()).block(title_block),
-        chunks[0],
-    );
-    if form.field == FormField::Title {
-        let (row, col) = cursor_row_col(&form.title, form.title_cursor);
-        frame.set_cursor_position((title_inner.x + col, title_inner.y + row));
-    }
+    frame.render_widget(title_block, chunks[0]);
+    frame.render_widget(&form.title_input, title_inner);
 
     let body_block = Block::default()
         .borders(Borders::ALL)
         .title("Body")
         .border_style(field_style(form.field == FormField::Body));
     let body_inner = body_block.inner(chunks[1]);
-    frame.render_widget(
-        Paragraph::new(form.body.as_str())
-            .wrap(Wrap { trim: false })
-            .block(body_block),
-        chunks[1],
-    );
-    if form.field == FormField::Body {
-        let (row, col) = cursor_row_col(&form.body, form.body_cursor);
-        frame.set_cursor_position((body_inner.x + col, body_inner.y + row));
-    }
+    frame.render_widget(body_block, chunks[1]);
+    frame.render_widget(&form.body_input, body_inner);
 
     let items: Vec<ListItem> = form
         .all_label_names
@@ -606,6 +559,17 @@ mod tests {
         }
     }
 
+    fn type_into_form(state: &mut AppState, s: &str) {
+        for c in s.chars() {
+            state.form_input(Input {
+                key: ratatui_textarea::Key::Char(c),
+                ctrl: false,
+                alt: false,
+                shift: false,
+            });
+        }
+    }
+
     fn key_with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent {
             code,
@@ -698,7 +662,7 @@ mod tests {
         );
         assert_eq!(
             map_form_key(key(KeyCode::Char(' ')), FormField::Title),
-            FormInput::Char(' ')
+            FormInput::TextEdit(Input::from(key(KeyCode::Char(' '))))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Down), FormField::Labels),
@@ -707,50 +671,50 @@ mod tests {
     }
 
     #[test]
-    fn form_key_mapping_covers_cursor_movement() {
+    fn form_key_mapping_routes_navigation_keys_to_text_edit() {
         assert_eq!(
             map_form_key(key(KeyCode::Left), FormField::Title),
-            FormInput::MoveCursor(-1)
+            FormInput::TextEdit(Input::from(key(KeyCode::Left)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Right), FormField::Body),
-            FormInput::MoveCursor(1)
+            FormInput::TextEdit(Input::from(key(KeyCode::Right)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Home), FormField::Title),
-            FormInput::CursorHome
+            FormInput::TextEdit(Input::from(key(KeyCode::Home)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::End), FormField::Body),
-            FormInput::CursorEnd
+            FormInput::TextEdit(Input::from(key(KeyCode::End)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Up), FormField::Body),
-            FormInput::MoveCursorVertical(-1)
+            FormInput::TextEdit(Input::from(key(KeyCode::Up)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Down), FormField::Body),
-            FormInput::MoveCursorVertical(1)
+            FormInput::TextEdit(Input::from(key(KeyCode::Down)))
         );
         assert_eq!(
             map_form_key(key(KeyCode::Up), FormField::Labels),
             FormInput::MoveUp,
-            "Labels keeps its own Up/Down for list navigation"
+            "Labels keeps its own Up/Down for list navigation, unaffected by text routing"
         );
     }
 
     #[test]
-    fn form_key_mapping_covers_delete_and_submit_shortcuts() {
+    fn form_key_mapping_routes_delete_and_submit_shortcuts() {
         let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
         let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
         let ctrl_s = key_with(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert_eq!(
             map_form_key(ctrl_w, FormField::Title),
-            FormInput::DeleteWord
+            FormInput::TextEdit(Input::from(ctrl_w))
         );
         assert_eq!(
             map_form_key(ctrl_u, FormField::Body),
-            FormInput::ClearToLineStart
+            FormInput::TextEdit(Input::from(ctrl_u))
         );
         assert_eq!(
             map_form_key(ctrl_s, FormField::Labels),
@@ -1227,9 +1191,7 @@ mod tests {
         state.enter_big_create();
         state.form_next_field(); // Move to Body field
         let long_text = "word ".repeat(40);
-        for c in long_text.chars() {
-            state.form_push_char(c);
-        }
+        type_into_form(&mut state, &long_text);
         let rendered = render_to_string(&state);
         let body_section = rendered
             .lines()
@@ -1333,7 +1295,7 @@ mod tests {
     fn confirm_discard_renders_for_dirty_new_issue_form() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_into_form(&mut state, "T");
         state.cancel_form_or_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Discard this new issue?"));
@@ -1343,7 +1305,7 @@ mod tests {
     fn confirm_discard_renders_issue_number_for_dirty_edit_form() {
         let mut state = AppState::new(vec![issue(9, "Fix bug")], vec![]);
         state.enter_edit();
-        state.form_push_char('!');
+        type_into_form(&mut state, "!");
         state.cancel_form_or_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Discard unsaved changes to #9?"));
