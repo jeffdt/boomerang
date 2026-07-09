@@ -31,6 +31,7 @@ Usage:
   issue-browser --preview-loading [ANIMATION] [DURATION]
                                                   Play a loading animation preview and exit
   issue-browser --doctor                          Print gh, repo, auth, and logging diagnostics
+  issue-browser --capture                         Instant title-only capture, then exit
   issue-browser --version                         Print version and exit
   issue-browser --help                            Print this help and exit
 
@@ -43,6 +44,7 @@ enum StartupCommand {
     Version,
     Help,
     Doctor,
+    Capture,
     PreviewLoading {
         animation: Option<LoadingAnimation>,
         duration: Duration,
@@ -56,6 +58,7 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupComman
         [arg] if matches!(arg.as_str(), "-V" | "--version") => Ok(StartupCommand::Version),
         [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(StartupCommand::Help),
         [arg] if arg == "--doctor" => Ok(StartupCommand::Doctor),
+        [arg] if arg == "--capture" => Ok(StartupCommand::Capture),
         [arg, rest @ ..] if arg == "--preview-loading" => parse_loading_preview(rest),
         [arg, ..] => Err(format!("unknown argument '{arg}'")),
     }
@@ -130,6 +133,10 @@ fn main() -> anyhow::Result<()> {
         Ok(StartupCommand::Doctor) => {
             diagnostics::run_doctor()?;
             return Ok(());
+        }
+        Ok(StartupCommand::Capture) => {
+            let source = GhCliSource::new();
+            return run_capture(&source);
         }
         Ok(StartupCommand::PreviewLoading {
             animation,
@@ -227,6 +234,104 @@ fn run_loading_preview(
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
+}
+
+type CreateReceiver = Receiver<anyhow::Result<()>>;
+
+fn spawn_create<S: IssueSource>(
+    source: S,
+    title: String,
+    body: String,
+    labels: Vec<String>,
+) -> CreateReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(source.create(&title, &body, &labels));
+    });
+    rx
+}
+
+fn poll_create(rx: &Option<CreateReceiver>) -> Option<anyhow::Result<()>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+            "create worker stopped before returning a result"
+        ))),
+    }
+}
+
+fn run_capture<S: IssueSource>(source: &S) -> anyhow::Result<()> {
+    enable_raw_mode()?;
+    let mut out = stdout();
+    execute!(out, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
+
+    let mut state = AppState::new(vec![], vec![]);
+    state.enter_little_create();
+
+    let result = capture_loop(&mut terminal, &mut state, source);
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn capture_loop<S: IssueSource>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    source: &S,
+) -> anyhow::Result<()> {
+    let mut create_rx: Option<CreateReceiver> = None;
+
+    loop {
+        if let Some(result) = poll_create(&create_rx) {
+            create_rx = None;
+            match result {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    state.finish_pending();
+                    state.set_status(gh_error_status(&e));
+                }
+            }
+        }
+
+        terminal.draw(|f| ui::draw(f, state))?;
+        state.clear_expired_status();
+        if !event::poll(Duration::from_millis(100))? {
+            continue;
+        }
+        if let Event::Key(key) = event::read()? {
+            if key.kind != event::KeyEventKind::Press {
+                continue;
+            }
+            if state.is_pending() {
+                if map_list_key(key) == ListInput::Quit {
+                    return Ok(());
+                }
+                continue;
+            }
+            match map_little_create_key(key) {
+                LittleCreateInput::Char(c) => state.little_create_push(c),
+                LittleCreateInput::Backspace => state.little_create_backspace(),
+                LittleCreateInput::Submit => {
+                    if let Some(title) = state.little_create_submit() {
+                        state.mode = Mode::LittleCreate(title.clone());
+                        state.begin_pending(PendingOperation::CreateIssue);
+                        create_rx = Some(spawn_create(
+                            (*source).clone(),
+                            title,
+                            String::new(),
+                            Vec::new(),
+                        ));
+                    }
+                }
+                LittleCreateInput::Cancel => return Ok(()),
+                LittleCreateInput::None => {}
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -776,6 +881,14 @@ mod tests {
                 animation: None,
                 duration: Duration::from_secs(5),
             })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_capture() {
+        assert_eq!(
+            parse_command(args(&["--capture"])),
+            Ok(StartupCommand::Capture)
         );
     }
 
