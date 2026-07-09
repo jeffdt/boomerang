@@ -596,6 +596,7 @@ fn event_loop<S: IssueSource>(
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
+    let mut refresh_rx: Option<RefreshReceiver> = None;
     let mut first_draw_logged = false;
 
     loop {
@@ -615,6 +616,11 @@ fn event_loop<S: IssueSource>(
         if let Some(result) = poll_mutation(&mutation_rx) {
             mutation_rx = None;
             finish_mutation(state, mutation_draft.take(), result);
+        }
+
+        if let Some(result) = poll_refresh(&refresh_rx) {
+            refresh_rx = None;
+            finish_refresh(state, result);
         }
 
         terminal.draw(|f| ui::draw(f, state))?;
@@ -654,7 +660,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
                         state.cycle_state_filter();
-                        refresh(state, source);
+                        start_refresh(state, &mut refresh_rx, (*source).clone());
                     }
                     ListInput::LittleCreate => state.enter_little_create(),
                     ListInput::BigCreate => state.enter_big_create(),
@@ -664,7 +670,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::CopyMarkdownLink => copy_selected(state, copy::format_markdown_link),
                     ListInput::CopyUrl => copy_selected(state, copy::format_url),
                     ListInput::OpenInBrowser => open_in_browser(state),
-                    ListInput::Refresh => {} // wired up in Task 4
+                    ListInput::Refresh => start_refresh(state, &mut refresh_rx, (*source).clone()),
                     ListInput::Quit => return Ok(()),
                     ListInput::None => {}
                 },
@@ -1015,13 +1021,6 @@ fn format_duration(duration: Duration) -> String {
         format!("{millis}ms")
     } else {
         format!("{:.1}s", duration.as_secs_f64())
-    }
-}
-
-fn refresh<S: IssueSource>(state: &mut AppState, source: &S) {
-    match source.list(state.state_filter) {
-        Ok(issues) => state.set_issues(issues),
-        Err(e) => state.set_status(gh_error_status(&e)),
     }
 }
 
