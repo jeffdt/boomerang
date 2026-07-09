@@ -512,7 +512,7 @@ fn capture_full_loop<S: IssueSource>(
 #[derive(Debug, Clone)]
 enum MutationDraft {
     LittleCreate { title: String },
-    Form(FormState),
+    Form(Box<FormState>),
     None,
 }
 
@@ -918,7 +918,7 @@ fn restore_mutation_draft(state: &mut AppState, draft: Option<MutationDraft>) {
 fn show_pending_draft(state: &mut AppState, draft: &MutationDraft) {
     match draft {
         MutationDraft::LittleCreate { title } => state.mode = Mode::LittleCreate(title.clone()),
-        MutationDraft::Form(form) => state.mode = Mode::Form(Box::new(form.clone())),
+        MutationDraft::Form(form) => state.mode = Mode::Form(form.clone()),
         MutationDraft::None => {}
     }
 }
@@ -953,7 +953,7 @@ fn submit_form<S: IssueSource>(
             mutation_rx,
             mutation_draft,
             source,
-            MutationDraft::Form(form_draft),
+            MutationDraft::Form(Box::new(form_draft)),
             MutationRequest::Edit(EditRequest {
                 number,
                 title: submission.title,
@@ -967,7 +967,7 @@ fn submit_form<S: IssueSource>(
             mutation_rx,
             mutation_draft,
             source,
-            MutationDraft::Form(form_draft),
+            MutationDraft::Form(Box::new(form_draft)),
             MutationRequest::Create(CreateRequest {
                 title: submission.title,
                 body: submission.body,
@@ -1281,7 +1281,7 @@ mod tests {
             ..Default::default()
         };
         let mut state = AppState::new(vec![], vec![]);
-        show_pending_draft(&mut state, &MutationDraft::Form(draft.clone()));
+        show_pending_draft(&mut state, &MutationDraft::Form(Box::new(draft.clone())));
         state.begin_pending(PendingOperation::EditIssue);
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));
         assert!(state
@@ -1337,7 +1337,7 @@ mod tests {
         state.begin_pending(PendingOperation::EditIssue);
         finish_mutation(
             &mut state,
-            Some(MutationDraft::Form(draft.clone())),
+            Some(MutationDraft::Form(Box::new(draft.clone()))),
             Err(anyhow::anyhow!("network failed")),
         );
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));

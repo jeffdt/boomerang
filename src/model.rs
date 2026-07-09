@@ -31,6 +31,7 @@ const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum PendingOperation {
     CreateIssue,
     EditIssue,
