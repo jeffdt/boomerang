@@ -46,6 +46,10 @@ pub fn run_doctor() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn log_event(label: &str) {
+    append_log(&format!("ts_ms={} event={label}", unix_timestamp_ms()));
+}
+
 pub fn log_gh_result(args: &[String], elapsed: Duration, output: &Output) {
     let status = output
         .status
@@ -166,6 +170,13 @@ fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn unix_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
         .unwrap_or(0)
 }
 

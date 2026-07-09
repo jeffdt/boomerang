@@ -123,6 +123,7 @@ fn parse_preview_duration(value: &str) -> Result<Duration, String> {
 }
 
 fn main() -> anyhow::Result<()> {
+    diagnostics::log_event("process_start");
     match parse_command(std::env::args().skip(1)) {
         Ok(StartupCommand::Launch) => {}
         Ok(StartupCommand::Version) => {
@@ -202,6 +203,7 @@ fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
+    diagnostics::log_event("terminal_ready");
 
     let preflight_rx = spawn_preflight_check();
     let result = event_loop(&mut terminal, state, source, None, Some(preflight_rx));
@@ -594,6 +596,7 @@ fn event_loop<S: IssueSource>(
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
+    let mut first_draw_logged = false;
 
     loop {
         if let Some(result) = poll_preflight(&preflight_rx) {
@@ -615,6 +618,10 @@ fn event_loop<S: IssueSource>(
         }
 
         terminal.draw(|f| ui::draw(f, state))?;
+        if !first_draw_logged {
+            diagnostics::log_event("first_draw_complete");
+            first_draw_logged = true;
+        }
         state.clear_expired_status();
         if !event::poll(Duration::from_millis(100))? {
             continue;
