@@ -23,6 +23,8 @@ pub struct Issue {
 
 use crate::gh::StateFilter;
 use crate::search;
+use ratatui::style::Style;
+use ratatui_textarea::{CursorMove, TextArea, WrapMode};
 use std::collections::HashSet;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -110,11 +112,11 @@ pub enum FormField {
     Submit,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FormState {
     pub editing: Option<u32>,
-    pub title: String,
-    pub body: String,
+    pub title_input: TextArea<'static>,
+    pub body_input: TextArea<'static>,
     pub all_label_names: Vec<String>,
     pub selected_labels: HashSet<String>,
     pub label_cursor: usize,
@@ -122,16 +124,69 @@ pub struct FormState {
     pub original_title: String,
     pub original_body: String,
     pub original_labels: HashSet<String>,
-    pub title_cursor: usize,
-    pub body_cursor: usize,
+}
+
+impl PartialEq for FormState {
+    fn eq(&self, other: &Self) -> bool {
+        self.editing == other.editing
+            && self.title_text() == other.title_text()
+            && self.body_text() == other.body_text()
+            && self.title_input.cursor() == other.title_input.cursor()
+            && self.body_input.cursor() == other.body_input.cursor()
+            && self.all_label_names == other.all_label_names
+            && self.selected_labels == other.selected_labels
+            && self.label_cursor == other.label_cursor
+            && self.field == other.field
+            && self.original_title == other.original_title
+            && self.original_body == other.original_body
+            && self.original_labels == other.original_labels
+    }
 }
 
 impl FormState {
+    pub fn title_text(&self) -> String {
+        self.title_input.lines().join("\n")
+    }
+
+    pub fn body_text(&self) -> String {
+        self.body_input.lines().join("\n")
+    }
+
+    #[cfg(test)]
+    pub fn with_title_body(title: &str, body: &str) -> FormState {
+        FormState {
+            title_input: new_single_line_textarea(title),
+            body_input: new_multi_line_textarea(body),
+            ..Default::default()
+        }
+    }
+
     pub fn is_dirty(&self) -> bool {
-        self.title != self.original_title
-            || self.body != self.original_body
+        self.title_text() != self.original_title
+            || self.body_text() != self.original_body
             || self.selected_labels != self.original_labels
     }
+}
+
+fn new_single_line_textarea(initial: &str) -> TextArea<'static> {
+    let mut textarea = TextArea::new(vec![initial.to_string()]);
+    textarea.set_cursor_line_style(Style::default());
+    textarea.move_cursor(CursorMove::End);
+    textarea
+}
+
+fn new_multi_line_textarea(initial: &str) -> TextArea<'static> {
+    let lines: Vec<String> = if initial.is_empty() {
+        vec![String::new()]
+    } else {
+        initial.split('\n').map(String::from).collect()
+    };
+    let mut textarea = TextArea::new(lines);
+    textarea.set_cursor_line_style(Style::default());
+    textarea.set_wrap_mode(WrapMode::Word);
+    textarea.move_cursor(CursorMove::Bottom);
+    textarea.move_cursor(CursorMove::End);
+    textarea
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,29 +211,6 @@ pub struct AppState {
     pub pending: Option<PendingState>,
     pub pane_open: bool,
     pub repo_name_with_owner: Option<String>,
-}
-
-fn char_len(s: &str) -> usize {
-    s.chars().count()
-}
-
-fn char_byte_index(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
-}
-
-fn delete_word_before(s: &mut String, cursor: &mut usize) {
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = *cursor;
-    while i > 0 && chars[i - 1] == ' ' {
-        i -= 1;
-    }
-    while i > 0 && chars[i - 1] != ' ' && chars[i - 1] != '\n' {
-        i -= 1;
-    }
-    let start_byte = char_byte_index(s, i);
-    let end_byte = char_byte_index(s, *cursor);
-    s.replace_range(start_byte..end_byte, "");
-    *cursor = i;
 }
 
 impl AppState {
@@ -366,12 +398,10 @@ impl AppState {
             ),
             None => (String::new(), String::new(), HashSet::new()),
         };
-        let title_cursor = title.chars().count();
-        let body_cursor = body.chars().count();
         FormState {
             editing,
-            title: title.clone(),
-            body: body.clone(),
+            title_input: new_single_line_textarea(&title),
+            body_input: new_multi_line_textarea(&body),
             all_label_names,
             selected_labels: selected_labels.clone(),
             label_cursor: 0,
@@ -379,8 +409,6 @@ impl AppState {
             original_title: title,
             original_body: body,
             original_labels: selected_labels,
-            title_cursor,
-            body_cursor,
         }
     }
 
@@ -394,168 +422,14 @@ impl AppState {
         }
     }
 
-    pub fn form_push_char(&mut self, c: char) {
+    pub fn form_input(&mut self, input: ratatui_textarea::Input) {
         if let Mode::Form(form) = &mut self.mode {
             match form.field {
                 FormField::Title => {
-                    let idx = char_byte_index(&form.title, form.title_cursor);
-                    form.title.insert(idx, c);
-                    form.title_cursor += 1;
+                    form.title_input.input(input);
                 }
                 FormField::Body => {
-                    let idx = char_byte_index(&form.body, form.body_cursor);
-                    form.body.insert(idx, c);
-                    form.body_cursor += 1;
-                }
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_backspace(&mut self) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => {
-                    if form.title_cursor > 0 {
-                        let start = char_byte_index(&form.title, form.title_cursor - 1);
-                        let end = char_byte_index(&form.title, form.title_cursor);
-                        form.title.replace_range(start..end, "");
-                        form.title_cursor -= 1;
-                    }
-                }
-                FormField::Body => {
-                    if form.body_cursor > 0 {
-                        let start = char_byte_index(&form.body, form.body_cursor - 1);
-                        let end = char_byte_index(&form.body, form.body_cursor);
-                        form.body.replace_range(start..end, "");
-                        form.body_cursor -= 1;
-                    }
-                }
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_move_cursor(&mut self, delta: isize) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => {
-                    let len = char_len(&form.title) as isize;
-                    form.title_cursor = (form.title_cursor as isize + delta).clamp(0, len) as usize;
-                }
-                FormField::Body => {
-                    let len = char_len(&form.body) as isize;
-                    form.body_cursor = (form.body_cursor as isize + delta).clamp(0, len) as usize;
-                }
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_cursor_home(&mut self) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => form.title_cursor = 0,
-                FormField::Body => {
-                    let chars: Vec<char> = form.body.chars().collect();
-                    let mut i = form.body_cursor;
-                    while i > 0 && chars[i - 1] != '\n' {
-                        i -= 1;
-                    }
-                    form.body_cursor = i;
-                }
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_cursor_end(&mut self) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => form.title_cursor = char_len(&form.title),
-                FormField::Body => {
-                    let chars: Vec<char> = form.body.chars().collect();
-                    let mut i = form.body_cursor;
-                    while i < chars.len() && chars[i] != '\n' {
-                        i += 1;
-                    }
-                    form.body_cursor = i;
-                }
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_move_cursor_vertical(&mut self, delta: isize) {
-        if let Mode::Form(form) = &mut self.mode {
-            if form.field != FormField::Body {
-                return;
-            }
-            let chars: Vec<char> = form.body.chars().collect();
-            let mut line_start = form.body_cursor;
-            while line_start > 0 && chars[line_start - 1] != '\n' {
-                line_start -= 1;
-            }
-            let column = form.body_cursor - line_start;
-
-            if delta < 0 {
-                if line_start == 0 {
-                    return;
-                }
-                let prev_line_end = line_start - 1;
-                let mut prev_line_start = prev_line_end;
-                while prev_line_start > 0 && chars[prev_line_start - 1] != '\n' {
-                    prev_line_start -= 1;
-                }
-                let prev_line_len = prev_line_end - prev_line_start;
-                form.body_cursor = prev_line_start + column.min(prev_line_len);
-            } else if delta > 0 {
-                let mut line_end = form.body_cursor;
-                while line_end < chars.len() && chars[line_end] != '\n' {
-                    line_end += 1;
-                }
-                if line_end == chars.len() {
-                    return;
-                }
-                let next_line_start = line_end + 1;
-                let mut next_line_end = next_line_start;
-                while next_line_end < chars.len() && chars[next_line_end] != '\n' {
-                    next_line_end += 1;
-                }
-                let next_line_len = next_line_end - next_line_start;
-                form.body_cursor = next_line_start + column.min(next_line_len);
-            }
-        }
-    }
-
-    pub fn form_delete_word(&mut self) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => delete_word_before(&mut form.title, &mut form.title_cursor),
-                FormField::Body => delete_word_before(&mut form.body, &mut form.body_cursor),
-                FormField::Labels | FormField::Submit => {}
-            }
-        }
-    }
-
-    pub fn form_clear_to_line_start(&mut self) {
-        if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => {
-                    let end_byte = char_byte_index(&form.title, form.title_cursor);
-                    form.title.replace_range(0..end_byte, "");
-                    form.title_cursor = 0;
-                }
-                FormField::Body => {
-                    let chars: Vec<char> = form.body.chars().collect();
-                    let mut line_start = form.body_cursor;
-                    while line_start > 0 && chars[line_start - 1] != '\n' {
-                        line_start -= 1;
-                    }
-                    let start_byte = char_byte_index(&form.body, line_start);
-                    let end_byte = char_byte_index(&form.body, form.body_cursor);
-                    form.body.replace_range(start_byte..end_byte, "");
-                    form.body_cursor = line_start;
+                    form.body_input.input(input);
                 }
                 FormField::Labels | FormField::Submit => {}
             }
@@ -620,14 +494,7 @@ impl AppState {
                 }
                 None
             }
-            FormField::Body => {
-                if let Mode::Form(form) = &mut self.mode {
-                    let idx = char_byte_index(&form.body, form.body_cursor);
-                    form.body.insert(idx, '\n');
-                    form.body_cursor += 1;
-                }
-                None
-            }
+            FormField::Body => None, // unreachable: Body's Enter is routed to form_input
             FormField::Labels => {
                 if let Mode::Form(form) = &mut self.mode {
                     form.field = FormField::Submit;
@@ -651,7 +518,7 @@ impl AppState {
             Mode::Form(form) => {
                 let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
                 let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
-                (form.title.clone(), form.body.clone(), add_labels, remove_labels)
+                (form.title_text(), form.body_text(), add_labels, remove_labels)
             }
             _ => return None,
         };
@@ -767,6 +634,30 @@ mod tests {
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn press(state: &mut AppState, key: ratatui_textarea::Key) {
+        state.form_input(ratatui_textarea::Input {
+            key,
+            ctrl: false,
+            alt: false,
+            shift: false,
+        });
+    }
+
+    fn press_ctrl(state: &mut AppState, key: ratatui_textarea::Key) {
+        state.form_input(ratatui_textarea::Input {
+            key,
+            ctrl: true,
+            alt: false,
+            shift: false,
+        });
+    }
+
+    fn type_str(state: &mut AppState, s: &str) {
+        for c in s.chars() {
+            press(state, ratatui_textarea::Key::Char(c));
         }
     }
 
@@ -896,8 +787,8 @@ mod tests {
         match &state.mode {
             Mode::Form(form) => {
                 assert_eq!(form.editing, Some(1));
-                assert_eq!(form.title, "Fix bug");
-                assert_eq!(form.body, "steps to repro");
+                assert_eq!(form.title_text(), "Fix bug");
+                assert_eq!(form.body_text(), "steps to repro");
                 assert!(form.selected_labels.contains("bug"));
                 assert_eq!(
                     form.all_label_names,
@@ -963,63 +854,59 @@ mod tests {
     }
 
     #[test]
-    fn new_form_state_starts_cursors_at_end_of_existing_text() {
+    fn new_form_state_starts_cursor_at_end_of_existing_text() {
         let mut issue1 = issue(1, "Fix bug");
         issue1.body = "line one".to_string();
         let mut state = AppState::new(vec![issue1], vec![]);
         state.enter_edit();
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_cursor, "Fix bug".chars().count());
-            assert_eq!(form.body_cursor, "line one".chars().count());
+            assert_eq!(form.title_input.cursor(), (0, "Fix bug".chars().count()));
+            assert_eq!(form.body_input.cursor(), (0, "line one".chars().count()));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn form_push_char_inserts_at_cursor_not_always_at_end() {
+    fn form_input_inserts_at_cursor_not_always_at_end() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('f');
-        state.form_push_char('o');
-        state.form_push_char('o');
-        state.form_move_cursor(-1); // between the two 'o's
-        state.form_push_char('X');
+        type_str(&mut state, "foo");
+        press(&mut state, ratatui_textarea::Key::Left); // between the two 'o's
+        press(&mut state, ratatui_textarea::Key::Char('X'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "foXo");
-            assert_eq!(form.title_cursor, 3);
+            assert_eq!(form.title_text(), "foXo");
+            assert_eq!(form.title_input.cursor(), (0, 3));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn form_backspace_deletes_char_before_cursor_not_always_last_char() {
+    fn form_input_backspace_deletes_char_before_cursor_not_always_last_char() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('f');
-        state.form_push_char('o');
-        state.form_push_char('o');
-        state.form_move_cursor(-1);
-        state.form_backspace();
+        type_str(&mut state, "foo");
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Backspace);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "fo");
-            assert_eq!(form.title_cursor, 1);
+            assert_eq!(form.title_text(), "fo");
+            assert_eq!(form.title_input.cursor(), (0, 1));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn form_backspace_at_start_of_field_is_a_no_op() {
+    fn form_input_backspace_at_start_of_field_is_a_no_op() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('a');
-        state.form_move_cursor(-10); // clamps to 0
-        state.form_backspace();
+        type_str(&mut state, "a");
+        press(&mut state, ratatui_textarea::Key::Home);
+        press(&mut state, ratatui_textarea::Key::Backspace);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "a");
-            assert_eq!(form.title_cursor, 0);
+            assert_eq!(form.title_text(), "a");
+            assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
             panic!("expected Form mode");
         }
@@ -1029,18 +916,16 @@ mod tests {
     fn cursor_home_and_end_on_title_go_to_field_boundaries() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        for c in "hello".chars() {
-            state.form_push_char(c);
-        }
-        state.form_cursor_home();
+        type_str(&mut state, "hello");
+        press(&mut state, ratatui_textarea::Key::Home);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_cursor, 0);
+            assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
             panic!("expected Form mode");
         }
-        state.form_cursor_end();
+        press(&mut state, ratatui_textarea::Key::End);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_cursor, 5);
+            assert_eq!(form.title_input.cursor(), (0, 5));
         } else {
             panic!("expected Form mode");
         }
@@ -1051,19 +936,21 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "one\ntwo".chars() {
-            state.form_push_char(c);
-        }
+        type_str(&mut state, "one\ntwo");
         // cursor is at the end, on the "two" line
-        state.form_cursor_home();
+        press(&mut state, ratatui_textarea::Key::Home);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_cursor, 4, "home should land right after the \\n, not at index 0");
+            assert_eq!(
+                form.body_input.cursor(),
+                (1, 0),
+                "home should land at the start of the current line, not the start of the buffer"
+            );
         } else {
             panic!("expected Form mode");
         }
-        state.form_cursor_end();
+        press(&mut state, ratatui_textarea::Key::End);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_cursor, 7, "end should land at the end of the string");
+            assert_eq!(form.body_input.cursor(), (1, 3), "end should land at the end of the current line");
         } else {
             panic!("expected Form mode");
         }
@@ -1074,14 +961,14 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "abcdef\nxy".chars() {
-            state.form_push_char(c);
-        }
-        state.form_cursor_home(); // column 0 of "xy" line (index 7)
-        state.form_move_cursor(2); // column 2 of "xy" line (index 9, end of "xy")
-        state.form_move_cursor_vertical(-1);
+        type_str(&mut state, "abcdef\nxy");
+        press(&mut state, ratatui_textarea::Key::Up);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_cursor, 2, "should land at column 2 on the first line (\"abcdef\")");
+            assert_eq!(
+                form.body_input.cursor(),
+                (0, 2),
+                "should land at column 2 on the first line (\"abcdef\"), preserved from column 2 on \"xy\""
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1092,14 +979,18 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "abcdef\nxy".chars() {
-            state.form_push_char(c);
-        }
-        // cursor at end of "xy" (index 9); go up then back down
-        state.form_move_cursor_vertical(-1); // column 2 on "abcdef" -> index 2
-        state.form_move_cursor_vertical(1); // back down to "xy", column 2 doesn't exist (len 2) -> clamp to end, index 9
+        type_str(&mut state, "abcdef\nxy");
+        press(&mut state, ratatui_textarea::Key::Up); // (0, 2), preserved from "xy"'s column 2
+        press(&mut state, ratatui_textarea::Key::Right);
+        press(&mut state, ratatui_textarea::Key::Right);
+        press(&mut state, ratatui_textarea::Key::Right); // (0, 5)
+        press(&mut state, ratatui_textarea::Key::Down); // "xy" is only 2 chars long
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_cursor, 9);
+            assert_eq!(
+                form.body_input.cursor(),
+                (1, 2),
+                "column 5 doesn't exist on \"xy\" (len 2), should clamp to the end of the line"
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1110,13 +1001,11 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "only one line".chars() {
-            state.form_push_char(c);
-        }
-        state.form_move_cursor_vertical(-1);
-        state.form_move_cursor_vertical(1);
+        type_str(&mut state, "only one line");
+        press(&mut state, ratatui_textarea::Key::Up);
+        press(&mut state, ratatui_textarea::Key::Down);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_cursor, "only one line".chars().count());
+            assert_eq!(form.body_input.cursor(), (0, "only one line".chars().count()));
         } else {
             panic!("expected Form mode");
         }
@@ -1126,92 +1015,126 @@ mod tests {
     fn vertical_movement_on_title_is_a_no_op() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('a');
-        state.form_move_cursor_vertical(-1);
+        type_str(&mut state, "a");
+        press(&mut state, ratatui_textarea::Key::Up);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_cursor, 1);
+            assert_eq!(form.title_input.cursor(), (0, 1));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn delete_word_removes_word_immediately_before_cursor() {
+    fn form_input_ctrl_w_deletes_word_immediately_before_cursor() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        for c in "fix the bug".chars() {
-            state.form_push_char(c);
-        }
-        state.form_delete_word();
+        type_str(&mut state, "fix the bug");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('w'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "fix the ");
-            assert_eq!(form.title_cursor, 8);
+            assert_eq!(form.title_text(), "fix the ");
+            assert_eq!(form.title_input.cursor(), (0, 8));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn delete_word_skips_trailing_spaces_before_the_word() {
+    fn form_input_ctrl_w_skips_trailing_spaces_before_the_word() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        for c in "fix   ".chars() {
-            state.form_push_char(c);
-        }
-        state.form_delete_word();
+        type_str(&mut state, "fix   ");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('w'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "");
-            assert_eq!(form.title_cursor, 0);
+            assert_eq!(form.title_text(), "");
+            assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn delete_word_in_body_does_not_cross_a_newline() {
+    fn form_input_ctrl_w_in_body_does_not_cross_a_newline() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "one\ntwo".chars() {
-            state.form_push_char(c);
-        }
-        state.form_delete_word();
+        type_str(&mut state, "one\ntwo");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('w'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body, "one\n", "word delete must stop at the preceding newline, not eat \"one\" too");
+            assert_eq!(form.body_text(), "one\n", "word delete must stop at the preceding newline, not eat \"one\" too");
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn clear_to_line_start_on_title_clears_whole_field() {
+    fn form_input_ctrl_j_clears_to_line_start_on_title() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        for c in "hello world".chars() {
-            state.form_push_char(c);
-        }
-        state.form_move_cursor(-5); // between "hello " and "world"
-        state.form_clear_to_line_start();
+        type_str(&mut state, "hello world");
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left); // between "hello " and "world"
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('j'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title, "world");
-            assert_eq!(form.title_cursor, 0);
+            assert_eq!(form.title_text(), "world");
+            assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
             panic!("expected Form mode");
         }
     }
 
     #[test]
-    fn clear_to_line_start_on_body_is_scoped_to_current_line() {
+    fn form_input_ctrl_j_on_body_is_scoped_to_current_line() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
         state.form_next_field(); // Body
-        for c in "one\ntwo".chars() {
-            state.form_push_char(c);
-        }
-        state.form_clear_to_line_start();
+        type_str(&mut state, "one\ntwo");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('j'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body, "one\n", "clearing on the second line must not touch the first line");
-            assert_eq!(form.body_cursor, 4);
+            assert_eq!(form.body_text(), "one\n", "clearing on the second line must not touch the first line");
+            assert_eq!(form.body_input.cursor(), (1, 0));
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_input_ctrl_u_then_ctrl_r_is_undo_then_redo() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        type_str(&mut state, "a");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('u'));
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_text(), "", "Ctrl+U undoes the last insertion");
+        } else {
+            panic!("expected Form mode");
+        }
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('r'));
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(form.title_text(), "a", "Ctrl+R redoes it");
+        } else {
+            panic!("expected Form mode");
+        }
+    }
+
+    #[test]
+    fn form_input_cursor_tracks_correctly_through_a_soft_wrapped_body_line() {
+        // Regression test for issue #30: the cursor must stay correct once a single
+        // logical line has been word-wrapped across multiple visual rows, not just
+        // when lines are split by explicit '\n'.
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        let long_text = "word ".repeat(40);
+        type_str(&mut state, long_text.trim_end());
+        if let Mode::Form(form) = &state.mode {
+            assert_eq!(
+                form.body_input.cursor(),
+                (0, long_text.trim_end().chars().count()),
+                "still logically one line/row, no explicit newline was typed"
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1231,9 +1154,9 @@ mod tests {
     fn form_enter_on_labels_advances_to_submit() {
         let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.form_next_field();
-        state.form_push_char('B');
+        type_str(&mut state, "B");
         state.form_next_field();
         state.form_toggle_label();
         assert_eq!(state.form_enter(), None, "Enter on Labels should advance, not submit");
@@ -1248,9 +1171,9 @@ mod tests {
     fn form_enter_on_submit_builds_submission_and_returns_to_list() {
         let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.form_next_field();
-        state.form_push_char('B');
+        type_str(&mut state, "B");
         state.form_next_field();
         state.form_toggle_label();
         state.form_next_field(); // Submit
@@ -1267,9 +1190,9 @@ mod tests {
     fn form_submit_now_submits_regardless_of_focused_field() {
         let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.form_next_field();
-        state.form_push_char('B');
+        type_str(&mut state, "B");
         // still on Body, not Submit
         let submission = state.form_submit_now().expect("Ctrl+S submits from any field");
         assert_eq!(submission.title, "T");
@@ -1330,7 +1253,7 @@ mod tests {
     fn cancel_on_dirty_form_asks_for_confirmation() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.cancel_form_or_create();
         assert!(matches!(state.mode, Mode::ConfirmDiscard(_)), "typed title should be treated as dirty");
     }
@@ -1350,7 +1273,7 @@ mod tests {
     fn confirm_discard_yes_abandons_changes_and_returns_to_list() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.cancel_form_or_create();
         state.confirm_discard_yes();
         assert_eq!(state.mode, Mode::List);
@@ -1360,11 +1283,11 @@ mod tests {
     fn confirm_discard_no_restores_the_in_progress_form() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.form_push_char('T');
+        type_str(&mut state, "T");
         state.cancel_form_or_create();
         state.confirm_discard_no();
         match &state.mode {
-            Mode::Form(form) => assert_eq!(form.title, "T"),
+            Mode::Form(form) => assert_eq!(form.title_text(), "T"),
             other => panic!("expected to return to Form mode with typed content intact, got {other:?}"),
         }
     }
