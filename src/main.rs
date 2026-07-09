@@ -832,6 +832,81 @@ fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadS
     }
 }
 
+#[derive(Debug)]
+struct RefreshSuccess {
+    issues: Vec<Issue>,
+    labels: Vec<Label>,
+    elapsed: Duration,
+}
+
+type RefreshReceiver = Receiver<anyhow::Result<RefreshSuccess>>;
+
+fn spawn_refresh<S: IssueSource>(source: S, state_filter: StateFilter) -> RefreshReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let issues_source = source.clone();
+        let labels_source = source;
+        let issues_handle = std::thread::spawn(move || issues_source.list(state_filter));
+        let labels_handle = std::thread::spawn(move || labels_source.labels());
+        let issues_result = issues_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
+            .and_then(|result| result);
+        let result = match issues_result {
+            Ok(issues) => match labels_handle.join() {
+                Ok(labels_result) => Ok(RefreshSuccess {
+                    issues,
+                    labels: labels_result.unwrap_or_default(),
+                    elapsed: started.elapsed(),
+                }),
+                Err(_) => Err(anyhow::anyhow!("label list thread panicked")),
+            },
+            Err(e) => Err(e),
+        };
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn poll_refresh(rx: &Option<RefreshReceiver>) -> Option<anyhow::Result<RefreshSuccess>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+            "refresh worker stopped before returning a result"
+        ))),
+    }
+}
+
+fn start_refresh<S: IssueSource>(
+    state: &mut AppState,
+    refresh_rx: &mut Option<RefreshReceiver>,
+    source: S,
+) {
+    if state.is_pending() {
+        return;
+    }
+    *refresh_rx = Some(spawn_refresh(source, state.state_filter));
+    state.begin_pending(PendingOperation::RefreshList);
+}
+
+fn finish_refresh(state: &mut AppState, result: anyhow::Result<RefreshSuccess>) {
+    state.finish_pending();
+    match result {
+        Ok(success) => {
+            let count = success.issues.len();
+            state.all_labels = success.labels;
+            state.set_issues(success.issues);
+            state.set_status(format!(
+                "refreshed {count} issues in {}",
+                format_duration(success.elapsed)
+            ));
+        }
+        Err(e) => state.set_status(gh_error_status(&e)),
+    }
+}
+
 fn poll_mutation(rx: &Option<MutationReceiver>) -> Option<anyhow::Result<MutationSuccess>> {
     match rx.as_ref()?.try_recv() {
         Ok(result) => Some(result),
@@ -1139,6 +1214,45 @@ mod tests {
         assert_eq!(
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("loaded 1 issues in 350ms")
+        );
+    }
+
+    #[test]
+    fn finish_refresh_success_updates_issues_labels_and_reports_timing() {
+        let refreshed = issue(9, "Refreshed issue");
+        let label = Label {
+            name: "priority".into(),
+            color: "faa29b".into(),
+        };
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        finish_refresh(
+            &mut state,
+            Ok(RefreshSuccess {
+                issues: vec![refreshed.clone()],
+                labels: vec![label.clone()],
+                elapsed: Duration::from_millis(200),
+            }),
+        );
+        assert!(!state.is_pending());
+        assert_eq!(state.issues, vec![refreshed]);
+        assert_eq!(state.all_labels, vec![label]);
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("refreshed 1 issues in 200ms")
+        );
+    }
+
+    #[test]
+    fn finish_refresh_failure_clears_pending_and_reports_error() {
+        let mut state = AppState::new(vec![issue(1, "Existing issue")], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        finish_refresh(&mut state, Err(anyhow::anyhow!("network unreachable")));
+        assert!(!state.is_pending());
+        assert_eq!(state.issues, vec![issue(1, "Existing issue")]);
+        assert_eq!(
+            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            Some("gh error: network unreachable")
         );
     }
 
