@@ -443,6 +443,7 @@ fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState
         .split(area);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
         .title("New issue title (Enter to create, Esc to cancel)");
     frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
     draw_toast(frame, chunks[1], state);
@@ -549,7 +550,12 @@ fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppSta
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("Confirm")),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(ACCENT))
+                    .title("Confirm"),
+            ),
         area,
     );
 }
@@ -566,7 +572,12 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("Confirm")),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(ACCENT))
+                    .title("Confirm"),
+            ),
         area,
     );
 }
@@ -1596,5 +1607,40 @@ mod tests {
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "j/k move").expect("footer hint should render");
         assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn little_create_border_uses_accent_color() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "New issue title").expect("little-create title should render");
+        // The title sits inside the block's top border row; walk left to the border's leading corner/edge.
+        let mut found = false;
+        for cx in 0..=x {
+            let cell = &buf[(cx, y)];
+            if cell.symbol() == "┌" || cell.symbol() == "─" {
+                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                found = true;
+            }
+        }
+        assert!(found, "expected the little-create block's top border to render");
+    }
+
+    #[test]
+    fn confirm_close_border_uses_accent_color() {
+        let mut state = AppState::new(vec![issue(9, "Close me")], vec![]);
+        state.request_close();
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "Confirm").expect("confirm dialog title should render");
+        let mut found = false;
+        for cx in 0..=x {
+            let cell = &buf[(cx, y)];
+            if cell.symbol() == "┌" || cell.symbol() == "─" {
+                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                found = true;
+            }
+        }
+        assert!(found, "expected the confirm dialog's top border to render");
     }
 }
