@@ -345,12 +345,12 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
         .unwrap_or(&issue.created_at);
     let metadata = format!("opened {date}");
     frame.render_widget(
-        Paragraph::new(metadata).style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(metadata).style(Style::default().fg(DIM)),
         chunks[1],
     );
     let rule = "─".repeat(chunks[2].width as usize);
     frame.render_widget(
-        Paragraph::new(rule).style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(rule).style(Style::default().fg(DIM)),
         chunks[2],
     );
     let body = if issue.body.is_empty() {
@@ -373,7 +373,12 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             _ => "j/k move  h hide pane  / search  a state  c/C create  enter/e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
         }
     };
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(DIM))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -1557,5 +1562,39 @@ mod tests {
             interior.is_empty(),
             "expected the row between the top border and the header to be blank, got: {spacer_row:?}"
         );
+    }
+
+    #[test]
+    fn pane_metadata_and_rule_use_dim_color_not_dim_modifier() {
+        let mut selected = issue(1, "Fix bug");
+        selected.created_at = "2026-06-01T12:00:00Z".into();
+        let state = AppState::new(vec![selected], vec![]);
+        let buf = render_buffer(&state);
+
+        let (mx, my) = find_in_buffer(&buf, "opened 2026-06-01").expect("metadata line should render");
+        let meta_style = buf[(mx, my)].style();
+        assert_eq!(meta_style.fg, Some(Color::DarkGray));
+        assert!(!meta_style.add_modifier.contains(Modifier::DIM));
+
+        let rule_y = my + 1;
+        let mut rule_x = None;
+        for x in 0..buf.area.width {
+            if buf[(x, rule_y)].symbol() == "─" {
+                rule_x = Some(x);
+                break;
+            }
+        }
+        let rx = rule_x.expect("pane rule row should contain '─' characters");
+        let rule_style = buf[(rx, rule_y)].style();
+        assert_eq!(rule_style.fg, Some(Color::DarkGray));
+        assert!(!rule_style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn footer_shortcuts_hint_uses_dim_color() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "j/k move").expect("footer hint should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
     }
 }
