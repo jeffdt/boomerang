@@ -230,7 +230,11 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
         .split(area);
     let mut header = format!("Issues ({:?})", state.state_filter);
     if let Some(pending) = state.pending_message() {
@@ -548,14 +552,12 @@ fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppSta
         .unwrap_or("");
     let text = format!("Close #{number}: {title}? (y/n)");
     frame.render_widget(
-        Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT))
-                    .title("Confirm"),
-            ),
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ACCENT))
+                .title("Confirm"),
+        ),
         area,
     );
 }
@@ -570,14 +572,12 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
         _ => "Discard unsaved changes? (y/n)".to_string(),
     };
     frame.render_widget(
-        Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(ACCENT))
-                    .title("Confirm"),
-            ),
+        Paragraph::new(text).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ACCENT))
+                .title("Confirm"),
+        ),
         area,
     );
 }
@@ -1582,7 +1582,8 @@ mod tests {
         let state = AppState::new(vec![selected], vec![]);
         let buf = render_buffer(&state);
 
-        let (mx, my) = find_in_buffer(&buf, "opened 2026-06-01").expect("metadata line should render");
+        let (mx, my) =
+            find_in_buffer(&buf, "opened 2026-06-01").expect("metadata line should render");
         let meta_style = buf[(mx, my)].style();
         assert_eq!(meta_style.fg, Some(Color::DarkGray));
         assert!(!meta_style.add_modifier.contains(Modifier::DIM));
@@ -1614,7 +1615,8 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        let (x, y) = find_in_buffer(&buf, "New issue title").expect("little-create title should render");
+        let (x, y) =
+            find_in_buffer(&buf, "New issue title").expect("little-create title should render");
         // The title sits inside the block's top border row; walk left to the border's leading corner/edge.
         let mut found = false;
         for cx in 0..=x {
@@ -1624,7 +1626,10 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "expected the little-create block's top border to render");
+        assert!(
+            found,
+            "expected the little-create block's top border to render"
+        );
     }
 
     #[test]
