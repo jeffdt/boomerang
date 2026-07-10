@@ -20,6 +20,8 @@ const LABEL_PALETTE: [Color; 6] = [
 ];
 
 const ACCENT: Color = Color::Cyan;
+const DIM: Color = Color::DarkGray;
+const SEL_BG: Color = Color::DarkGray;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListInput {
@@ -236,7 +238,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         header.push_str(&pending);
     }
     frame.render_widget(
-        Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(header).style(Style::default().fg(DIM)),
         chunks[1],
     );
     let list_area = chunks[2];
@@ -275,18 +277,21 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             .saturating_sub(number_col.chars().count())
             .saturating_sub(labels_width);
         let title = truncate_title(&issue.title, max_title_width);
-        let left = format!("{number_col}{title}");
-        let mut spans = vec![Span::raw(left.clone())];
+        let selected = row == state.cursor;
+        let left_width = number_col.chars().count() + title.chars().count();
+        let mut spans = vec![
+            Span::styled(number_col, secondary(selected)),
+            Span::raw(title),
+        ];
         if !label_spans.is_empty() {
-            let left_width = left.chars().count();
             let pad = available_width
                 .saturating_sub(left_width)
                 .saturating_sub(labels_width);
             spans.push(Span::raw(" ".repeat(pad)));
             spans.extend(label_spans);
         }
-        let style = if row == state.cursor {
-            Style::default().add_modifier(Modifier::REVERSED)
+        let style = if selected {
+            Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -412,6 +417,18 @@ fn format_repo_title(repo: &str) -> String {
 
 fn label_style(color: Color) -> Style {
     Style::default().fg(color).add_modifier(Modifier::ITALIC)
+}
+
+/// Style for less-important row chrome (currently just the issue-number
+/// column). Drops back to the default foreground on the selected row so it
+/// stays legible against the SEL_BG highlight bar rather than compounding
+/// into DarkGray-on-DarkGray.
+fn secondary(selected: bool) -> Style {
+    if selected {
+        Style::default()
+    } else {
+        Style::default().fg(DIM)
+    }
 }
 
 fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState) {
@@ -806,6 +823,70 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn find_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+        for y in 0..buf.area.height {
+            let mut row = String::new();
+            for x in 0..buf.area.width {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            if let Some(byte_idx) = row.find(needle) {
+                let x = row[..byte_idx].chars().count() as u16;
+                return Some((x, y));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn selected_row_uses_dark_gray_background_and_bold_not_reverse_video() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "#1").expect("issue row should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(
+            style.bg,
+            Some(Color::DarkGray),
+            "selected row should have a DarkGray background highlight"
+        );
+        assert!(
+            style.add_modifier.contains(Modifier::BOLD),
+            "selected row should render bold"
+        );
+        assert!(
+            !style.add_modifier.contains(Modifier::REVERSED),
+            "selected row should not use REVERSED"
+        );
+    }
+
+    #[test]
+    fn issue_number_is_dim_when_not_selected_and_default_when_selected() {
+        let state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        let buf = render_buffer(&state);
+        // Cursor starts on row 0 (#1), so #1 is selected and #2 is not.
+        let (sx, sy) = find_in_buffer(&buf, "#1").expect("#1 should render");
+        assert_eq!(
+            buf[(sx, sy)].style().fg,
+            Some(Color::Reset),
+            "issue number on the selected row should use the default (Reset) foreground, not DIM (ratatui's Cell::style() always reports a concrete fg, Some(Color::Reset) when nothing set it, never None)"
+        );
+        let (ux, uy) = find_in_buffer(&buf, "#2").expect("#2 should render");
+        assert_eq!(
+            buf[(ux, uy)].style().fg,
+            Some(Color::DarkGray),
+            "issue number on an unselected row should be DIM"
+        );
+    }
+
+    #[test]
+    fn list_header_uses_dim_color_not_dim_modifier() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "Issues (").expect("header should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.fg, Some(Color::DarkGray));
+        assert!(!style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
