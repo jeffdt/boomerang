@@ -228,7 +228,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
         .split(area);
     let mut header = format!("Issues ({:?})", state.state_filter);
     if let Some(pending) = state.pending_message() {
@@ -237,9 +237,9 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
     }
     frame.render_widget(
         Paragraph::new(header).style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[0],
+        chunks[1],
     );
-    let list_area = chunks[1];
+    let list_area = chunks[2];
 
     let visible = state.visible_indices();
     if visible.is_empty() {
@@ -1449,6 +1449,32 @@ mod tests {
         assert!(
             found_corner,
             "expected at least one rounded corner in the rendered frame"
+        );
+    }
+
+    #[test]
+    fn blank_spacer_row_appears_between_border_and_header() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let top_border_row = lines
+            .iter()
+            .position(|line| line.contains('╭'))
+            .expect("outer frame's top border should render");
+        let header_row = lines
+            .iter()
+            .position(|line| line.contains("Issues ("))
+            .expect("list header should render");
+        assert_eq!(
+            header_row,
+            top_border_row + 2,
+            "expected exactly one blank row between the top border ({top_border_row}) and the header ({header_row})"
+        );
+        let spacer_row = lines[top_border_row + 1];
+        let interior = spacer_row.trim_matches(|c: char| c == ' ' || c == '│');
+        assert!(
+            interior.is_empty(),
+            "expected the row between the top border and the header to be blank, got: {spacer_row:?}"
         );
     }
 }
