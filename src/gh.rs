@@ -207,6 +207,9 @@ impl GhCliSource {
             Ok(output) => output,
             Err(e) => {
                 diagnostics::log_gh_spawn_error(args, started.elapsed(), &e);
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    bail!("`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.");
+                }
                 return Err(e.into());
             }
         };
