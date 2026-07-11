@@ -774,7 +774,8 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
         let issues_result = issues_handle
             .join()
             .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
-            .and_then(|result| result);
+            .and_then(|result| result)
+            .map_err(diagnose_initial_load_error);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(InitialLoadSuccess {
@@ -790,6 +791,15 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
         let _ = tx.send(result);
     });
     rx
+}
+
+fn diagnose_initial_load_error(e: anyhow::Error) -> anyhow::Error {
+    let message = e.to_string();
+    if looks_like_auth_or_access_error(&message) {
+        anyhow::anyhow!(refine_auth_error(message, probe_auth_status()))
+    } else {
+        e
+    }
 }
 
 fn poll_initial_load(
