@@ -1071,6 +1071,22 @@ fn looks_like_auth_or_access_error(message: &str) -> bool {
         || lower.contains("http 404")
 }
 
+fn refine_auth_error(message: String, auth_status_ok: bool) -> String {
+    if auth_status_ok || !looks_like_auth_or_access_error(&message) {
+        message
+    } else {
+        format!("{message} (and `gh auth status` failed — run `gh auth login`)")
+    }
+}
+
+fn probe_auth_status() -> bool {
+    std::process::Command::new("gh")
+        .args(["auth", "status"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String) {
     if let Some(issue) = state.selected_issue() {
         let text = format(issue);
@@ -1473,5 +1489,26 @@ mod tests {
             gh_error_status_with_token_hint(&error, false),
             "gh error: HTTP 403 forbidden"
         );
+    }
+
+    #[test]
+    fn refine_auth_error_appends_hint_when_auth_status_failed_and_error_looks_auth_shaped() {
+        let message = "gh error: HTTP 403 forbidden".to_string();
+        assert_eq!(
+            refine_auth_error(message, false),
+            "gh error: HTTP 403 forbidden (and `gh auth status` failed — run `gh auth login`)"
+        );
+    }
+
+    #[test]
+    fn refine_auth_error_leaves_message_untouched_when_auth_status_succeeded() {
+        let message = "gh error: HTTP 403 forbidden".to_string();
+        assert_eq!(refine_auth_error(message.clone(), true), message);
+    }
+
+    #[test]
+    fn refine_auth_error_leaves_message_untouched_when_error_is_not_auth_shaped() {
+        let message = "gh error: network unreachable".to_string();
+        assert_eq!(refine_auth_error(message.clone(), false), message);
     }
 }
