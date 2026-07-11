@@ -748,6 +748,9 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
 
 fn diagnose_initial_load_error(e: anyhow::Error) -> anyhow::Error {
     let message = e.to_string();
+    if message.contains("CLI not found on PATH") {
+        return e;
+    }
     if looks_like_auth_or_access_error(&message) {
         anyhow::anyhow!(refine_auth_error(message, probe_auth_status()))
     } else {
@@ -1038,7 +1041,7 @@ fn refine_auth_error(message: String, auth_status_ok: bool) -> String {
     if auth_status_ok || !looks_like_auth_or_access_error(&message) {
         message
     } else {
-        format!("{message} (and `gh auth status` failed — run `gh auth login`)")
+        format!("{message} (and `gh auth status` failed: run `gh auth login`)")
     }
 }
 
@@ -1459,7 +1462,7 @@ mod tests {
         let message = "gh error: HTTP 403 forbidden".to_string();
         assert_eq!(
             refine_auth_error(message, false),
-            "gh error: HTTP 403 forbidden (and `gh auth status` failed — run `gh auth login`)"
+            "gh error: HTTP 403 forbidden (and `gh auth status` failed: run `gh auth login`)"
         );
     }
 
@@ -1473,5 +1476,13 @@ mod tests {
     fn refine_auth_error_leaves_message_untouched_when_error_is_not_auth_shaped() {
         let message = "gh error: network unreachable".to_string();
         assert_eq!(refine_auth_error(message.clone(), false), message);
+    }
+
+    #[test]
+    fn diagnose_initial_load_error_leaves_gh_not_found_message_untouched() {
+        let message = "`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.";
+        let e = anyhow::anyhow!(message);
+        let result = diagnose_initial_load_error(e);
+        assert_eq!(result.to_string(), message);
     }
 }
