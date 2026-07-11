@@ -161,43 +161,6 @@ fn main() -> anyhow::Result<()> {
     run_ui(&mut state, &source)
 }
 
-fn check_gh_cli() -> Result<(), String> {
-    if std::process::Command::new("gh")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        return Err("`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.".to_string());
-    }
-    let authenticated = std::process::Command::new("gh")
-        .args(["auth", "status"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !authenticated {
-        return Err("`gh` is not authenticated. Run `gh auth login` first.".to_string());
-    }
-    Ok(())
-}
-
-fn spawn_preflight_check() -> PreflightReceiver {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(check_gh_cli());
-    });
-    rx
-}
-
-fn poll_preflight(rx: &Option<PreflightReceiver>) -> Option<Result<(), String>> {
-    match rx.as_ref()?.try_recv() {
-        Ok(result) => Some(result),
-        Err(TryRecvError::Empty) => None,
-        Err(TryRecvError::Disconnected) => Some(Err(
-            "preflight check worker stopped before returning a result".to_string(),
-        )),
-    }
-}
-
 fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
@@ -205,8 +168,8 @@ fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
     diagnostics::log_event("terminal_ready");
 
-    let preflight_rx = spawn_preflight_check();
-    let result = event_loop(&mut terminal, state, source, None, Some(preflight_rx));
+    let initial_load_rx = spawn_initial_load(source.clone());
+    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx));
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -568,7 +531,6 @@ struct MutationSuccess {
 
 type MutationReceiver = Receiver<anyhow::Result<MutationSuccess>>;
 type InitialLoadReceiver = Receiver<anyhow::Result<InitialLoadSuccess>>;
-type PreflightReceiver = Receiver<Result<(), String>>;
 
 #[derive(Debug)]
 struct InitialLoadSuccess {
@@ -583,7 +545,6 @@ fn event_loop<S: IssueSource>(
     state: &mut AppState,
     source: &S,
     mut initial_load_rx: Option<InitialLoadReceiver>,
-    mut preflight_rx: Option<PreflightReceiver>,
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
@@ -591,14 +552,6 @@ fn event_loop<S: IssueSource>(
     let mut first_draw_logged = false;
 
     loop {
-        if let Some(result) = poll_preflight(&preflight_rx) {
-            preflight_rx = None;
-            match result {
-                Ok(()) => initial_load_rx = Some(spawn_initial_load(source.clone())),
-                Err(message) => return Err(anyhow::anyhow!(message)),
-            }
-        }
-
         if let Some(result) = poll_initial_load(&initial_load_rx) {
             initial_load_rx = None;
             finish_initial_load(state, result);
