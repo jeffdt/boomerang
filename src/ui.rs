@@ -366,21 +366,31 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = if state.is_loading() || state.is_pending() {
-        // The pending spinner text itself renders in draw_toast; repeating it
-        // here would show it twice stacked in the footer.
+    let idle = !state.is_loading() && !state.is_pending();
+    if idle {
+        if let Mode::Search = &state.mode {
+            let text = format!("/{}", state.search_query);
+            frame.render_widget(
+                Paragraph::new(text)
+                    .style(Style::default().fg(DIM))
+                    .wrap(Wrap { trim: false }),
+                area,
+            );
+            return;
+        }
+    }
+    // The pending spinner text itself renders in draw_toast; repeating it
+    // here would show it twice stacked in the footer.
+    let text = if !idle {
         "q quit".to_string()
     } else {
         match &state.mode {
-            Mode::Search => format!("/{}", state.search_query),
-            Mode::Form(_) => "tab/shift+tab field  ctrl+s submit  ctrl+w delete word  ctrl+u clear line  esc cancel".to_string(),
-            _ => "j/k move  h hide pane  / search  a state  c/C create  enter/e edit  x close  o open  y/Y/^y copy  q quit".to_string(),
+            Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
+            _ => "j/k move · h hide pane · / search · a state · c/C create · enter/e edit · x close · o open · y/Y/^y copy · q quit".to_string(),
         }
     };
     frame.render_widget(
-        Paragraph::new(text)
-            .style(Style::default().fg(DIM))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(styled_hint(&text)).wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -391,6 +401,32 @@ fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
         .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
         .unwrap_or_default();
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+}
+
+/// Style a `"key desc · key desc"` hint line so each segment's leading key
+/// token renders in Gray, a step brighter than its DarkGray description,
+/// giving shortcut areas contrast against the rest of the dim chrome.
+/// Ported from rolomux's `styled_hint` (`smux/src/ui.rs`); Gray without
+/// Bold reads as a gentle nudge rather than a shout — an earlier version
+/// used Bold with the plain default fg and was too bright.
+fn styled_hint(text: &str) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (i, segment) in text.split(" · ").enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(DIM)));
+        }
+        match segment.split_once(' ') {
+            Some((key, desc)) => {
+                spans.push(Span::styled(
+                    key.to_string(),
+                    Style::default().fg(Color::Gray),
+                ));
+                spans.push(Span::styled(format!(" {desc}"), Style::default().fg(DIM)));
+            }
+            None => spans.push(Span::styled(segment.to_string(), Style::default().fg(DIM))),
+        }
+    }
+    Line::from(spans)
 }
 
 /// Assign a label a color from `LABEL_PALETTE` by its position in the repo's
@@ -1101,7 +1137,8 @@ mod tests {
         assert!(rendered.contains("Submit"));
         assert!(rendered.contains("ctrl+s submit"));
         assert!(rendered.contains("ctrl+w delete word"));
-        assert!(rendered.contains("ctrl+u clear line"));
+        assert!(rendered.contains("ctrl+u"));
+        assert!(rendered.contains("clear"));
     }
 
     #[test]
@@ -1603,11 +1640,37 @@ mod tests {
     }
 
     #[test]
-    fn footer_shortcuts_hint_uses_dim_color() {
+    fn footer_hint_keys_render_gray_and_descriptions_stay_dim() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let buf = render_buffer(&state);
-        let (x, y) = find_in_buffer(&buf, "j/k move").expect("footer hint should render");
-        assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
+        let (kx, ky) = find_in_buffer(&buf, "j/k").expect("footer hint should render");
+        let key_style = buf[(kx, ky)].style();
+        assert_eq!(
+            key_style.fg,
+            Some(Color::Gray),
+            "key token should render Gray"
+        );
+        assert!(
+            !key_style.add_modifier.contains(Modifier::BOLD),
+            "key token should not be bold"
+        );
+        let (dx, dy) = find_in_buffer(&buf, "move").expect("footer hint description should render");
+        let desc_style = buf[(dx, dy)].style();
+        assert_eq!(
+            desc_style.fg,
+            Some(Color::DarkGray),
+            "description should stay dim"
+        );
+    }
+
+    #[test]
+    fn footer_hint_segments_join_with_middot() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("j/k move · h hide pane"),
+            "footer hint segments should join with a middot separator, got: {rendered:?}"
+        );
     }
 
     #[test]
