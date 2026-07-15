@@ -279,6 +279,15 @@ impl AppState {
         self.cursor = 0;
     }
 
+    /// Like `set_issues`, but selects `select_number`'s row if it's present
+    /// in the new list instead of resetting to the top.
+    pub fn set_issues_selecting(&mut self, issues: Vec<Issue>, select_number: Option<u32>) {
+        self.issues = issues;
+        self.cursor = select_number
+            .and_then(|number| self.issues.iter().position(|i| i.number == number))
+            .unwrap_or(0);
+    }
+
     pub fn cycle_state_filter(&mut self) -> StateFilter {
         self.state_filter = self.state_filter.cycle();
         self.state_filter

@@ -504,6 +504,14 @@ impl MutationRequest {
         }
     }
 
+    /// The issue number to keep selected after the list refreshes, if any.
+    fn target_issue_number(&self) -> Option<u32> {
+        match self {
+            MutationRequest::Edit(request) => Some(request.number),
+            MutationRequest::Create(_) | MutationRequest::Close(_) => None,
+        }
+    }
+
     fn run<S: IssueSource>(self, source: &S) -> anyhow::Result<()> {
         match self {
             MutationRequest::Create(request) => {
@@ -527,6 +535,7 @@ struct MutationSuccess {
     issues: Vec<Issue>,
     action_elapsed: Duration,
     refresh_elapsed: Duration,
+    target_issue: Option<u32>,
 }
 
 type MutationReceiver = Receiver<anyhow::Result<MutationSuccess>>;
@@ -897,6 +906,7 @@ fn spawn_mutation<S: IssueSource>(
     state_filter: StateFilter,
 ) -> MutationReceiver {
     let operation = request.operation();
+    let target_issue = request.target_issue_number();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let action_started = Instant::now();
@@ -909,6 +919,7 @@ fn spawn_mutation<S: IssueSource>(
                 issues,
                 action_elapsed,
                 refresh_elapsed: refresh_started.elapsed(),
+                target_issue,
             })
         });
         let _ = tx.send(result);
@@ -925,7 +936,7 @@ fn finish_mutation(
     match result {
         Ok(success) => {
             state.mode = Mode::List;
-            state.set_issues(success.issues);
+            state.set_issues_selecting(success.issues, success.target_issue);
             state.set_status(format!(
                 "{} in {}, refresh {}",
                 success_status_action(success.operation),
@@ -1280,6 +1291,7 @@ mod tests {
                 issues: vec![created.clone()],
                 action_elapsed: Duration::from_millis(1_200),
                 refresh_elapsed: Duration::from_millis(50),
+                target_issue: None,
             }),
         );
         assert_eq!(state.issues, vec![created]);
@@ -1309,6 +1321,7 @@ mod tests {
                 issues: vec![updated.clone()],
                 action_elapsed: Duration::from_millis(950),
                 refresh_elapsed: Duration::from_millis(75),
+                target_issue: Some(42),
             }),
         );
         assert_eq!(state.issues, vec![updated]);
@@ -1318,6 +1331,35 @@ mod tests {
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("updated issue in 950ms, refresh 75ms")
         );
+    }
+
+    #[test]
+    fn finish_edit_success_keeps_edited_issue_selected() {
+        let mut state = AppState::new(
+            vec![issue(1, "First"), issue(42, "Second"), issue(7, "Third")],
+            vec![],
+        );
+        state.mode = Mode::Form(Box::new(FormState {
+            editing: Some(42),
+            ..FormState::with_title_body("Pending edit", "")
+        }));
+        state.begin_pending(PendingOperation::EditIssue);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::EditIssue,
+                issues: vec![
+                    issue(42, "Second, updated"),
+                    issue(1, "First"),
+                    issue(7, "Third"),
+                ],
+                action_elapsed: Duration::from_millis(950),
+                refresh_elapsed: Duration::from_millis(75),
+                target_issue: Some(42),
+            }),
+        );
+        assert_eq!(state.selected_issue().map(|i| i.number), Some(42));
     }
 
     #[test]
@@ -1333,6 +1375,7 @@ mod tests {
                 issues: vec![remaining.clone()],
                 action_elapsed: Duration::from_millis(400),
                 refresh_elapsed: Duration::from_millis(30),
+                target_issue: None,
             }),
         );
         assert_eq!(state.issues, vec![remaining]);
