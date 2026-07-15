@@ -171,6 +171,11 @@ fn inset(area: Rect, margin: u16) -> Rect {
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
+    if let Mode::LittleCreate(buf) = &state.mode {
+        draw_little_create(frame, buf, state);
+        return;
+    }
+
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(ACCENT);
     let title_text = state
@@ -201,7 +206,6 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
         Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
-        Mode::LittleCreate(buf) => draw_little_create(frame, inner, buf, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -476,17 +480,42 @@ fn secondary(selected: bool) -> Style {
     }
 }
 
-fn draw_little_create(frame: &mut Frame, area: Rect, buf: &str, state: &AppState) {
+fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
+    let inset_area = inset(frame.area(), POPUP_MARGIN);
+    let area = Rect {
+        x: inset_area.x,
+        y: frame.area().y,
+        width: inset_area.width,
+        height: 5,
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([Constraint::Length(3), Constraint::Length(1), Constraint::Length(1)])
         .split(area);
+
+    let border_style = Style::default().fg(ACCENT);
+    let title_text = match state.repo_name_with_owner.as_deref() {
+        Some(repo) => format!("New issue in {repo}"),
+        None => "New issue".to_string(),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(ACCENT))
-        .title("New issue title (Enter to create, Esc to cancel)");
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Line::from(vec![
+            Span::styled("─", border_style),
+            Span::styled(
+                format!("‹ {title_text} ›"),
+                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
+            ),
+        ]));
     frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
-    draw_toast(frame, chunks[1], state);
+
+    frame.render_widget(
+        Paragraph::new(styled_hint("enter create · esc cancel")),
+        chunks[1],
+    );
+    draw_toast(frame, chunks[2], state);
 }
 
 fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
@@ -1674,25 +1703,76 @@ mod tests {
     }
 
     #[test]
-    fn little_create_border_uses_accent_color() {
+    fn little_create_shows_new_issue_title_with_repo_when_known() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/issue-browser".to_string());
+        state.enter_little_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue in jeffdt/issue-browser"),
+            "title should include the known repo, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn little_create_falls_back_to_plain_title_when_repo_unknown() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue"),
+            "title should fall back to a plain label, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("New issue in"),
+            "title should not claim a repo it doesn't have, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn little_create_border_is_rounded_and_accent_colored() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        let (x, y) =
-            find_in_buffer(&buf, "New issue title").expect("little-create title should render");
-        // The title sits inside the block's top border row; walk left to the border's leading corner/edge.
+        let (x, y) = find_in_buffer(&buf, "New issue").expect("little-create title should render");
         let mut found = false;
         for cx in 0..=x {
             let cell = &buf[(cx, y)];
-            if cell.symbol() == "┌" || cell.symbol() == "─" {
+            if cell.symbol() == "╭" || cell.symbol() == "─" {
                 assert_eq!(cell.style().fg, Some(Color::Cyan));
                 found = true;
             }
         }
         assert!(
             found,
-            "expected the little-create block's top border to render"
+            "expected the little-create block's rounded top border to render"
         );
+    }
+
+    #[test]
+    fn little_create_box_is_five_rows_tall_regardless_of_popup_height() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        let buf = render_buffer(&state);
+        // TestBackend is 80x24; the box+hint+toast area must not stretch past 5 rows.
+        for y in 5..buf.area.height {
+            for x in 0..buf.area.width {
+                assert_eq!(
+                    buf[(x, y)].symbol(),
+                    " ",
+                    "row {y} col {x} should be blank below the 5-row quick-create area, found {:?}",
+                    buf[(x, y)].symbol()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn little_create_hint_row_shows_enter_and_esc() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("enter create · esc cancel"));
     }
 
     #[test]
