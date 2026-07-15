@@ -481,12 +481,10 @@ fn secondary(selected: bool) -> Style {
 }
 
 fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
-    let inset_area = inset(frame.area(), POPUP_MARGIN);
+    let area = inset(frame.area(), POPUP_MARGIN);
     let area = Rect {
-        x: inset_area.x,
-        y: frame.area().y,
-        width: inset_area.width,
-        height: 5,
+        height: area.height.min(5),
+        ..area
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1755,7 +1753,8 @@ mod tests {
         state.enter_little_create();
         let buf = render_buffer(&state);
         // TestBackend is 80x24; the box+hint+toast area must not stretch past 5 rows.
-        for y in 5..buf.area.height {
+        // With 2-row top margin, content occupies rows 2-6 (5 rows), leaving rows 7+ blank.
+        for y in 7..buf.area.height {
             for x in 0..buf.area.width {
                 assert_eq!(
                     buf[(x, y)].symbol(),
@@ -1773,6 +1772,23 @@ mod tests {
         state.enter_little_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("enter create · esc cancel"));
+    }
+
+    #[test]
+    fn little_create_respects_top_margin() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        let buf = render_buffer(&state);
+        for y in 0..2 {
+            for x in 0..buf.area.width {
+                assert_eq!(
+                    buf[(x, y)].symbol(),
+                    " ",
+                    "row {y} col {x} should be blank in the top margin, found {:?}",
+                    buf[(x, y)].symbol()
+                );
+            }
+        }
     }
 
     #[test]
