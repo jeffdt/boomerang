@@ -241,8 +241,9 @@ fn run_capture<S: IssueSource>(source: &S) -> anyhow::Result<()> {
 
     let mut state = AppState::new(vec![], vec![]);
     state.enter_little_create();
+    let repo_name_rx = Some(spawn_repo_name_fetch(source.clone()));
 
-    let result = capture_loop(&mut terminal, &mut state, source);
+    let result = capture_loop(&mut terminal, &mut state, source, repo_name_rx);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -254,10 +255,16 @@ fn capture_loop<S: IssueSource>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
     source: &S,
+    mut repo_name_rx: Option<RepoNameReceiver>,
 ) -> anyhow::Result<()> {
     let mut create_rx: Option<CreateReceiver> = None;
 
     loop {
+        if let Some(result) = poll_repo_name(&repo_name_rx) {
+            repo_name_rx = None;
+            apply_repo_name_result(state, result);
+        }
+
         if let Some(result) = poll_create(&create_rx) {
             create_rx = None;
             match result {
@@ -323,6 +330,32 @@ fn poll_labels(rx: &Option<LabelsReceiver>) -> Option<anyhow::Result<Vec<Label>>
         Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
             "label fetch worker stopped before returning a result"
         ))),
+    }
+}
+
+type RepoNameReceiver = Receiver<anyhow::Result<String>>;
+
+fn spawn_repo_name_fetch<S: IssueSource>(source: S) -> RepoNameReceiver {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(source.repo_name());
+    });
+    rx
+}
+
+fn poll_repo_name(rx: &Option<RepoNameReceiver>) -> Option<anyhow::Result<String>> {
+    match rx.as_ref()?.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+            "repo name fetch worker stopped before returning a result"
+        ))),
+    }
+}
+
+fn apply_repo_name_result(state: &mut AppState, result: anyhow::Result<String>) {
+    if let Ok(name) = result {
+        state.repo_name_with_owner = Some(name);
     }
 }
 
@@ -1262,6 +1295,23 @@ mod tests {
                 elapsed: Duration::from_millis(10),
             }),
         );
+        assert_eq!(state.repo_name_with_owner, None);
+    }
+
+    #[test]
+    fn apply_repo_name_result_sets_repo_name_on_success() {
+        let mut state = AppState::new(vec![], vec![]);
+        apply_repo_name_result(&mut state, Ok("jeffdt/issue-browser".to_string()));
+        assert_eq!(
+            state.repo_name_with_owner,
+            Some("jeffdt/issue-browser".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_repo_name_result_leaves_repo_name_none_on_failure() {
+        let mut state = AppState::new(vec![], vec![]);
+        apply_repo_name_result(&mut state, Err(anyhow::anyhow!("gh not found")));
         assert_eq!(state.repo_name_with_owner, None);
     }
 
