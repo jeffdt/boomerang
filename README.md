@@ -31,11 +31,12 @@ view; adjust `-w`/`-h` to taste.
 
 For instant title-only capture without opening the full list (see
 `--capture` under Quick capture below), bind a second key to a much shorter
-popup — the quick-create prompt is a fixed 5 rows tall, so a tall popup
-just leaves empty space beneath it:
+popup. Unlike the rest of the app, the quick-create prompt is a deliberately
+distinct compact screen: it sits flush at the top with no margin and is a
+fixed 5 rows tall, so the popup itself only needs to be exactly that tall:
 
 ```tmux
-bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 9 "exec issue-browser --capture"
+bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 5 "exec issue-browser --capture"
 ```
 
 ## How it works
