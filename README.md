@@ -29,6 +29,15 @@ Reload tmux and press `prefix + i`. Popup dimensions are a starting point,
 not fixed — the create/edit form may want more vertical room than the list
 view; adjust `-w`/`-h` to taste.
 
+For instant title-only capture without opening the full list (see
+`--capture` under Quick capture below), bind a second key to a much shorter
+popup — the quick-create prompt is a fixed 5 rows tall, so a tall popup
+just leaves empty space beneath it:
+
+```tmux
+bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 9 "exec issue-browser --capture"
+```
+
 ## How it works
 
 - Auto-detects the repo from the current directory via `gh`'s own git-remote
@@ -62,6 +71,16 @@ view; adjust `-w`/`-h` to taste.
 Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
 Title → Body → submit (submitting from the Labels field).
+
+## Quick capture
+
+`issue-browser --capture` skips the list view entirely and opens straight to
+the title-only quick-create prompt (`Enter` to create, `Esc` to cancel),
+then exits — handy bound to its own key (see the `bind I` example above) for
+firing off an issue without leaving your current pane's context. The prompt
+shows the repo it'll create the issue in once `gh repo view` resolves in the
+background. `issue-browser --capture-full` does the same but opens the full
+title/body/label form instead.
 
 ## Diagnostics
 
