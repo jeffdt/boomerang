@@ -481,10 +481,16 @@ fn secondary(selected: bool) -> Style {
 }
 
 fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
-    let area = inset(frame.area(), POPUP_MARGIN);
+    // Deliberately flush at the top, unlike every other screen: this is a
+    // separate, intentionally distinct compact prompt (issue #46 follow-up),
+    // not meant to visually match the rest of the app's chrome. Only left/
+    // right margin comes from inset(); y/height are computed directly from
+    // the frame so the popup can be sized to content with no wasted margin.
+    let inset_area = inset(frame.area(), POPUP_MARGIN);
     let area = Rect {
-        height: area.height.min(5),
-        ..area
+        y: frame.area().y,
+        height: frame.area().height.min(5),
+        ..inset_area
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1753,8 +1759,8 @@ mod tests {
         state.enter_little_create();
         let buf = render_buffer(&state);
         // TestBackend is 80x24; the box+hint+toast area must not stretch past 5 rows.
-        // With 2-row top margin, content occupies rows 2-6 (5 rows), leaving rows 7+ blank.
-        for y in 7..buf.area.height {
+        // No top margin: content occupies rows 0-4 (5 rows), leaving rows 5+ blank.
+        for y in 5..buf.area.height {
             for x in 0..buf.area.width {
                 assert_eq!(
                     buf[(x, y)].symbol(),
@@ -1775,20 +1781,17 @@ mod tests {
     }
 
     #[test]
-    fn little_create_respects_top_margin() {
+    fn little_create_sits_flush_at_the_top_with_no_margin() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        for y in 0..2 {
-            for x in 0..buf.area.width {
-                assert_eq!(
-                    buf[(x, y)].symbol(),
-                    " ",
-                    "row {y} col {x} should be blank in the top margin, found {:?}",
-                    buf[(x, y)].symbol()
-                );
-            }
-        }
+        let (_, y) =
+            find_in_buffer(&buf, "New issue").expect("little-create title should render");
+        assert_eq!(
+            y, 0,
+            "quick-create is a deliberately distinct compact screen and should sit flush \
+             at the top with no margin row above it, unlike the rest of the app"
+        );
     }
 
     #[test]
