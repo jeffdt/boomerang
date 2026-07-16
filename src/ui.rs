@@ -489,12 +489,12 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
     let inset_area = inset(frame.area(), POPUP_MARGIN);
     let area = Rect {
         y: frame.area().y,
-        height: frame.area().height.min(5),
+        height: frame.area().height.min(4),
         ..inset_area
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([Constraint::Length(3), Constraint::Length(1)])
         .split(area);
 
     let border_style = Style::default().fg(ACCENT);
@@ -515,11 +515,21 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         ]));
     frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
 
+    // The hint is only ever actionable when idle (capture_loop ignores keys
+    // other than quit while pending), so it's safe to swap it out entirely
+    // for the pending/status message rather than reserving a second row —
+    // same pattern draw_shortcuts_hint already uses for the main list.
+    let footer_message = state
+        .pending_message()
+        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()));
+    let footer_line = match footer_message {
+        Some(msg) => Line::from(msg),
+        None => styled_hint("enter create · esc cancel"),
+    };
     frame.render_widget(
-        Paragraph::new(styled_hint("enter create · esc cancel")),
+        Paragraph::new(footer_line).wrap(Wrap { trim: false }),
         chunks[1],
     );
-    draw_toast(frame, chunks[2], state);
 }
 
 fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, state: &AppState) {
@@ -1754,18 +1764,19 @@ mod tests {
     }
 
     #[test]
-    fn little_create_box_is_five_rows_tall_regardless_of_popup_height() {
+    fn little_create_box_is_four_rows_tall_regardless_of_popup_height() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        // TestBackend is 80x24; the box+hint+toast area must not stretch past 5 rows.
-        // No top margin: content occupies rows 0-4 (5 rows), leaving rows 5+ blank.
-        for y in 5..buf.area.height {
+        // TestBackend is 80x24; the box+footer area must not stretch past 4 rows.
+        // No top margin, and the hint/toast rows are merged into one footer row:
+        // content occupies rows 0-3 (4 rows), leaving rows 4+ blank.
+        for y in 4..buf.area.height {
             for x in 0..buf.area.width {
                 assert_eq!(
                     buf[(x, y)].symbol(),
                     " ",
-                    "row {y} col {x} should be blank below the 5-row quick-create area, found {:?}",
+                    "row {y} col {x} should be blank below the 4-row quick-create area, found {:?}",
                     buf[(x, y)].symbol()
                 );
             }
@@ -1778,6 +1789,22 @@ mod tests {
         state.enter_little_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("enter create · esc cancel"));
+    }
+
+    #[test]
+    fn little_create_footer_shows_pending_message_instead_of_hint() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.begin_pending(crate::model::PendingOperation::CreateIssue);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Creating issue"),
+            "footer should show the pending message, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("enter create"),
+            "footer should not show the hint while a message is pending, got: {rendered:?}"
+        );
     }
 
     #[test]
