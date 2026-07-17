@@ -101,6 +101,24 @@ pub enum Mode {
     Form(Box<FormState>),
     ConfirmClose(u32),
     ConfirmDiscard(Box<Mode>),
+    Settings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsRow {
+    ExitOnCopyYank,
+    ZebraStriping,
+}
+
+impl SettingsRow {
+    pub const ALL: [SettingsRow; 2] = [SettingsRow::ExitOnCopyYank, SettingsRow::ZebraStriping];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
+            SettingsRow::ZebraStriping => "Zebra striping",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -211,6 +229,9 @@ pub struct AppState {
     pub pending: Option<PendingState>,
     pub pane_open: bool,
     pub repo_name_with_owner: Option<String>,
+    pub exit_on_copy_yank: bool,
+    pub zebra_striping: bool,
+    pub settings_cursor: usize,
 }
 
 impl AppState {
@@ -228,6 +249,9 @@ impl AppState {
             pending: None,
             pane_open: true,
             repo_name_with_owner: None,
+            exit_on_copy_yank: false,
+            zebra_striping: true,
+            settings_cursor: 0,
         }
     }
 
@@ -257,6 +281,28 @@ impl AppState {
 
     pub fn find_issue(&self, number: u32) -> Option<&Issue> {
         self.issues.iter().find(|i| i.number == number)
+    }
+
+    pub fn enter_settings(&mut self) {
+        self.mode = Mode::Settings;
+        self.settings_cursor = 0;
+    }
+
+    pub fn exit_settings(&mut self) {
+        self.mode = Mode::List;
+    }
+
+    pub fn settings_move_cursor(&mut self, delta: i32) {
+        let len = SettingsRow::ALL.len() as i32;
+        let next = (self.settings_cursor as i32 + delta).rem_euclid(len);
+        self.settings_cursor = next as usize;
+    }
+
+    pub fn settings_toggle(&mut self) {
+        match SettingsRow::ALL[self.settings_cursor] {
+            SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
+            SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
+        }
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
@@ -1506,5 +1552,63 @@ mod tests {
     fn repo_name_with_owner_defaults_to_none() {
         let state = AppState::new(vec![], vec![]);
         assert_eq!(state.repo_name_with_owner, None);
+    }
+
+    #[test]
+    fn new_app_state_defaults_exit_on_copy_yank_off_and_zebra_striping_on() {
+        let state = AppState::new(vec![], vec![]);
+        assert!(!state.exit_on_copy_yank);
+        assert!(state.zebra_striping);
+    }
+
+    #[test]
+    fn enter_and_exit_settings_toggles_mode() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        assert_eq!(state.mode, Mode::Settings);
+        assert_eq!(state.settings_cursor, 0);
+        state.exit_settings();
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn settings_move_cursor_wraps_between_first_and_last_row() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert_eq!(state.settings_cursor, 0);
+        state.settings_move_cursor(-1);
+        assert_eq!(
+            state.settings_cursor, 1,
+            "moving up from the top row should wrap to the bottom row"
+        );
+        state.settings_move_cursor(1);
+        assert_eq!(
+            state.settings_cursor, 0,
+            "moving down from the bottom row should wrap to the top row"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_flips_exit_on_copy_yank_independently() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert!(!state.exit_on_copy_yank);
+        state.settings_toggle();
+        assert!(state.exit_on_copy_yank);
+        assert!(
+            state.zebra_striping,
+            "toggling the first row must not affect the second"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_flips_zebra_striping_independently() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert!(state.zebra_striping);
+        state.settings_move_cursor(1);
+        state.settings_toggle();
+        assert!(!state.zebra_striping);
+        assert!(
+            !state.exit_on_copy_yank,
+            "toggling the second row must not affect the first"
+        );
     }
 }

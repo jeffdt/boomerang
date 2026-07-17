@@ -752,6 +752,7 @@ fn event_loop<S: IssueSource>(
                     ConfirmInput::No => state.confirm_discard_no(),
                     ConfirmInput::None => {}
                 },
+                Mode::Settings => {}
             }
         }
     }
