@@ -70,11 +70,23 @@ bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec issue-brow
 | `y` | Copy `#123` to the clipboard |
 | `Y` (shift+y) | Copy a markdown link to the clipboard |
 | `Ctrl-y` | Copy the plain URL to the clipboard |
+| `,` | Open Settings |
 | `q` / `Esc` | Quit |
 
 Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
 Title → Body → submit (submitting from the Labels field).
+
+## Settings
+
+Press `,` to open Settings, a small view of picker-wide preferences. `j`/`k`
+(or `↓`/`↑`) moves between rows, `Enter`/`Space`/`h`/`l` toggles the selected
+row, and `q`/`Esc` returns to the list.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Exit popup after copy/yank | Off | When on, a successful `y`/`Y`/`Ctrl-y` copy closes the popup immediately instead of staying open. |
+| Zebra striping | On | Dims every other row in the issue list to make scanning easier. Uses your terminal's own faint/dim rendering rather than a fixed color, so it adapts to your terminal theme. |
 
 ## Quick capture
 
