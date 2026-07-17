@@ -310,10 +310,21 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             .saturating_sub(labels_width);
         let title = truncate_title(&issue.title, max_title_width);
         let selected = row == state.cursor;
+        // DIM is a render intensity modifier (SGR "faint"), unrelated to the
+        // `DIM` *color* constant above used for de-emphasized text — this
+        // never sets a background, so it can't collide with SEL_BG the way
+        // an alternating background color would.
+        let dim_row = state.zebra_striping && !selected && row % 2 == 1;
+        let mut number_style = secondary(selected);
+        let mut title_style = Style::default();
+        if dim_row {
+            number_style = number_style.add_modifier(Modifier::DIM);
+            title_style = title_style.add_modifier(Modifier::DIM);
+        }
         let left_width = number_col.chars().count() + title.chars().count();
         let mut spans = vec![
-            Span::styled(number_col, secondary(selected)),
-            Span::raw(title),
+            Span::styled(number_col, number_style),
+            Span::styled(title, title_style),
         ];
         if !label_spans.is_empty() {
             let pad = available_width
@@ -1950,5 +1961,65 @@ mod tests {
             }
         }
         assert!(found, "expected the confirm dialog's top border to render");
+    }
+
+    #[test]
+    fn zebra_striping_dims_odd_rows_but_not_the_first_row() {
+        let mut state = AppState::new(
+            vec![issue(1, "Row zero"), issue(2, "Row one"), issue(3, "Row two")],
+            vec![],
+        );
+        state.zebra_striping = true;
+        state.cursor = usize::MAX; // keep every row unselected
+        let buf = render_buffer(&state);
+
+        let (x0, y0) = find_in_buffer(&buf, "Row zero").expect("row 0 should render");
+        assert!(!buf[(x0, y0)].style().add_modifier.contains(Modifier::DIM));
+
+        let (x1, y1) = find_in_buffer(&buf, "Row one").expect("row 1 should render");
+        assert!(buf[(x1, y1)].style().add_modifier.contains(Modifier::DIM));
+
+        let (x2, y2) = find_in_buffer(&buf, "Row two").expect("row 2 should render");
+        assert!(!buf[(x2, y2)].style().add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn zebra_striping_off_dims_nothing() {
+        let mut state = AppState::new(
+            vec![issue(1, "Row zero"), issue(2, "Row one")],
+            vec![],
+        );
+        state.zebra_striping = false;
+        state.cursor = usize::MAX;
+        let buf = render_buffer(&state);
+        let (x1, y1) = find_in_buffer(&buf, "Row one").expect("row 1 should render");
+        assert!(!buf[(x1, y1)].style().add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn zebra_striping_never_dims_the_selected_row() {
+        let mut state = AppState::new(
+            vec![issue(1, "Row zero"), issue(2, "Row one")],
+            vec![],
+        );
+        state.zebra_striping = true;
+        state.cursor = 1; // select the row that would otherwise be dimmed
+        let buf = render_buffer(&state);
+        let (x1, y1) = find_in_buffer(&buf, "Row one").expect("row 1 should render");
+        assert!(!buf[(x1, y1)].style().add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn zebra_striping_never_dims_label_badges() {
+        let mut state = AppState::new(
+            vec![issue(1, "Row zero"), issue(2, "Row one")],
+            labels(&["bug"]),
+        );
+        state.issues[1].labels = labels(&["bug"]);
+        state.zebra_striping = true;
+        state.cursor = usize::MAX;
+        let buf = render_buffer(&state);
+        let (bx, by) = find_in_buffer(&buf, "bug").expect("label badge should render on row 1");
+        assert!(!buf[(bx, by)].style().add_modifier.contains(Modifier::DIM));
     }
 }
