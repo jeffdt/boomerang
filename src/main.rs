@@ -1,3 +1,4 @@
+mod config;
 mod copy;
 mod diagnostics;
 mod gh;
