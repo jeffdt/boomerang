@@ -658,6 +658,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::CopyUrl => copy_selected(state, copy::format_url),
                     ListInput::OpenInBrowser => open_in_browser(state),
                     ListInput::Refresh => start_refresh(state, &mut refresh_rx, (*source).clone()),
+                    ListInput::EnterSettings => {}
                     ListInput::Quit => return Ok(()),
                     ListInput::None => {}
                 },

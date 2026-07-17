@@ -1,5 +1,5 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, Mode};
+use crate::model::{AppState, FormField, Label, Mode, SettingsRow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -39,6 +39,7 @@ pub enum ListInput {
     CopyUrl,
     OpenInBrowser,
     Refresh,
+    EnterSettings,
     Quit,
     None,
 }
@@ -56,6 +57,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('r') => ListInput::Refresh,
+        KeyCode::Char(',') => ListInput::EnterSettings,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -157,6 +159,27 @@ pub fn map_confirm_key(key: KeyEvent) -> ConfirmInput {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsInput {
+    Up,
+    Down,
+    Toggle,
+    Exit,
+    None,
+}
+
+pub fn map_settings_key(key: KeyEvent) -> SettingsInput {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => SettingsInput::Down,
+        KeyCode::Char('k') | KeyCode::Up => SettingsInput::Up,
+        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('h') | KeyCode::Char('l') => {
+            SettingsInput::Toggle
+        }
+        KeyCode::Char('q') | KeyCode::Esc => SettingsInput::Exit,
+        _ => SettingsInput::None,
+    }
+}
+
 /// Shrink `area` by `margin` cells on every side, reducing the margin toward
 /// zero rather than panicking if the area is too small to inset cleanly.
 fn inset(area: Rect, margin: u16) -> Rect {
@@ -206,6 +229,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
         Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
+        Mode::Settings => draw_settings(frame, inner, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -390,7 +414,8 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         match &state.mode {
             Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
-            _ => "j/k move · h hide pane · / search · a state · c/C create · enter/e edit · x close · o open · y/Y/^y copy · q quit".to_string(),
+            Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
+            _ => "j/k move · h hide pane · / search · a state · c/C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
         }
     };
     frame.render_widget(
@@ -661,6 +686,46 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
     );
 }
 
+fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let list_width = chunks[0].width as usize;
+    let items: Vec<ListItem> = SettingsRow::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let selected = i == state.settings_cursor;
+            let value = match row {
+                SettingsRow::ExitOnCopyYank => state.exit_on_copy_yank,
+                SettingsRow::ZebraStriping => state.zebra_striping,
+            };
+            let value_text = if value { "On" } else { "Off" };
+            let label = row.label();
+            let pad = list_width
+                .saturating_sub(label.chars().count())
+                .saturating_sub(value_text.chars().count());
+            let line = format!("{label}{}{value_text}", " ".repeat(pad));
+            let style = if selected {
+                Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(line).style(style)
+        })
+        .collect();
+    frame.render_widget(List::new(items), chunks[0]);
+
+    draw_shortcuts_hint(frame, chunks[1], state);
+    draw_toast(frame, chunks[2], state);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,6 +946,55 @@ mod tests {
     fn right_and_left_are_now_unbound() {
         assert_eq!(map_list_key(key(KeyCode::Right)), ListInput::None);
         assert_eq!(map_list_key(key(KeyCode::Left)), ListInput::None);
+    }
+
+    #[test]
+    fn comma_key_maps_to_enter_settings() {
+        assert_eq!(map_list_key(key(KeyCode::Char(','))), ListInput::EnterSettings);
+    }
+
+    #[test]
+    fn map_settings_key_covers_movement_toggle_and_exit() {
+        assert_eq!(map_settings_key(key(KeyCode::Char('j'))), SettingsInput::Down);
+        assert_eq!(map_settings_key(key(KeyCode::Down)), SettingsInput::Down);
+        assert_eq!(map_settings_key(key(KeyCode::Char('k'))), SettingsInput::Up);
+        assert_eq!(map_settings_key(key(KeyCode::Up)), SettingsInput::Up);
+        assert_eq!(map_settings_key(key(KeyCode::Enter)), SettingsInput::Toggle);
+        assert_eq!(map_settings_key(key(KeyCode::Char(' '))), SettingsInput::Toggle);
+        assert_eq!(map_settings_key(key(KeyCode::Char('h'))), SettingsInput::Toggle);
+        assert_eq!(map_settings_key(key(KeyCode::Char('l'))), SettingsInput::Toggle);
+        assert_eq!(map_settings_key(key(KeyCode::Char('q'))), SettingsInput::Exit);
+        assert_eq!(map_settings_key(key(KeyCode::Esc)), SettingsInput::Exit);
+        assert_eq!(map_settings_key(key(KeyCode::Char('z'))), SettingsInput::None);
+    }
+
+    #[test]
+    fn draw_settings_shows_both_rows_with_current_values() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Exit popup after copy/yank"));
+        assert!(rendered.contains("Zebra striping"));
+    }
+
+    #[test]
+    fn draw_settings_cursor_row_uses_selected_style() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "Exit popup after copy/yank")
+            .expect("first settings row should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.bg, Some(SEL_BG));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn draw_settings_footer_hint_shows_toggle_controls() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("enter/space toggle"));
     }
 
     use crate::gh::StateFilter;
