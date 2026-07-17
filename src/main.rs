@@ -21,7 +21,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use ui::{
     map_confirm_key, map_form_key, map_list_key, map_little_create_key, map_search_key,
-    ConfirmInput, FormInput, ListInput, LittleCreateInput, SearchInput,
+    map_settings_key, ConfirmInput, FormInput, ListInput, LittleCreateInput, SearchInput,
+    SettingsInput,
 };
 
 const HELP: &str = "\
@@ -159,10 +160,18 @@ fn main() -> anyhow::Result<()> {
 
     let source = GhCliSource::new();
     let mut state = AppState::loading();
-    run_ui(&mut state, &source)
+    let config_path = config::config_path();
+    let loaded_config = config::Config::load_from(&config_path);
+    state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
+    state.zebra_striping = loaded_config.zebra_striping;
+    run_ui(&mut state, &source, &config_path)
 }
 
-fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()> {
+fn run_ui<S: IssueSource>(
+    state: &mut AppState,
+    source: &S,
+    config_path: &std::path::Path,
+) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
     execute!(out, EnterAlternateScreen)?;
@@ -170,7 +179,7 @@ fn run_ui<S: IssueSource>(state: &mut AppState, source: &S) -> anyhow::Result<()
     diagnostics::log_event("terminal_ready");
 
     let initial_load_rx = spawn_initial_load(source.clone());
-    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx));
+    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx), config_path);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -588,6 +597,7 @@ fn event_loop<S: IssueSource>(
     state: &mut AppState,
     source: &S,
     mut initial_load_rx: Option<InitialLoadReceiver>,
+    config_path: &std::path::Path,
 ) -> anyhow::Result<()> {
     let mut mutation_rx: Option<MutationReceiver> = None;
     let mut mutation_draft: Option<MutationDraft> = None;
@@ -653,12 +663,24 @@ fn event_loop<S: IssueSource>(
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
-                    ListInput::CopyReference => copy_selected(state, copy::format_reference),
-                    ListInput::CopyMarkdownLink => copy_selected(state, copy::format_markdown_link),
-                    ListInput::CopyUrl => copy_selected(state, copy::format_url),
+                    ListInput::CopyReference => {
+                        if copy_selected(state, copy::format_reference) {
+                            return Ok(());
+                        }
+                    }
+                    ListInput::CopyMarkdownLink => {
+                        if copy_selected(state, copy::format_markdown_link) {
+                            return Ok(());
+                        }
+                    }
+                    ListInput::CopyUrl => {
+                        if copy_selected(state, copy::format_url) {
+                            return Ok(());
+                        }
+                    }
                     ListInput::OpenInBrowser => open_in_browser(state),
                     ListInput::Refresh => start_refresh(state, &mut refresh_rx, (*source).clone()),
-                    ListInput::EnterSettings => {}
+                    ListInput::EnterSettings => state.enter_settings(),
                     ListInput::Quit => return Ok(()),
                     ListInput::None => {}
                 },
@@ -753,7 +775,20 @@ fn event_loop<S: IssueSource>(
                     ConfirmInput::No => state.confirm_discard_no(),
                     ConfirmInput::None => {}
                 },
-                Mode::Settings => {}
+                Mode::Settings => match map_settings_key(key) {
+                    SettingsInput::Down => state.settings_move_cursor(1),
+                    SettingsInput::Up => state.settings_move_cursor(-1),
+                    SettingsInput::Toggle => {
+                        state.settings_toggle();
+                        let cfg = config::Config {
+                            exit_on_copy_yank: state.exit_on_copy_yank,
+                            zebra_striping: state.zebra_striping,
+                        };
+                        let _ = cfg.save_to(config_path);
+                    }
+                    SettingsInput::Exit => state.exit_settings(),
+                    SettingsInput::None => {}
+                },
             }
         }
     }
@@ -1100,14 +1135,18 @@ fn probe_auth_status() -> bool {
         .unwrap_or(false)
 }
 
-fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String) {
+fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String) -> bool {
     if let Some(issue) = state.selected_issue() {
         let text = format(issue);
         match copy::copy_to_clipboard(&text) {
-            Ok(()) => state.set_status(format!("copied: {text}")),
+            Ok(()) => {
+                state.set_status(format!("copied: {text}"));
+                return state.exit_on_copy_yank;
+            }
             Err(e) => state.set_status(format!("copy failed: {e}")),
         }
     }
+    false
 }
 
 fn open_in_browser(state: &mut AppState) {
@@ -1135,6 +1174,27 @@ mod tests {
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
         }
+    }
+
+    #[test]
+    fn copy_selected_returns_true_when_exit_on_copy_yank_is_set() {
+        let mut state = AppState::new(vec![issue(1, "test")], vec![]);
+        state.exit_on_copy_yank = true;
+        assert!(copy_selected(&mut state, copy::format_reference));
+    }
+
+    #[test]
+    fn copy_selected_returns_false_when_exit_on_copy_yank_is_off() {
+        let mut state = AppState::new(vec![issue(1, "test")], vec![]);
+        state.exit_on_copy_yank = false;
+        assert!(!copy_selected(&mut state, copy::format_reference));
+    }
+
+    #[test]
+    fn copy_selected_returns_false_with_no_selected_issue_even_if_setting_is_on() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.exit_on_copy_yank = true;
+        assert!(!copy_selected(&mut state, copy::format_reference));
     }
 
     fn args(items: &[&str]) -> Vec<String> {
