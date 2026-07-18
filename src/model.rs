@@ -102,6 +102,30 @@ pub enum Mode {
     ConfirmClose(u32),
     ConfirmDiscard(Box<Mode>),
     Settings,
+    RepoPicker(Box<RepoPickerState>),
+}
+
+/// State for the repo picker (issue #20): type `owner/repo` or a github.com
+/// URL directly, or move `highlight` through `recent` (most-recent-first
+/// history from config) to autofill `input` from a prior target. `filtered`
+/// holds indices into `recent`, fuzzy-ranked against `input` the same way
+/// the issue search box ranks issue titles.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepoPickerState {
+    pub input: String,
+    pub recent: Vec<String>,
+    pub filtered: Vec<usize>,
+    pub highlight: usize,
+    pub error: Option<String>,
+    /// Whether Esc can back out to a prior list view. False only when the
+    /// picker *is* the entire startup screen (launched outside a git repo
+    /// with no repo passed on the CLI), in which case there's no list behind
+    /// it to return to and cancelling should quit instead. Decided once at
+    /// entry, deliberately not derived from `repo_name_with_owner`: that's
+    /// just a cosmetic display-name fetch that can still be `None` even when
+    /// a real repo context exists (e.g. mid-switch, before the fetch lands,
+    /// or if it fails while the issue list itself loaded fine).
+    pub can_cancel: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,6 +328,99 @@ impl AppState {
         match SettingsRow::ALL[self.settings_cursor] {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
+        }
+    }
+
+    pub fn enter_repo_picker(&mut self, recent: Vec<String>, can_cancel: bool) {
+        let filtered: Vec<usize> = (0..recent.len()).collect();
+        self.mode = Mode::RepoPicker(Box::new(RepoPickerState {
+            input: String::new(),
+            recent,
+            filtered,
+            highlight: 0,
+            error: None,
+            can_cancel,
+        }));
+    }
+
+    fn recompute_repo_filter(picker: &mut RepoPickerState) {
+        if picker.input.trim().is_empty() {
+            picker.filtered = (0..picker.recent.len()).collect();
+        } else {
+            picker.filtered = search::rank(&picker.input, &picker.recent);
+        }
+        picker.highlight = 0;
+    }
+
+    pub fn repo_picker_push(&mut self, c: char) {
+        if let Mode::RepoPicker(picker) = &mut self.mode {
+            picker.input.push(c);
+            picker.error = None;
+            Self::recompute_repo_filter(picker);
+        }
+    }
+
+    pub fn repo_picker_backspace(&mut self) {
+        if let Mode::RepoPicker(picker) = &mut self.mode {
+            picker.input.pop();
+            picker.error = None;
+            Self::recompute_repo_filter(picker);
+        }
+    }
+
+    /// Move the highlighted recent-repo suggestion by `delta`, wrapping, and
+    /// copy it into `input` so Enter submits it immediately and it stays
+    /// editable before that.
+    pub fn repo_picker_move(&mut self, delta: isize) {
+        if let Mode::RepoPicker(picker) = &mut self.mode {
+            let len = picker.filtered.len();
+            if len == 0 {
+                return;
+            }
+            let current = picker.highlight as isize;
+            let next = (current + delta).rem_euclid(len as isize) as usize;
+            picker.highlight = next;
+            if let Some(&idx) = picker.filtered.get(next) {
+                picker.input = picker.recent[idx].clone();
+            }
+            picker.error = None;
+        }
+    }
+
+    /// Resolve the picker's current input into an `owner/repo` target. On
+    /// success the caller is responsible for switching the source's repo and
+    /// leaving picker mode; on failure an error message is recorded on the
+    /// picker state and the mode is left unchanged so the user can correct it.
+    pub fn repo_picker_submit(&mut self) -> Option<String> {
+        let Mode::RepoPicker(picker) = &mut self.mode else {
+            return None;
+        };
+        match crate::gh::parse_repo_spec(&picker.input) {
+            Some(repo) => Some(repo),
+            None => {
+                picker.error = Some(if picker.input.trim().is_empty() {
+                    "type a repo, e.g. owner/repo".to_string()
+                } else {
+                    format!("'{}' doesn't look like a repo", picker.input.trim())
+                });
+                None
+            }
+        }
+    }
+
+    /// Cancel out of the picker. Returns `true` when there's no prior repo to
+    /// fall back to (the picker was the entire startup screen because
+    /// boomerang launched outside a git repo with nothing else to show), in
+    /// which case the caller should quit rather than return to an empty list.
+    pub fn repo_picker_cancel(&mut self) -> bool {
+        let Mode::RepoPicker(picker) = &self.mode else {
+            return false;
+        };
+        if picker.can_cancel {
+            self.mode = Mode::List;
+            false
+        } else {
+            true
         }
     }
 
@@ -1731,6 +1848,150 @@ mod tests {
         assert!(
             !state.exit_on_copy_yank,
             "toggling the second row must not affect the first"
+        );
+    }
+
+    fn repo_picker_state(state: &AppState) -> &RepoPickerState {
+        match &state.mode {
+            Mode::RepoPicker(picker) => picker,
+            other => panic!("expected RepoPicker mode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enter_repo_picker_starts_with_empty_input_and_full_recent_list() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        let picker = repo_picker_state(&state);
+        assert_eq!(picker.input, "");
+        assert_eq!(picker.filtered, vec![0, 1]);
+        assert_eq!(picker.highlight, 0);
+        assert_eq!(picker.error, None);
+    }
+
+    #[test]
+    fn repo_picker_push_and_backspace_edit_input() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_push('a');
+        state.repo_picker_push('b');
+        assert_eq!(repo_picker_state(&state).input, "ab");
+        state.repo_picker_backspace();
+        assert_eq!(repo_picker_state(&state).input, "a");
+    }
+
+    #[test]
+    fn repo_picker_push_filters_recent_list_and_clears_error() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        repo_picker_state_mut(&mut state).error = Some("stale error".to_string());
+        for c in "rolo".chars() {
+            state.repo_picker_push(c);
+        }
+        let picker = repo_picker_state(&state);
+        assert_eq!(
+            picker.filtered,
+            vec![1],
+            "only jeffdt/rolomux matches 'rolo'"
+        );
+        assert_eq!(picker.error, None, "typing clears a stale error");
+    }
+
+    fn repo_picker_state_mut(state: &mut AppState) -> &mut RepoPickerState {
+        match &mut state.mode {
+            Mode::RepoPicker(picker) => picker,
+            other => panic!("expected RepoPicker mode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repo_picker_move_wraps_and_autofills_input_from_highlighted_entry() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_move(1);
+        assert_eq!(repo_picker_state(&state).input, "jeffdt/rolomux");
+        state.repo_picker_move(1);
+        assert_eq!(
+            repo_picker_state(&state).input,
+            "jeffdt/boomerang",
+            "moving past the end wraps back to the first entry"
+        );
+        state.repo_picker_move(-1);
+        assert_eq!(repo_picker_state(&state).input, "jeffdt/rolomux");
+    }
+
+    #[test]
+    fn repo_picker_move_is_a_no_op_with_no_recent_repos() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_move(1);
+        assert_eq!(repo_picker_state(&state).input, "");
+    }
+
+    #[test]
+    fn repo_picker_submit_accepts_a_valid_owner_repo() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_push('j');
+        for c in "effdt/rolomux".chars() {
+            state.repo_picker_push(c);
+        }
+        assert_eq!(
+            state.repo_picker_submit(),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn repo_picker_submit_rejects_invalid_input_and_records_an_error() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_push('x');
+        assert_eq!(state.repo_picker_submit(), None);
+        assert!(repo_picker_state(&state).error.is_some());
+        assert!(
+            matches!(state.mode, Mode::RepoPicker(_)),
+            "invalid input should leave the picker open for correction"
+        );
+    }
+
+    #[test]
+    fn repo_picker_submit_on_blank_input_reports_a_helpful_error() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        assert_eq!(state.repo_picker_submit(), None);
+        assert_eq!(
+            repo_picker_state(&state).error.as_deref(),
+            Some("type a repo, e.g. owner/repo")
+        );
+    }
+
+    #[test]
+    fn repo_picker_cancel_returns_to_list_when_entered_with_can_cancel() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        let should_quit = state.repo_picker_cancel();
+        assert!(!should_quit);
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn repo_picker_cancel_signals_quit_when_entered_without_can_cancel() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], false);
+        let should_quit = state.repo_picker_cancel();
+        assert!(
+            should_quit,
+            "with nothing to fall back to, cancel should tell the caller to quit"
         );
     }
 }

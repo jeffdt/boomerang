@@ -3,6 +3,7 @@ use crate::model::{Issue, IssueState, Label};
 use anyhow::{bail, Result};
 use serde::Deserialize;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,33 +192,60 @@ pub trait IssueSource: Clone + Send + 'static {
         remove_labels: &[String],
     ) -> Result<()>;
     fn close(&self, number: u32) -> Result<()>;
+    /// Retarget every subsequent `gh` call at `repo` (`owner/repo`), or back to
+    /// the current directory's repo when `None`. Shared across every clone of
+    /// this source, so a switch made from one thread (the UI thread handling
+    /// a repo-picker submission) is immediately visible to background worker
+    /// threads spawned afterward.
+    fn set_repo(&self, repo: Option<String>);
 }
 
-#[derive(Clone, Copy)]
-pub struct GhCliSource;
+#[derive(Clone)]
+pub struct GhCliSource {
+    repo: Arc<Mutex<Option<String>>>,
+}
 
 impl GhCliSource {
     pub fn new() -> Self {
-        GhCliSource
+        GhCliSource {
+            repo: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn with_repo(repo: String) -> Self {
+        GhCliSource {
+            repo: Arc::new(Mutex::new(Some(repo))),
+        }
+    }
+
+    fn current_repo(&self) -> Option<String> {
+        self.repo.lock().unwrap().clone()
     }
 
     fn run(&self, args: &[String]) -> Result<String> {
+        let mut full_args = Vec::with_capacity(args.len() + 2);
+        if let Some(repo) = self.current_repo() {
+            full_args.push("-R".to_string());
+            full_args.push(repo);
+        }
+        full_args.extend_from_slice(args);
+
         let started = Instant::now();
-        let output = match Command::new("gh").args(args).output() {
+        let output = match Command::new("gh").args(&full_args).output() {
             Ok(output) => output,
             Err(e) => {
-                diagnostics::log_gh_spawn_error(args, started.elapsed(), &e);
+                diagnostics::log_gh_spawn_error(&full_args, started.elapsed(), &e);
                 if e.kind() == std::io::ErrorKind::NotFound {
                     bail!("`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.");
                 }
                 return Err(e.into());
             }
         };
-        diagnostics::log_gh_result(args, started.elapsed(), &output);
+        diagnostics::log_gh_result(&full_args, started.elapsed(), &output);
         if !output.status.success() {
             bail!(
                 "gh {} failed: {}",
-                args.join(" "),
+                full_args.join(" "),
                 String::from_utf8_lossy(&output.stderr)
             );
         }
@@ -257,6 +285,50 @@ impl IssueSource for GhCliSource {
     fn close(&self, number: u32) -> Result<()> {
         self.run(&close_args(number)).map(|_| ())
     }
+
+    fn set_repo(&self, repo: Option<String>) {
+        *self.repo.lock().unwrap() = repo;
+    }
+}
+
+/// Parse user-typed text (from the repo picker or a CLI arg) into a
+/// `gh -R`-compatible `owner/repo` spec. Accepts a bare `owner/repo`, a
+/// `https://github.com/owner/repo[...]` URL (extra path segments like
+/// `/issues/20` are dropped), or a `git@github.com:owner/repo.git` SSH URL.
+/// Returns `None` for anything else, including non-github.com hosts.
+pub fn parse_repo_spec(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+    {
+        return owner_repo_from_path(rest);
+    }
+    if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        return owner_repo_from_path(rest);
+    }
+    owner_repo_from_path(trimmed)
+}
+
+fn owner_repo_from_path(path: &str) -> Option<String> {
+    let path = path.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = path.splitn(3, '/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    if !owner.chars().all(is_repo_char) || !repo.chars().all(is_repo_char) {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
+fn is_repo_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
 }
 
 #[cfg(test)]
@@ -407,5 +479,93 @@ mod tests {
     #[test]
     fn parse_repo_name_trims_trailing_newline() {
         assert_eq!(parse_repo_name("jeffdt/boomerang\n"), "jeffdt/boomerang");
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_bare_owner_slash_repo() {
+        assert_eq!(
+            parse_repo_spec("jeffdt/rolomux"),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_trims_surrounding_whitespace() {
+        assert_eq!(
+            parse_repo_spec("  jeffdt/rolomux  "),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_https_github_url() {
+        assert_eq!(
+            parse_repo_spec("https://github.com/jeffdt/rolomux"),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_https_github_url_with_trailing_slash() {
+        assert_eq!(
+            parse_repo_spec("https://github.com/jeffdt/rolomux/"),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_drops_extra_path_segments_from_a_url() {
+        assert_eq!(
+            parse_repo_spec("https://github.com/jeffdt/rolomux/issues/20"),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_accepts_ssh_style_url() {
+        assert_eq!(
+            parse_repo_spec("git@github.com:jeffdt/rolomux.git"),
+            Some("jeffdt/rolomux".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_repo_spec_rejects_owner_without_repo() {
+        assert_eq!(parse_repo_spec("jeffdt"), None);
+    }
+
+    #[test]
+    fn parse_repo_spec_rejects_blank_input() {
+        assert_eq!(parse_repo_spec("   "), None);
+    }
+
+    #[test]
+    fn parse_repo_spec_rejects_non_github_host() {
+        assert_eq!(parse_repo_spec("https://gitlab.com/jeffdt/rolomux"), None);
+    }
+
+    #[test]
+    fn set_repo_prefixes_subsequent_calls_with_dash_r() {
+        let source = GhCliSource::new();
+        assert_eq!(source.current_repo(), None);
+        source.set_repo(Some("jeffdt/rolomux".to_string()));
+        assert_eq!(source.current_repo(), Some("jeffdt/rolomux".to_string()));
+    }
+
+    #[test]
+    fn with_repo_starts_pre_targeted() {
+        let source = GhCliSource::with_repo("jeffdt/rolomux".to_string());
+        assert_eq!(source.current_repo(), Some("jeffdt/rolomux".to_string()));
+    }
+
+    #[test]
+    fn set_repo_is_visible_across_clones() {
+        // Every clone shares the same underlying Arc<Mutex<_>>, so a switch
+        // made through one handle (the UI thread) must be visible to another
+        // handle already captured by a spawned worker thread.
+        let source = GhCliSource::new();
+        let clone = source.clone();
+        clone.set_repo(Some("jeffdt/rolomux".to_string()));
+        assert_eq!(source.current_repo(), Some("jeffdt/rolomux".to_string()));
     }
 }
