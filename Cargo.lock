@@ -90,6 +90,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "boomerang"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "nucleo-matcher",
+ "ratatui",
+ "ratatui-textarea",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -509,20 +523,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "issue-browser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossterm",
- "nucleo-matcher",
- "ratatui",
- "ratatui-textarea",
- "serde",
- "serde_json",
- "toml",
 ]
 
 [[package]]

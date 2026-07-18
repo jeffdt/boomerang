@@ -1,12 +1,12 @@
 [package]
-name = "issue-browser"
+name = "boomerang"
 version = "0.1.0"
 edition = "2021"
 description = "A tmux-popup TUI for browsing, searching, creating, editing, and closing GitHub issues in the current repo"
 license = "MIT"
 
 [[bin]]
-name = "issue-browser"
+name = "boomerang"
 path = "src/main.rs"
 
 [dependencies]

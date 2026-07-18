@@ -1,12 +1,12 @@
 # AGENTS.md
 
-Orientation for agents and humans working on issue-browser. This file holds
+Orientation for agents and humans working on boomerang. This file holds
 durable intent and conventions, not a file-by-file map (that goes stale).
 Read the source for current structure.
 
 ## What this is
 
-issue-browser is a terminal UI for browsing, searching, creating, editing, and
+boomerang is a terminal UI for browsing, searching, creating, editing, and
 closing GitHub issues in the repo sitting in the current directory. It is a
 standalone compiled binary that tmux launches on demand via `tmux popup -E`;
 it is not a tmux plugin and runs no background process. Same architectural

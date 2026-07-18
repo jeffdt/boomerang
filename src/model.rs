@@ -62,7 +62,7 @@ impl LoadingAnimation {
     ];
 
     pub fn for_launch() -> Self {
-        std::env::var("ISSUE_BROWSER_LOADING_ANIMATION")
+        std::env::var("BOOMERANG_LOADING_ANIMATION")
             .ok()
             .and_then(|value| Self::parse(&value))
             .unwrap_or_else(Self::rotated)

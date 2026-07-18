@@ -26,20 +26,20 @@ use ui::{
 };
 
 const HELP: &str = "\
-issue-browser - a tmux-popup TUI for GitHub issues
+boomerang - a tmux-popup TUI for GitHub issues
 
 Usage:
-  issue-browser                                   Launch the picker (intended via `tmux popup -E`)
-  issue-browser --preview-loading [ANIMATION] [DURATION]
-                                                  Play a loading animation preview and exit
-  issue-browser --doctor                          Print gh, repo, auth, and logging diagnostics
-  issue-browser --capture                         Instant title-only capture, then exit
-  issue-browser --capture-full                    Full create form (title/body/labels), then exit
-  issue-browser --version                         Print version and exit
-  issue-browser --help                            Print this help and exit
+  boomerang                                   Launch the picker (intended via `tmux popup -E`)
+  boomerang --preview-loading [ANIMATION] [DURATION]
+                                              Play a loading animation preview and exit
+  boomerang --doctor                          Print gh, repo, auth, and logging diagnostics
+  boomerang --capture                         Instant title-only capture, then exit
+  boomerang --capture-full                    Full create form (title/body/labels), then exit
+  boomerang --version                         Print version and exit
+  boomerang --help                            Print this help and exit
 
 Bind it in ~/.tmux.conf, e.g.:
-  bind i display-popup -E -B -w 84 -h 60% \"exec issue-browser\"";
+  bind i display-popup -E -B -w 84 -h 60% \"exec boomerang\"";
 
 #[derive(Debug, PartialEq)]
 enum StartupCommand {
@@ -129,7 +129,7 @@ fn main() -> anyhow::Result<()> {
     match parse_command(std::env::args().skip(1)) {
         Ok(StartupCommand::Launch) => {}
         Ok(StartupCommand::Version) => {
-            println!("issue-browser {}", env!("CARGO_PKG_VERSION"));
+            println!("boomerang {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Ok(StartupCommand::Help) => {
@@ -153,7 +153,7 @@ fn main() -> anyhow::Result<()> {
             duration,
         }) => return run_loading_preview(animation, duration),
         Err(message) => {
-            eprintln!("issue-browser: {message}\n\n{HELP}");
+            eprintln!("boomerang: {message}\n\n{HELP}");
             std::process::exit(2);
         }
     }
@@ -1106,7 +1106,7 @@ fn gh_error_status(error: &anyhow::Error) -> String {
 fn gh_error_status_with_token_hint(error: &anyhow::Error, github_token_set: bool) -> String {
     let mut message = format!("gh error: {error}");
     if github_token_set && looks_like_auth_or_access_error(&message) {
-        message.push_str(" (GITHUB_TOKEN is set; try env -u GITHUB_TOKEN issue-browser)");
+        message.push_str(" (GITHUB_TOKEN is set; try env -u GITHUB_TOKEN boomerang)");
     }
     message
 }
@@ -1426,13 +1426,13 @@ mod tests {
             Ok(InitialLoadSuccess {
                 issues: vec![],
                 labels: vec![],
-                repo_name: Some("jeffdt/issue-browser".to_string()),
+                repo_name: Some("jeffdt/boomerang".to_string()),
                 elapsed: Duration::from_millis(10),
             }),
         );
         assert_eq!(
             state.repo_name_with_owner,
-            Some("jeffdt/issue-browser".to_string())
+            Some("jeffdt/boomerang".to_string())
         );
     }
 
@@ -1454,10 +1454,10 @@ mod tests {
     #[test]
     fn apply_repo_name_result_sets_repo_name_on_success() {
         let mut state = AppState::new(vec![], vec![]);
-        apply_repo_name_result(&mut state, Ok("jeffdt/issue-browser".to_string()));
+        apply_repo_name_result(&mut state, Ok("jeffdt/boomerang".to_string()));
         assert_eq!(
             state.repo_name_with_owner,
-            Some("jeffdt/issue-browser".to_string())
+            Some("jeffdt/boomerang".to_string())
         );
     }
 
@@ -1681,7 +1681,7 @@ mod tests {
         let error = anyhow::anyhow!("GraphQL: Resource not accessible by integration");
         assert_eq!(
             gh_error_status_with_token_hint(&error, true),
-            "gh error: GraphQL: Resource not accessible by integration (GITHUB_TOKEN is set; try env -u GITHUB_TOKEN issue-browser)"
+            "gh error: GraphQL: Resource not accessible by integration (GITHUB_TOKEN is set; try env -u GITHUB_TOKEN boomerang)"
         );
     }
 

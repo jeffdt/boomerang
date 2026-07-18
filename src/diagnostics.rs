@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub const LOG_ENV: &str = "ISSUE_BROWSER_LOG";
-pub const LOG_PATH_ENV: &str = "ISSUE_BROWSER_LOG_PATH";
+pub const LOG_ENV: &str = "BOOMERANG_LOG";
+pub const LOG_PATH_ENV: &str = "BOOMERANG_LOG_PATH";
 
 pub fn run_doctor() -> anyhow::Result<()> {
-    println!("issue-browser {}", env!("CARGO_PKG_VERSION"));
+    println!("boomerang {}", env!("CARGO_PKG_VERSION"));
     match env::current_dir() {
         Ok(cwd) => println!("cwd: {}", cwd.display()),
         Err(e) => println!("cwd: error: {e}"),
@@ -17,7 +17,7 @@ pub fn run_doctor() -> anyhow::Result<()> {
     println!("GITHUB_TOKEN: {}", env_status("GITHUB_TOKEN"));
     println!("GH_TOKEN: {}", env_status("GH_TOKEN"));
     if env::var_os("GITHUB_TOKEN").is_some() {
-        println!("note: GITHUB_TOKEN is set and overrides gh keyring auth; use env -u GITHUB_TOKEN issue-browser when you want the keyring account.");
+        println!("note: GITHUB_TOKEN is set and overrides gh keyring auth; use env -u GITHUB_TOKEN boomerang when you want the keyring account.");
     }
     println!("{}: {}", LOG_ENV, env_status(LOG_ENV));
     if let Some(path) = active_log_path() {
@@ -142,12 +142,12 @@ fn active_log_path() -> Option<PathBuf> {
 
 fn default_log_path() -> PathBuf {
     if let Some(cache_home) = env::var_os("XDG_CACHE_HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(cache_home).join("issue-browser/issue-browser.log");
+        return PathBuf::from(cache_home).join("boomerang/boomerang.log");
     }
     if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(home).join(".cache/issue-browser/issue-browser.log");
+        return PathBuf::from(home).join(".cache/boomerang/boomerang.log");
     }
-    env::temp_dir().join("issue-browser.log")
+    env::temp_dir().join("boomerang.log")
 }
 
 fn append_log(line: &str) {

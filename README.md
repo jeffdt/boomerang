@@ -1,4 +1,4 @@
-# issue-browser
+# boomerang
 
 A tmux-popup TUI for browsing, searching, creating, editing, and closing
 GitHub issues in the repo sitting in your current pane, without leaving the
@@ -18,7 +18,7 @@ Then add a keybind to `~/.tmux.conf`, pointing at the built binary (or a copy
 on your `PATH`):
 
 ```tmux
-bind i display-popup -E -B -d "#{pane_current_path}" -w 84 -h 60% "exec issue-browser"
+bind i display-popup -E -B -d "#{pane_current_path}" -w 84 -h 60% "exec boomerang"
 ```
 
 The `-d "#{pane_current_path}"` matters: without it, `display-popup` doesn't
@@ -39,7 +39,7 @@ so it's a fixed 4 rows tall — the popup itself only needs to be exactly
 that tall:
 
 ```tmux
-bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec issue-browser --capture"
+bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang --capture"
 ```
 
 ## How it works
@@ -90,17 +90,17 @@ row, and `q`/`Esc` returns to the list.
 
 ## Quick capture
 
-`issue-browser --capture` skips the list view entirely and opens straight to
+`boomerang --capture` skips the list view entirely and opens straight to
 the title-only quick-create prompt (`Enter` to create, `Esc` to cancel),
 then exits — handy bound to its own key (see the `bind I` example above) for
 firing off an issue without leaving your current pane's context. The prompt
 shows the repo it'll create the issue in once `gh repo view` resolves in the
-background. `issue-browser --capture-full` does the same but opens the full
+background. `boomerang --capture-full` does the same but opens the full
 title/body/label form instead.
 
 ## Diagnostics
 
-Run `issue-browser --doctor` from the target repo to print cwd, git remote,
+Run `boomerang --doctor` from the target repo to print cwd, git remote,
 `gh` auth, detected GitHub repo, token-env, and diagnostic logging state.
 
 `gh` follows normal environment precedence. If tmux exports `GITHUB_TOKEN`, that
@@ -108,29 +108,29 @@ token overrides the `gh` keyring account. For personal repos where your shell ha
 a work token, launch with:
 
 ```sh
-env -u GITHUB_TOKEN issue-browser
+env -u GITHUB_TOKEN boomerang
 ```
 
-Opt-in command diagnostics by setting `ISSUE_BROWSER_LOG=1`. Logs go to
-`~/.cache/issue-browser/issue-browser.log` by default, or to
-`ISSUE_BROWSER_LOG_PATH` when set. Logs include sanitized `gh` argv, elapsed
+Opt-in command diagnostics by setting `BOOMERANG_LOG=1`. Logs go to
+`~/.cache/boomerang/boomerang.log` by default, or to
+`BOOMERANG_LOG_PATH` when set. Logs include sanitized `gh` argv, elapsed
 milliseconds, exit status, stdout byte count, and stderr. Issue titles and bodies
 passed to `gh` are redacted.
 
 Startup defaults to the Matrix rain animation because it reads best during the
-brief initial load. Set `ISSUE_BROWSER_LOADING_ANIMATION=ripple` to try the
+brief initial load. Set `BOOMERANG_LOADING_ANIMATION=ripple` to try the
 experimental color-ripple bullseye loader, or `rainbow` for continuous thick
 color-locked bands.
 
 Preview a loader without touching `gh`:
 
 ```sh
-issue-browser --preview-loading matrix 10s
-issue-browser --preview-loading ripple 1500ms
-issue-browser --preview-loading rainbow 10s
+boomerang --preview-loading matrix 10s
+boomerang --preview-loading ripple 1500ms
+boomerang --preview-loading rainbow 10s
 ```
 
-Bare durations are seconds, so `issue-browser --preview-loading 10` previews the
+Bare durations are seconds, so `boomerang --preview-loading 10` previews the
 default loader for ten seconds.
 
 ## Disclaimer

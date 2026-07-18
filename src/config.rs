@@ -35,18 +35,18 @@ impl Config {
     }
 }
 
-/// `$XDG_CONFIG_HOME/issue-browser/config.toml`, falling back to
-/// `~/.config/issue-browser/config.toml` when unset or empty.
+/// `$XDG_CONFIG_HOME/boomerang/config.toml`, falling back to
+/// `~/.config/boomerang/config.toml` when unset or empty.
 pub fn config_path() -> PathBuf {
     if let Ok(x) = std::env::var("XDG_CONFIG_HOME") {
         if !x.is_empty() {
-            return PathBuf::from(x).join("issue-browser").join("config.toml");
+            return PathBuf::from(x).join("boomerang").join("config.toml");
         }
     }
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home)
         .join(".config")
-        .join("issue-browser")
+        .join("boomerang")
         .join("config.toml")
 }
 
@@ -57,7 +57,7 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "issue-browser-config-test-{name}-{}.toml",
+            "boomerang-config-test-{name}-{}.toml",
             std::process::id()
         ))
     }
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn save_creates_missing_parent_directory() {
         let dir = std::env::temp_dir().join(format!(
-            "issue-browser-config-test-dir-{}",
+            "boomerang-config-test-dir-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);

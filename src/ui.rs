@@ -207,7 +207,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .repo_name_with_owner
         .as_deref()
         .map(format_repo_title)
-        .unwrap_or_else(|| "issue-browser".to_string());
+        .unwrap_or_else(|| "boomerang".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1402,24 +1402,24 @@ mod tests {
     #[test]
     fn format_repo_title_is_a_passthrough_today() {
         assert_eq!(
-            format_repo_title("jeffdt/issue-browser"),
-            "jeffdt/issue-browser"
+            format_repo_title("jeffdt/boomerang"),
+            "jeffdt/boomerang"
         );
     }
 
     #[test]
     fn border_title_shows_repo_name_when_available() {
         let mut state = AppState::new(vec![issue(1, "a")], vec![]);
-        state.repo_name_with_owner = Some("jeffdt/issue-browser".to_string());
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ jeffdt/issue-browser ›"));
+        assert!(rendered.contains("‹ jeffdt/boomerang ›"));
     }
 
     #[test]
     fn border_title_falls_back_to_app_name_when_repo_unknown() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ issue-browser ›"));
+        assert!(rendered.contains("‹ boomerang ›"));
     }
 
     #[test]
@@ -1430,7 +1430,7 @@ mod tests {
         assert!(rendered.contains('╮'));
         assert!(rendered.contains('╰'));
         assert!(rendered.contains('╯'));
-        assert!(rendered.contains("issue-browser"));
+        assert!(rendered.contains("boomerang"));
     }
 
     #[test]
@@ -1881,11 +1881,11 @@ mod tests {
     #[test]
     fn little_create_shows_new_issue_title_with_repo_when_known() {
         let mut state = AppState::new(vec![], vec![]);
-        state.repo_name_with_owner = Some("jeffdt/issue-browser".to_string());
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         state.enter_little_create();
         let rendered = render_to_string(&state);
         assert!(
-            rendered.contains("New issue in jeffdt/issue-browser"),
+            rendered.contains("New issue in jeffdt/boomerang"),
             "title should include the known repo, got: {rendered:?}"
         );
     }
