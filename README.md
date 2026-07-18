@@ -73,6 +73,10 @@ bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang 
 | `,` | Open Settings |
 | `q` / `Esc` | Quit |
 
+`y`/`Y`/`Ctrl-y` shell out to `pbcopy`, so the clipboard keys only work on
+macOS. This is a macOS-only tool overall (built and shipped for
+`aarch64-apple-darwin` only); building from source elsewhere isn't supported.
+
 Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
 Title → Body → submit (submitting from the Labels field).

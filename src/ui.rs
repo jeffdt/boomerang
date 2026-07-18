@@ -985,22 +985,43 @@ mod tests {
 
     #[test]
     fn comma_key_maps_to_enter_settings() {
-        assert_eq!(map_list_key(key(KeyCode::Char(','))), ListInput::EnterSettings);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char(','))),
+            ListInput::EnterSettings
+        );
     }
 
     #[test]
     fn map_settings_key_covers_movement_toggle_and_exit() {
-        assert_eq!(map_settings_key(key(KeyCode::Char('j'))), SettingsInput::Down);
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char('j'))),
+            SettingsInput::Down
+        );
         assert_eq!(map_settings_key(key(KeyCode::Down)), SettingsInput::Down);
         assert_eq!(map_settings_key(key(KeyCode::Char('k'))), SettingsInput::Up);
         assert_eq!(map_settings_key(key(KeyCode::Up)), SettingsInput::Up);
         assert_eq!(map_settings_key(key(KeyCode::Enter)), SettingsInput::Toggle);
-        assert_eq!(map_settings_key(key(KeyCode::Char(' '))), SettingsInput::Toggle);
-        assert_eq!(map_settings_key(key(KeyCode::Char('h'))), SettingsInput::Toggle);
-        assert_eq!(map_settings_key(key(KeyCode::Char('l'))), SettingsInput::Toggle);
-        assert_eq!(map_settings_key(key(KeyCode::Char('q'))), SettingsInput::Exit);
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char(' '))),
+            SettingsInput::Toggle
+        );
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char('h'))),
+            SettingsInput::Toggle
+        );
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char('l'))),
+            SettingsInput::Toggle
+        );
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char('q'))),
+            SettingsInput::Exit
+        );
         assert_eq!(map_settings_key(key(KeyCode::Esc)), SettingsInput::Exit);
-        assert_eq!(map_settings_key(key(KeyCode::Char('z'))), SettingsInput::None);
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char('z'))),
+            SettingsInput::None
+        );
     }
 
     #[test]
@@ -1401,10 +1422,7 @@ mod tests {
 
     #[test]
     fn format_repo_title_is_a_passthrough_today() {
-        assert_eq!(
-            format_repo_title("jeffdt/boomerang"),
-            "jeffdt/boomerang"
-        );
+        assert_eq!(format_repo_title("jeffdt/boomerang"), "jeffdt/boomerang");
     }
 
     #[test]
@@ -1974,8 +1992,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        let (_, y) =
-            find_in_buffer(&buf, "New issue").expect("little-create title should render");
+        let (_, y) = find_in_buffer(&buf, "New issue").expect("little-create title should render");
         assert_eq!(
             y, 0,
             "quick-create is a deliberately distinct compact screen and should sit flush \
@@ -2003,7 +2020,11 @@ mod tests {
     #[test]
     fn zebra_striping_dims_odd_rows_but_not_the_first_row() {
         let mut state = AppState::new(
-            vec![issue(1, "Row zero"), issue(2, "Row one"), issue(3, "Row two")],
+            vec![
+                issue(1, "Row zero"),
+                issue(2, "Row one"),
+                issue(3, "Row two"),
+            ],
             vec![],
         );
         state.zebra_striping = true;
@@ -2022,10 +2043,7 @@ mod tests {
 
     #[test]
     fn zebra_striping_off_dims_nothing() {
-        let mut state = AppState::new(
-            vec![issue(1, "Row zero"), issue(2, "Row one")],
-            vec![],
-        );
+        let mut state = AppState::new(vec![issue(1, "Row zero"), issue(2, "Row one")], vec![]);
         state.zebra_striping = false;
         state.cursor = usize::MAX;
         let buf = render_buffer(&state);
@@ -2035,10 +2053,7 @@ mod tests {
 
     #[test]
     fn zebra_striping_never_dims_the_selected_row() {
-        let mut state = AppState::new(
-            vec![issue(1, "Row zero"), issue(2, "Row one")],
-            vec![],
-        );
+        let mut state = AppState::new(vec![issue(1, "Row zero"), issue(2, "Row one")], vec![]);
         state.zebra_striping = true;
         state.cursor = 1; // select the row that would otherwise be dimmed
         let buf = render_buffer(&state);
