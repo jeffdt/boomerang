@@ -421,14 +421,10 @@ fn capture_full_loop<S: IssueSource>(
     loop {
         if let Some(result) = poll_labels(&labels_rx) {
             labels_rx = None;
-            match result {
-                Ok(labels) => {
-                    state.all_labels = labels;
-                    state.finish_loading();
-                    state.enter_big_create();
-                }
-                Err(e) => return Err(e),
-            }
+            let labels = result?;
+            state.all_labels = labels;
+            state.finish_loading();
+            state.enter_big_create();
         }
 
         if let Some(result) = poll_create(&create_rx) {
