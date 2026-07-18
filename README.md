@@ -63,8 +63,7 @@ bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang 
 | `h` | Hide/show the description pane (shown by default) |
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → closed → all |
-| `c` | Little create: title only, created immediately |
-| `C` (shift+c) | Big create: title + body + label picker |
+| `C` (shift+c) | Create: title + body + label picker |
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `y` | Copy `#123` to the clipboard |

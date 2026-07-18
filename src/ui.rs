@@ -30,7 +30,6 @@ pub enum ListInput {
     TogglePane,
     EnterSearch,
     CycleStateFilter,
-    LittleCreate,
     BigCreate,
     Edit,
     RequestClose,
@@ -53,7 +52,6 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
-        KeyCode::Char('c') => ListInput::LittleCreate,
         KeyCode::Char('C') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
@@ -442,7 +440,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         match &state.mode {
             Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
             Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
-            _ => "j/k move · h hide pane · / search · a state · space check · c/C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
+            _ => "j/k move · h hide pane · / search · a state · space check · C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
         }
     };
     frame.render_widget(
@@ -831,11 +829,8 @@ mod tests {
     }
 
     #[test]
-    fn maps_shift_c_to_big_create_and_lowercase_c_to_little_create() {
-        assert_eq!(
-            map_list_key(key(KeyCode::Char('c'))),
-            ListInput::LittleCreate
-        );
+    fn maps_shift_c_to_big_create_and_lowercase_c_to_nothing() {
+        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::None);
         assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::BigCreate);
     }
 
@@ -1775,7 +1770,7 @@ mod tests {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
-        assert!(rendered.contains("c/C create"));
+        assert!(rendered.contains("C create"));
     }
 
     #[test]
