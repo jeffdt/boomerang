@@ -11,9 +11,7 @@ env:
 
 jobs:
   build-and-test:
-    # macos-latest, not ubuntu-latest: copy.rs shells out to pbcopy, so the
-    # test suite only runs where the real runtime dependency exists.
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

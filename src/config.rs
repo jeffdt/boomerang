@@ -101,10 +101,8 @@ mod tests {
 
     #[test]
     fn save_creates_missing_parent_directory() {
-        let dir = std::env::temp_dir().join(format!(
-            "boomerang-config-test-dir-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("boomerang-config-test-dir-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("nested").join("config.toml");
         Config::default().save_to(&path).unwrap();

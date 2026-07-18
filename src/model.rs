@@ -583,13 +583,31 @@ impl AppState {
             .unwrap_or_default();
         let (title, body, add_labels, remove_labels) = match &self.mode {
             Mode::Form(form) => {
-                let add_labels: Vec<String> = form.selected_labels.difference(&original).cloned().collect();
-                let remove_labels: Vec<String> = original.difference(&form.selected_labels).cloned().collect();
-                (form.title_text(), form.body_text(), add_labels, remove_labels)
+                let add_labels: Vec<String> = form
+                    .selected_labels
+                    .difference(&original)
+                    .cloned()
+                    .collect();
+                let remove_labels: Vec<String> = original
+                    .difference(&form.selected_labels)
+                    .cloned()
+                    .collect();
+                (
+                    form.title_text(),
+                    form.body_text(),
+                    add_labels,
+                    remove_labels,
+                )
             }
             _ => return None,
         };
-        let submission = FormSubmission { editing, title, body, add_labels, remove_labels };
+        let submission = FormSubmission {
+            editing,
+            title,
+            body,
+            add_labels,
+            remove_labels,
+        };
         self.mode = Mode::List;
         Some(submission)
     }
@@ -1039,7 +1057,11 @@ mod tests {
         }
         press(&mut state, ratatui_textarea::Key::End);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_input.cursor(), (1, 3), "end should land at the end of the current line");
+            assert_eq!(
+                form.body_input.cursor(),
+                (1, 3),
+                "end should land at the end of the current line"
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1094,7 +1116,10 @@ mod tests {
         press(&mut state, ratatui_textarea::Key::Up);
         press(&mut state, ratatui_textarea::Key::Down);
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_input.cursor(), (0, "only one line".chars().count()));
+            assert_eq!(
+                form.body_input.cursor(),
+                (0, "only one line".chars().count())
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1149,7 +1174,11 @@ mod tests {
         type_str(&mut state, "one\ntwo");
         press_ctrl(&mut state, ratatui_textarea::Key::Char('w'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_text(), "one\n", "word delete must stop at the preceding newline, not eat \"one\" too");
+            assert_eq!(
+                form.body_text(),
+                "one\n",
+                "word delete must stop at the preceding newline, not eat \"one\" too"
+            );
         } else {
             panic!("expected Form mode");
         }
@@ -1182,7 +1211,11 @@ mod tests {
         type_str(&mut state, "one\ntwo");
         press_ctrl(&mut state, ratatui_textarea::Key::Char('j'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.body_text(), "one\n", "clearing on the second line must not touch the first line");
+            assert_eq!(
+                form.body_text(),
+                "one\n",
+                "clearing on the second line must not touch the first line"
+            );
             assert_eq!(form.body_input.cursor(), (1, 0));
         } else {
             panic!("expected Form mode");
@@ -1241,14 +1274,24 @@ mod tests {
 
     #[test]
     fn form_enter_on_labels_advances_to_submit() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         type_str(&mut state, "T");
         state.form_next_field();
         type_str(&mut state, "B");
         state.form_next_field();
         state.form_toggle_label();
-        assert_eq!(state.form_enter(), None, "Enter on Labels should advance, not submit");
+        assert_eq!(
+            state.form_enter(),
+            None,
+            "Enter on Labels should advance, not submit"
+        );
         if let Mode::Form(form) = &state.mode {
             assert_eq!(form.field, FormField::Submit);
         } else {
@@ -1258,7 +1301,13 @@ mod tests {
 
     #[test]
     fn form_enter_on_submit_builds_submission_and_returns_to_list() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         type_str(&mut state, "T");
         state.form_next_field();
@@ -1277,13 +1326,21 @@ mod tests {
 
     #[test]
     fn form_submit_now_submits_regardless_of_focused_field() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         type_str(&mut state, "T");
         state.form_next_field();
         type_str(&mut state, "B");
         // still on Body, not Submit
-        let submission = state.form_submit_now().expect("Ctrl+S submits from any field");
+        let submission = state
+            .form_submit_now()
+            .expect("Ctrl+S submits from any field");
         assert_eq!(submission.title, "T");
         assert_eq!(submission.body, "B");
         assert_eq!(state.mode, Mode::List);
@@ -1344,18 +1401,30 @@ mod tests {
         state.enter_big_create();
         type_str(&mut state, "T");
         state.cancel_form_or_create();
-        assert!(matches!(state.mode, Mode::ConfirmDiscard(_)), "typed title should be treated as dirty");
+        assert!(
+            matches!(state.mode, Mode::ConfirmDiscard(_)),
+            "typed title should be treated as dirty"
+        );
     }
 
     #[test]
     fn cancel_on_dirty_form_via_label_toggle_asks_for_confirmation() {
-        let mut state = AppState::new(vec![], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        let mut state = AppState::new(
+            vec![],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_big_create();
         state.form_next_field(); // Body
         state.form_next_field(); // Labels
         state.form_toggle_label();
         state.cancel_form_or_create();
-        assert!(matches!(state.mode, Mode::ConfirmDiscard(_)), "a checked label box should be treated as dirty");
+        assert!(
+            matches!(state.mode, Mode::ConfirmDiscard(_)),
+            "a checked label box should be treated as dirty"
+        );
     }
 
     #[test]
@@ -1377,7 +1446,9 @@ mod tests {
         state.confirm_discard_no();
         match &state.mode {
             Mode::Form(form) => assert_eq!(form.title_text(), "T"),
-            other => panic!("expected to return to Form mode with typed content intact, got {other:?}"),
+            other => {
+                panic!("expected to return to Form mode with typed content intact, got {other:?}")
+            }
         }
     }
 
@@ -1403,11 +1474,24 @@ mod tests {
     #[test]
     fn editing_an_issue_without_changes_is_not_dirty() {
         let mut issue1 = issue(1, "Fix bug");
-        issue1.labels = vec![Label { name: "bug".into(), color: "d73a4a".into() }];
-        let mut state = AppState::new(vec![issue1], vec![Label { name: "bug".into(), color: "d73a4a".into() }]);
+        issue1.labels = vec![Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        }];
+        let mut state = AppState::new(
+            vec![issue1],
+            vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        );
         state.enter_edit();
         state.cancel_form_or_create();
-        assert_eq!(state.mode, Mode::List, "re-opening an edit form unchanged should not be considered dirty");
+        assert_eq!(
+            state.mode,
+            Mode::List,
+            "re-opening an edit form unchanged should not be considered dirty"
+        );
     }
 
     #[test]
@@ -1489,7 +1573,10 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.begin_pending(PendingOperation::CloseIssue);
         assert!(state.is_pending());
-        assert!(state.pending_message().unwrap().contains("Closing issue..."));
+        assert!(state
+            .pending_message()
+            .unwrap()
+            .contains("Closing issue..."));
     }
 
     #[test]
@@ -1516,9 +1603,10 @@ mod tests {
     fn loading_state_reports_message_and_selected_animation() {
         let state = AppState::loading();
         assert!(state.is_loading());
-        assert!(state.loading.as_ref().is_some_and(|loading| {
-            LoadingAnimation::ALL.contains(&loading.animation)
-        }));
+        assert!(state
+            .loading
+            .as_ref()
+            .is_some_and(|loading| { LoadingAnimation::ALL.contains(&loading.animation) }));
         assert!(state
             .loading_message()
             .expect("loading message")

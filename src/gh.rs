@@ -406,9 +406,6 @@ mod tests {
 
     #[test]
     fn parse_repo_name_trims_trailing_newline() {
-        assert_eq!(
-            parse_repo_name("jeffdt/boomerang\n"),
-            "jeffdt/boomerang"
-        );
+        assert_eq!(parse_repo_name("jeffdt/boomerang\n"), "jeffdt/boomerang");
     }
 }

@@ -179,7 +179,13 @@ fn run_ui<S: IssueSource>(
     diagnostics::log_event("terminal_ready");
 
     let initial_load_rx = spawn_initial_load(source.clone());
-    let result = event_loop(&mut terminal, state, source, Some(initial_load_rx), config_path);
+    let result = event_loop(
+        &mut terminal,
+        state,
+        source,
+        Some(initial_load_rx),
+        config_path,
+    );
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -665,17 +671,18 @@ fn event_loop<S: IssueSource>(
                     ListInput::RequestClose => state.request_close(),
                     ListInput::ToggleCheck => state.toggle_check(),
                     ListInput::CopyReference => {
-                        if copy_selected(state, copy::format_reference) {
+                        if copy_selected(state, copy::format_reference, copy::copy_to_clipboard) {
                             return Ok(());
                         }
                     }
                     ListInput::CopyMarkdownLink => {
-                        if copy_selected(state, copy::format_markdown_link) {
+                        if copy_selected(state, copy::format_markdown_link, copy::copy_to_clipboard)
+                        {
                             return Ok(());
                         }
                     }
                     ListInput::CopyUrl => {
-                        if copy_selected(state, copy::format_url) {
+                        if copy_selected(state, copy::format_url, copy::copy_to_clipboard) {
                             return Ok(());
                         }
                     }
@@ -1140,7 +1147,11 @@ fn probe_auth_status() -> bool {
         .unwrap_or(false)
 }
 
-fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String) -> bool {
+fn copy_selected(
+    state: &mut AppState,
+    format: impl Fn(&model::Issue) -> String,
+    copy_fn: impl Fn(&str) -> anyhow::Result<()>,
+) -> bool {
     if !state.checked.is_empty() {
         let numbers: Vec<u32> = state.checked.iter().copied().collect();
         let texts: Vec<String> = numbers
@@ -1152,7 +1163,7 @@ fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String)
             return false;
         }
         let text = texts.join(", ");
-        return match copy::copy_to_clipboard(&text) {
+        return match copy_fn(&text) {
             Ok(()) => {
                 state.set_status(format!("copied {}: {text}", texts.len()));
                 state.checked.clear();
@@ -1166,7 +1177,7 @@ fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String)
     }
     if let Some(issue) = state.selected_issue() {
         let text = format(issue);
-        match copy::copy_to_clipboard(&text) {
+        match copy_fn(&text) {
             Ok(()) => {
                 state.set_status(format!("copied: {text}"));
                 return state.exit_on_copy_yank;
@@ -1213,25 +1224,45 @@ mod tests {
         }
     }
 
+    fn fake_copy_ok(_text: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn fake_copy_err(_text: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("no clipboard"))
+    }
+
     #[test]
     fn copy_selected_returns_true_when_exit_on_copy_yank_is_set() {
         let mut state = AppState::new(vec![issue(1, "test")], vec![]);
         state.exit_on_copy_yank = true;
-        assert!(copy_selected(&mut state, copy::format_reference));
+        assert!(copy_selected(
+            &mut state,
+            copy::format_reference,
+            fake_copy_ok
+        ));
     }
 
     #[test]
     fn copy_selected_returns_false_when_exit_on_copy_yank_is_off() {
         let mut state = AppState::new(vec![issue(1, "test")], vec![]);
         state.exit_on_copy_yank = false;
-        assert!(!copy_selected(&mut state, copy::format_reference));
+        assert!(!copy_selected(
+            &mut state,
+            copy::format_reference,
+            fake_copy_ok
+        ));
     }
 
     #[test]
     fn copy_selected_returns_false_with_no_selected_issue_even_if_setting_is_on() {
         let mut state = AppState::new(vec![], vec![]);
         state.exit_on_copy_yank = true;
-        assert!(!copy_selected(&mut state, copy::format_reference));
+        assert!(!copy_selected(
+            &mut state,
+            copy::format_reference,
+            fake_copy_ok
+        ));
     }
 
     #[test]
@@ -1242,7 +1273,7 @@ mod tests {
         );
         state.checked.insert(1);
         state.checked.insert(3);
-        copy_selected(&mut state, copy::format_reference);
+        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
         assert_eq!(state.status.as_ref().unwrap().0, "copied 2: #1, #3");
     }
 
@@ -1253,7 +1284,7 @@ mod tests {
         state.exit_on_copy_yank = false;
         state.checked.insert(1);
         state.checked.insert(2);
-        copy_selected(&mut state, copy::format_reference);
+        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
         assert!(state.checked.is_empty());
     }
 
@@ -1262,15 +1293,30 @@ mod tests {
         let mut state = AppState::new(vec![issue(1, "one")], vec![]);
         state.checked.insert(1);
         state.checked.insert(999);
-        copy_selected(&mut state, copy::format_reference);
+        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
         assert_eq!(state.status.as_ref().unwrap().0, "copied 1: #1");
     }
 
     #[test]
     fn copy_selected_falls_back_to_single_issue_when_nothing_checked() {
         let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
-        copy_selected(&mut state, copy::format_reference);
+        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
         assert_eq!(state.status.as_ref().unwrap().0, "copied: #1");
+    }
+
+    #[test]
+    fn copy_selected_sets_status_and_returns_false_when_copy_fails() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        state.exit_on_copy_yank = true;
+        assert!(!copy_selected(
+            &mut state,
+            copy::format_reference,
+            fake_copy_err
+        ));
+        assert_eq!(
+            state.status.as_ref().unwrap().0,
+            "copy failed: no clipboard"
+        );
     }
 
     #[test]
