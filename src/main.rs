@@ -682,7 +682,11 @@ fn event_loop<S: IssueSource>(
                     ListInput::OpenInBrowser => open_in_browser(state),
                     ListInput::Refresh => start_refresh(state, &mut refresh_rx, (*source).clone()),
                     ListInput::EnterSettings => state.enter_settings(),
-                    ListInput::Quit => return Ok(()),
+                    ListInput::Quit => {
+                        if handle_quit(state) {
+                            return Ok(());
+                        }
+                    }
                     ListInput::None => {}
                 },
                 Mode::Search => match map_search_key(key) {
@@ -1137,6 +1141,29 @@ fn probe_auth_status() -> bool {
 }
 
 fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String) -> bool {
+    if !state.checked.is_empty() {
+        let numbers: Vec<u32> = state.checked.iter().copied().collect();
+        let texts: Vec<String> = numbers
+            .iter()
+            .filter_map(|&number| state.find_issue(number))
+            .map(&format)
+            .collect();
+        if texts.is_empty() {
+            return false;
+        }
+        let text = texts.join(", ");
+        return match copy::copy_to_clipboard(&text) {
+            Ok(()) => {
+                state.set_status(format!("copied {}: {text}", texts.len()));
+                state.checked.clear();
+                state.exit_on_copy_yank
+            }
+            Err(e) => {
+                state.set_status(format!("copy failed: {e}"));
+                false
+            }
+        };
+    }
     if let Some(issue) = state.selected_issue() {
         let text = format(issue);
         match copy::copy_to_clipboard(&text) {
@@ -1148,6 +1175,15 @@ fn copy_selected(state: &mut AppState, format: impl Fn(&model::Issue) -> String)
         }
     }
     false
+}
+
+fn handle_quit(state: &mut AppState) -> bool {
+    if state.checked.is_empty() {
+        true
+    } else {
+        state.checked.clear();
+        false
+    }
 }
 
 fn open_in_browser(state: &mut AppState) {
@@ -1196,6 +1232,59 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.exit_on_copy_yank = true;
         assert!(!copy_selected(&mut state, copy::format_reference));
+    }
+
+    #[test]
+    fn copy_selected_joins_multiple_checked_issues_with_comma() {
+        let mut state = AppState::new(
+            vec![issue(1, "one"), issue(2, "two"), issue(3, "three")],
+            vec![],
+        );
+        state.checked.insert(1);
+        state.checked.insert(3);
+        copy_selected(&mut state, copy::format_reference);
+        assert_eq!(state.status.as_ref().unwrap().0, "copied 2: #1, #3");
+    }
+
+    #[test]
+    fn copy_selected_clears_checked_after_successful_multi_copy_even_when_exit_on_copy_yank_is_off()
+    {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        state.exit_on_copy_yank = false;
+        state.checked.insert(1);
+        state.checked.insert(2);
+        copy_selected(&mut state, copy::format_reference);
+        assert!(state.checked.is_empty());
+    }
+
+    #[test]
+    fn copy_selected_skips_checked_numbers_that_no_longer_resolve() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        state.checked.insert(1);
+        state.checked.insert(999);
+        copy_selected(&mut state, copy::format_reference);
+        assert_eq!(state.status.as_ref().unwrap().0, "copied 1: #1");
+    }
+
+    #[test]
+    fn copy_selected_falls_back_to_single_issue_when_nothing_checked() {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        copy_selected(&mut state, copy::format_reference);
+        assert_eq!(state.status.as_ref().unwrap().0, "copied: #1");
+    }
+
+    #[test]
+    fn handle_quit_clears_checked_and_does_not_quit_when_checks_active() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        state.checked.insert(1);
+        assert!(!handle_quit(&mut state));
+        assert!(state.checked.is_empty());
+    }
+
+    #[test]
+    fn handle_quit_quits_when_nothing_checked() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        assert!(handle_quit(&mut state));
     }
 
     fn args(items: &[&str]) -> Vec<String> {
