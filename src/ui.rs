@@ -442,7 +442,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         match &state.mode {
             Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
             Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
-            _ => "j/k move · h hide pane · / search · a state · c/C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
+            _ => "j/k move · h hide pane · / search · a state · space check · c/C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
         }
     };
     frame.render_widget(
@@ -1751,7 +1751,14 @@ mod tests {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
-        assert!(rendered.contains("enter/e edit"));
+        assert!(rendered.contains("c/C create"));
+    }
+
+    #[test]
+    fn list_mode_hint_mentions_space_to_check() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("space check"));
     }
 
     #[test]
