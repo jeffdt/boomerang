@@ -512,7 +512,6 @@ fn capture_full_loop<S: IssueSource>(
 
 #[derive(Debug, Clone)]
 enum MutationDraft {
-    LittleCreate { title: String },
     Form(Box<FormState>),
     None,
 }
@@ -661,7 +660,6 @@ fn event_loop<S: IssueSource>(
                         state.cycle_state_filter();
                         start_refresh(state, &mut refresh_rx, (*source).clone());
                     }
-                    ListInput::LittleCreate => state.enter_little_create(),
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
@@ -700,30 +698,11 @@ fn event_loop<S: IssueSource>(
                     SearchInput::Exit => state.exit_search(),
                     SearchInput::None => {}
                 },
-                Mode::LittleCreate(_) => match map_little_create_key(key) {
-                    LittleCreateInput::Char(c) => state.little_create_push(c),
-                    LittleCreateInput::Backspace => state.little_create_backspace(),
-                    LittleCreateInput::Submit => {
-                        if let Some(title) = state.little_create_submit() {
-                            start_mutation(
-                                state,
-                                &mut mutation_rx,
-                                &mut mutation_draft,
-                                (*source).clone(),
-                                MutationDraft::LittleCreate {
-                                    title: title.clone(),
-                                },
-                                MutationRequest::Create(CreateRequest {
-                                    title,
-                                    body: String::new(),
-                                    labels: Vec::new(),
-                                }),
-                            );
-                        }
-                    }
-                    LittleCreateInput::Cancel => state.cancel_form_or_create(),
-                    LittleCreateInput::None => {}
-                },
+                // Unreachable in the full popup: nothing in ListInput enters
+                // Mode::LittleCreate here anymore. The variant itself stays
+                // on Mode because the standalone `--capture` flow still uses
+                // it via its own event loop (capture_loop), not this one.
+                Mode::LittleCreate(_) => {}
                 Mode::Form(form) => {
                     let field = form.field;
                     let form_draft = (**form).clone();
@@ -1049,7 +1028,6 @@ fn restore_mutation_draft(state: &mut AppState, draft: Option<MutationDraft>) {
 
 fn show_pending_draft(state: &mut AppState, draft: &MutationDraft) {
     match draft {
-        MutationDraft::LittleCreate { title } => state.mode = Mode::LittleCreate(title.clone()),
         MutationDraft::Form(form) => state.mode = Mode::Form(form.clone()),
         MutationDraft::None => {}
     }
@@ -1528,9 +1506,7 @@ mod tests {
         state.begin_pending(PendingOperation::CreateIssue);
         finish_mutation(
             &mut state,
-            Some(MutationDraft::LittleCreate {
-                title: "Draft".into(),
-            }),
+            None,
             Ok(MutationSuccess {
                 operation: PendingOperation::CreateIssue,
                 issues: vec![created.clone()],
@@ -1663,42 +1639,6 @@ mod tests {
             .pending_message()
             .unwrap()
             .contains("Updating issue..."));
-    }
-
-    #[test]
-    fn pending_mutation_keeps_little_create_draft_visible() {
-        let mut state = AppState::new(vec![], vec![]);
-        show_pending_draft(
-            &mut state,
-            &MutationDraft::LittleCreate {
-                title: "Pending title".into(),
-            },
-        );
-        state.begin_pending(PendingOperation::CreateIssue);
-        assert_eq!(state.mode, Mode::LittleCreate("Pending title".into()));
-        assert!(state
-            .pending_message()
-            .unwrap()
-            .contains("Creating issue..."));
-    }
-
-    #[test]
-    fn finish_create_failure_restores_little_create_draft() {
-        let mut state = AppState::new(vec![], vec![]);
-        state.begin_pending(PendingOperation::CreateIssue);
-        finish_mutation(
-            &mut state,
-            Some(MutationDraft::LittleCreate {
-                title: "Still typed".into(),
-            }),
-            Err(anyhow::anyhow!("create failed")),
-        );
-        assert!(!state.is_pending());
-        assert_eq!(state.mode, Mode::LittleCreate("Still typed".into()));
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("gh error: create failed")
-        );
     }
 
     #[test]
