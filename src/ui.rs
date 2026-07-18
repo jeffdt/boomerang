@@ -267,6 +267,9 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
     let mut header = format!("Issues ({:?})", state.state_filter);
+    if !state.checked.is_empty() {
+        header.push_str(&format!(" · {} checked", state.checked.len()));
+    }
     if let Some(pending) = state.pending_message() {
         header.push_str("  ");
         header.push_str(&pending);
@@ -284,9 +287,17 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
     let available_width = list_area.width as usize;
+    let checkbox_mode = !state.checked.is_empty();
     let mut items: Vec<ListItem> = Vec::new();
     for (row, &idx) in visible.iter().enumerate() {
         let issue = &state.issues[idx];
+        let checkbox_prefix = if !checkbox_mode {
+            ""
+        } else if state.checked.contains(&issue.number) {
+            "[x] "
+        } else {
+            "[ ] "
+        };
         let number_col = format!("{:<6}", format!("#{}", issue.number));
         let mut label_spans = Vec::new();
         let mut labels_width = 0usize;
@@ -308,6 +319,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             }
         }
         let max_title_width = available_width
+            .saturating_sub(checkbox_prefix.chars().count())
             .saturating_sub(number_col.chars().count())
             .saturating_sub(labels_width);
         let title = truncate_title(&issue.title, max_title_width);
@@ -323,8 +335,10 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             number_style = number_style.add_modifier(Modifier::DIM);
             title_style = title_style.add_modifier(Modifier::DIM);
         }
-        let left_width = number_col.chars().count() + title.chars().count();
+        let left_width =
+            checkbox_prefix.chars().count() + number_col.chars().count() + title.chars().count();
         let mut spans = vec![
+            Span::styled(checkbox_prefix, number_style),
             Span::styled(number_col, number_style),
             Span::styled(title, title_style),
         ];
@@ -2031,5 +2045,32 @@ mod tests {
         let buf = render_buffer(&state);
         let (bx, by) = find_in_buffer(&buf, "bug").expect("label badge should render on row 1");
         assert!(!buf[(bx, by)].style().add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn draw_list_shows_no_checkbox_prefix_when_nothing_checked() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(!rendered.contains("[ ]"));
+        assert!(!rendered.contains("[x]"));
+    }
+
+    #[test]
+    fn draw_list_shows_checkbox_prefix_on_every_row_once_one_is_checked() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug"), issue(2, "Other bug")], vec![]);
+        state.toggle_check();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("[x] #1"));
+        assert!(rendered.contains("[ ] #2"));
+    }
+
+    #[test]
+    fn draw_list_header_shows_checked_count() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug"), issue(2, "Other bug")], vec![]);
+        state.toggle_check();
+        state.move_cursor(1);
+        state.toggle_check();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Issues (Open) · 2 checked"));
     }
 }
