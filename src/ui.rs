@@ -34,6 +34,7 @@ pub enum ListInput {
     BigCreate,
     Edit,
     RequestClose,
+    ToggleCheck,
     CopyReference,
     CopyMarkdownLink,
     CopyUrl,
@@ -55,6 +56,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('c') => ListInput::LittleCreate,
         KeyCode::Char('C') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
+        KeyCode::Char(' ') => ListInput::ToggleCheck,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('r') => ListInput::Refresh,
         KeyCode::Char(',') => ListInput::EnterSettings,
@@ -796,6 +798,14 @@ mod tests {
     #[test]
     fn maps_lowercase_r_to_refresh() {
         assert_eq!(map_list_key(key(KeyCode::Char('r'))), ListInput::Refresh);
+    }
+
+    #[test]
+    fn maps_space_to_toggle_check() {
+        assert_eq!(
+            map_list_key(key(KeyCode::Char(' '))),
+            ListInput::ToggleCheck
+        );
     }
 
     #[test]

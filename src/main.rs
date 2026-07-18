@@ -663,6 +663,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
+                    ListInput::ToggleCheck => state.toggle_check(),
                     ListInput::CopyReference => {
                         if copy_selected(state, copy::format_reference) {
                             return Ok(());
