@@ -25,7 +25,7 @@ use crate::gh::StateFilter;
 use crate::search;
 use ratatui::style::Style;
 use ratatui_textarea::{CursorMove, TextArea, WrapMode};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
@@ -232,6 +232,7 @@ pub struct AppState {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
     pub settings_cursor: usize,
+    pub checked: BTreeSet<u32>,
 }
 
 impl AppState {
@@ -252,6 +253,7 @@ impl AppState {
             exit_on_copy_yank: false,
             zebra_striping: true,
             settings_cursor: 0,
+            checked: BTreeSet::new(),
         }
     }
 
@@ -314,6 +316,16 @@ impl AppState {
         let current = self.cursor as isize;
         let next = (current + delta).rem_euclid(len as isize);
         self.cursor = next as usize;
+    }
+
+    pub fn toggle_check(&mut self) {
+        let Some(issue) = self.selected_issue() else {
+            return;
+        };
+        let number = issue.number;
+        if !self.checked.remove(&number) {
+            self.checked.insert(number);
+        }
     }
 
     pub fn toggle_pane(&mut self) {
@@ -714,6 +726,28 @@ mod tests {
         for c in s.chars() {
             press(state, ratatui_textarea::Key::Char(c));
         }
+    }
+
+    #[test]
+    fn toggle_check_adds_and_removes_selected_issue_number() {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        state.toggle_check();
+        assert!(state.checked.contains(&1));
+        state.toggle_check();
+        assert!(!state.checked.contains(&1));
+    }
+
+    #[test]
+    fn toggle_check_is_noop_when_nothing_selected() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.toggle_check();
+        assert!(state.checked.is_empty());
+    }
+
+    #[test]
+    fn new_app_state_starts_with_no_checked_issues() {
+        let state = AppState::new(vec![issue(1, "one")], vec![]);
+        assert!(state.checked.is_empty());
     }
 
     #[test]
