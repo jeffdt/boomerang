@@ -2,11 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Most-recent-first list of `owner/repo` targets offered by the repo picker.
+const MAX_RECENT_REPOS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
+    pub recent_repos: Vec<String>,
 }
 
 impl Default for Config {
@@ -14,6 +18,7 @@ impl Default for Config {
         Config {
             exit_on_copy_yank: false,
             zebra_striping: true,
+            recent_repos: Vec::new(),
         }
     }
 }
@@ -32,6 +37,14 @@ impl Config {
         }
         let body = toml::to_string(self).map_err(io::Error::other)?;
         std::fs::write(path, body)
+    }
+
+    /// Move `repo` to the front of the recent-repos list, deduplicating any
+    /// existing entry and capping the list at `MAX_RECENT_REPOS`.
+    pub fn remember_repo(&mut self, repo: &str) {
+        self.recent_repos.retain(|existing| existing != repo);
+        self.recent_repos.insert(0, repo.to_string());
+        self.recent_repos.truncate(MAX_RECENT_REPOS);
     }
 }
 
@@ -67,6 +80,7 @@ mod tests {
         let config = Config::default();
         assert!(!config.exit_on_copy_yank);
         assert!(config.zebra_striping);
+        assert!(config.recent_repos.is_empty());
     }
 
     #[test]
@@ -92,11 +106,48 @@ mod tests {
         let config = Config {
             exit_on_copy_yank: true,
             zebra_striping: false,
+            recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
         assert_eq!(loaded, config);
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn remember_repo_inserts_at_front() {
+        let mut config = Config::default();
+        config.remember_repo("jeffdt/boomerang");
+        config.remember_repo("jeffdt/rolomux");
+        assert_eq!(
+            config.recent_repos,
+            vec!["jeffdt/rolomux".to_string(), "jeffdt/boomerang".to_string()]
+        );
+    }
+
+    #[test]
+    fn remember_repo_moves_existing_entry_to_front_without_duplicating() {
+        let mut config = Config::default();
+        config.remember_repo("jeffdt/boomerang");
+        config.remember_repo("jeffdt/rolomux");
+        config.remember_repo("jeffdt/boomerang");
+        assert_eq!(
+            config.recent_repos,
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()]
+        );
+    }
+
+    #[test]
+    fn remember_repo_caps_the_list_at_max_recent_repos() {
+        let mut config = Config::default();
+        for i in 0..(MAX_RECENT_REPOS + 3) {
+            config.remember_repo(&format!("jeffdt/repo-{i}"));
+        }
+        assert_eq!(config.recent_repos.len(), MAX_RECENT_REPOS);
+        assert_eq!(
+            config.recent_repos.first(),
+            Some(&format!("jeffdt/repo-{}", MAX_RECENT_REPOS + 2))
+        );
     }
 
     #[test]

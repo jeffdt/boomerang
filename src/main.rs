@@ -21,8 +21,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use ui::{
     map_confirm_key, map_form_key, map_list_key, map_little_create_key, map_search_key,
-    map_settings_key, ConfirmInput, FormInput, ListInput, LittleCreateInput, SearchInput,
-    SettingsInput,
+    map_settings_key, ConfirmInput, FormInput, ListInput, LittleCreateInput, RepoPickerInput,
+    SearchInput, SettingsInput,
 };
 
 const HELP: &str = "\
@@ -30,6 +30,8 @@ boomerang - a tmux-popup TUI for GitHub issues
 
 Usage:
   boomerang                                   Launch the picker (intended via `tmux popup -E`)
+  boomerang OWNER/REPO                        Launch targeting a specific repo, regardless of cwd
+  boomerang --repo OWNER/REPO                 Same, via an explicit flag (also accepts a github.com URL)
   boomerang --preview-loading [ANIMATION] [DURATION]
                                               Play a loading animation preview and exit
   boomerang --doctor                          Print gh, repo, auth, and logging diagnostics
@@ -38,12 +40,17 @@ Usage:
   boomerang --version                         Print version and exit
   boomerang --help                            Print this help and exit
 
+Launching outside a git repo (and without OWNER/REPO) opens the repo picker
+directly; press R from the issue list to switch repos at any time.
+
 Bind it in ~/.tmux.conf, e.g.:
   bind i display-popup -E -B -w 84 -h 60% \"exec boomerang\"";
 
 #[derive(Debug, PartialEq)]
 enum StartupCommand {
-    Launch,
+    Launch {
+        repo: Option<String>,
+    },
     Version,
     Help,
     Doctor,
@@ -58,15 +65,38 @@ enum StartupCommand {
 fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupCommand, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     match args.as_slice() {
-        [] => Ok(StartupCommand::Launch),
+        [] => Ok(StartupCommand::Launch { repo: None }),
         [arg] if matches!(arg.as_str(), "-V" | "--version") => Ok(StartupCommand::Version),
         [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(StartupCommand::Help),
         [arg] if arg == "--doctor" => Ok(StartupCommand::Doctor),
         [arg] if arg == "--capture" => Ok(StartupCommand::Capture),
         [arg] if arg == "--capture-full" => Ok(StartupCommand::CaptureFull),
         [arg, rest @ ..] if arg == "--preview-loading" => parse_loading_preview(rest),
+        [flag, repo] if flag == "--repo" => gh::parse_repo_spec(repo)
+            .map(|repo| StartupCommand::Launch { repo: Some(repo) })
+            .ok_or_else(|| {
+                format!("'{repo}' doesn't look like a GitHub repo (expected OWNER/REPO or a github.com URL)")
+            }),
+        [arg] if arg == "--repo" => Err("--repo requires an OWNER/REPO argument".to_string()),
+        [arg] if !arg.starts_with('-') => gh::parse_repo_spec(arg)
+            .map(|repo| StartupCommand::Launch { repo: Some(repo) })
+            .ok_or_else(|| format!("unknown argument '{arg}'")),
         [arg, ..] => Err(format!("unknown argument '{arg}'")),
     }
+}
+
+/// Whether the current working directory is inside a git work tree. Checked
+/// with `git` directly (not `gh`) so a non-repo directory is detected
+/// instantly and deterministically, without depending on how `gh`'s error
+/// text happens to be worded.
+fn inside_git_work_tree() -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|output| {
+            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+        })
+        .unwrap_or(false)
 }
 
 fn parse_loading_preview(args: &[String]) -> Result<StartupCommand, String> {
@@ -126,8 +156,8 @@ fn parse_preview_duration(value: &str) -> Result<Duration, String> {
 
 fn main() -> anyhow::Result<()> {
     diagnostics::log_event("process_start");
-    match parse_command(std::env::args().skip(1)) {
-        Ok(StartupCommand::Launch) => {}
+    let cli_repo = match parse_command(std::env::args().skip(1)) {
+        Ok(StartupCommand::Launch { repo }) => repo,
         Ok(StartupCommand::Version) => {
             println!("boomerang {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
@@ -156,21 +186,43 @@ fn main() -> anyhow::Result<()> {
             eprintln!("boomerang: {message}\n\n{HELP}");
             std::process::exit(2);
         }
+    };
+
+    let config_path = config::config_path();
+    let mut loaded_config = config::Config::load_from(&config_path);
+    if let Some(repo) = &cli_repo {
+        loaded_config.remember_repo(repo);
+        let _ = loaded_config.save_to(&config_path);
     }
 
-    let source = GhCliSource::new();
-    let mut state = AppState::loading();
-    let config_path = config::config_path();
-    let loaded_config = config::Config::load_from(&config_path);
+    let source = match &cli_repo {
+        Some(repo) => GhCliSource::with_repo(repo.clone()),
+        None => GhCliSource::new(),
+    };
+
+    // A repo passed on the CLI always has somewhere to point `gh -R` at, so
+    // it never needs the cwd fallback. Otherwise, launching outside a git
+    // repo would otherwise leave `gh` with nothing to auto-detect and no
+    // issues to show, so go straight to the picker instead (issue #20).
+    let has_repo_context = cli_repo.is_some() || inside_git_work_tree();
+    let mut state = if has_repo_context {
+        AppState::loading()
+    } else {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(loaded_config.recent_repos.clone(), false);
+        state
+    };
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
-    run_ui(&mut state, &source, &config_path)
+
+    run_ui(&mut state, &source, &config_path, has_repo_context)
 }
 
 fn run_ui<S: IssueSource>(
     state: &mut AppState,
     source: &S,
     config_path: &std::path::Path,
+    has_repo_context: bool,
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
@@ -178,14 +230,8 @@ fn run_ui<S: IssueSource>(
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
     diagnostics::log_event("terminal_ready");
 
-    let initial_load_rx = spawn_initial_load(source.clone());
-    let result = event_loop(
-        &mut terminal,
-        state,
-        source,
-        Some(initial_load_rx),
-        config_path,
-    );
+    let initial_load_rx = has_repo_context.then(|| spawn_initial_load(source.clone()));
+    let result = event_loop(&mut terminal, state, source, initial_load_rx, config_path);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -683,6 +729,10 @@ fn event_loop<S: IssueSource>(
                     ListInput::OpenInBrowser => open_in_browser(state),
                     ListInput::Refresh => start_refresh(state, &mut refresh_rx, (*source).clone()),
                     ListInput::EnterSettings => state.enter_settings(),
+                    ListInput::SwitchRepo => {
+                        let recent = config::Config::load_from(config_path).recent_repos;
+                        state.enter_repo_picker(recent, true);
+                    }
                     ListInput::Quit => {
                         if handle_quit(state) {
                             return Ok(());
@@ -767,14 +817,30 @@ fn event_loop<S: IssueSource>(
                     SettingsInput::Up => state.settings_move_cursor(-1),
                     SettingsInput::Toggle => {
                         state.settings_toggle();
-                        let cfg = config::Config {
-                            exit_on_copy_yank: state.exit_on_copy_yank,
-                            zebra_striping: state.zebra_striping,
-                        };
+                        let mut cfg = config::Config::load_from(config_path);
+                        cfg.exit_on_copy_yank = state.exit_on_copy_yank;
+                        cfg.zebra_striping = state.zebra_striping;
                         let _ = cfg.save_to(config_path);
                     }
                     SettingsInput::Exit => state.exit_settings(),
                     SettingsInput::None => {}
+                },
+                Mode::RepoPicker(_) => match ui::map_repo_picker_key(key) {
+                    RepoPickerInput::Char(c) => state.repo_picker_push(c),
+                    RepoPickerInput::Backspace => state.repo_picker_backspace(),
+                    RepoPickerInput::Up => state.repo_picker_move(-1),
+                    RepoPickerInput::Down => state.repo_picker_move(1),
+                    RepoPickerInput::Cancel => {
+                        if state.repo_picker_cancel() {
+                            return Ok(());
+                        }
+                    }
+                    RepoPickerInput::Submit => {
+                        if let Some(repo) = state.repo_picker_submit() {
+                            switch_repo(state, source, config_path, &mut initial_load_rx, repo);
+                        }
+                    }
+                    RepoPickerInput::None => {}
                 },
             }
         }
@@ -811,6 +877,34 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
         let _ = tx.send(result);
     });
     rx
+}
+
+/// Retarget `source` at `repo`, remember it in the persisted recent-repos
+/// list, and reset `state` back to a fresh loading screen for it. Mirrors
+/// what a relaunch with `boomerang OWNER/REPO` would do, without actually
+/// restarting the process.
+fn switch_repo<S: IssueSource>(
+    state: &mut AppState,
+    source: &S,
+    config_path: &std::path::Path,
+    initial_load_rx: &mut Option<InitialLoadReceiver>,
+    repo: String,
+) {
+    source.set_repo(Some(repo.clone()));
+    let mut cfg = config::Config::load_from(config_path);
+    cfg.remember_repo(&repo);
+    let _ = cfg.save_to(config_path);
+
+    state.issues = Vec::new();
+    state.all_labels = Vec::new();
+    state.state_filter = StateFilter::Open;
+    state.checked.clear();
+    state.search_query.clear();
+    state.repo_name_with_owner = None;
+    state.cursor = 0;
+    state.mode = Mode::List;
+    state.begin_loading("issues");
+    *initial_load_rx = Some(spawn_initial_load(source.clone()));
 }
 
 fn diagnose_initial_load_error(e: anyhow::Error) -> anyhow::Error {
@@ -1313,7 +1407,69 @@ mod tests {
 
     #[test]
     fn parse_command_defaults_to_launch() {
-        assert_eq!(parse_command(args(&[])), Ok(StartupCommand::Launch));
+        assert_eq!(
+            parse_command(args(&[])),
+            Ok(StartupCommand::Launch { repo: None })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_a_bare_owner_repo_positional_arg() {
+        assert_eq!(
+            parse_command(args(&["jeffdt/rolomux"])),
+            Ok(StartupCommand::Launch {
+                repo: Some("jeffdt/rolomux".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_repo_flag() {
+        assert_eq!(
+            parse_command(args(&["--repo", "jeffdt/rolomux"])),
+            Ok(StartupCommand::Launch {
+                repo: Some("jeffdt/rolomux".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_a_github_url_positional_arg() {
+        assert_eq!(
+            parse_command(args(&["https://github.com/jeffdt/rolomux"])),
+            Ok(StartupCommand::Launch {
+                repo: Some("jeffdt/rolomux".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_rejects_repo_flag_missing_its_value() {
+        assert_eq!(
+            parse_command(args(&["--repo"])),
+            Err("--repo requires an OWNER/REPO argument".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_command_rejects_repo_flag_with_an_invalid_value() {
+        assert!(parse_command(args(&["--repo", "not-a-repo"])).is_err());
+    }
+
+    #[test]
+    fn parse_command_rejects_an_unrecognized_flag() {
+        assert_eq!(
+            parse_command(args(&["--nonsense"])),
+            Err("unknown argument '--nonsense'".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_command_rejects_a_positional_arg_that_is_not_a_repo() {
+        assert_eq!(
+            parse_command(args(&["not-a-repo"])),
+            Err("unknown argument 'not-a-repo'".to_string())
+        );
     }
 
     #[test]

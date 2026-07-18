@@ -1,5 +1,5 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, Mode, SettingsRow};
+use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -40,6 +40,7 @@ pub enum ListInput {
     OpenInBrowser,
     Refresh,
     EnterSettings,
+    SwitchRepo,
     Quit,
     None,
 }
@@ -58,6 +59,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('r') => ListInput::Refresh,
         KeyCode::Char(',') => ListInput::EnterSettings,
+        KeyCode::Char('R') => ListInput::SwitchRepo,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -180,6 +182,31 @@ pub fn map_settings_key(key: KeyEvent) -> SettingsInput {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoPickerInput {
+    Char(char),
+    Backspace,
+    Up,
+    Down,
+    Submit,
+    Cancel,
+    None,
+}
+
+pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
+    match key.code {
+        KeyCode::Enter => RepoPickerInput::Submit,
+        KeyCode::Esc => RepoPickerInput::Cancel,
+        KeyCode::Up => RepoPickerInput::Up,
+        KeyCode::Down => RepoPickerInput::Down,
+        KeyCode::Backspace => RepoPickerInput::Backspace,
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            RepoPickerInput::Char(c)
+        }
+        _ => RepoPickerInput::None,
+    }
+}
+
 /// Shrink `area` by `margin` cells on every side, reducing the margin toward
 /// zero rather than panicking if the area is too small to inset cleanly.
 fn inset(area: Rect, margin: u16) -> Rect {
@@ -230,6 +257,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
         Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
         Mode::Settings => draw_settings(frame, inner, state),
+        Mode::RepoPicker(picker) => draw_repo_picker(frame, inner, picker, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -440,7 +468,11 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         match &state.mode {
             Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
             Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
-            _ => "j/k move · h hide pane · / search · a state · space check · C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · q quit".to_string(),
+            Mode::RepoPicker(_) => {
+                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel"
+                    .to_string()
+            }
+            _ => "j/k move · h hide pane · / search · a state · space check · C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · R repo · q quit".to_string(),
         }
     };
     frame.render_widget(
@@ -751,6 +783,64 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
     draw_toast(frame, chunks[2], state);
 }
 
+fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .title("owner/repo or a github.com URL")
+        .border_style(field_style(true));
+    let input_inner = input_block.inner(chunks[0]);
+    frame.render_widget(input_block, chunks[0]);
+    frame.render_widget(Paragraph::new(picker.input.as_str()), input_inner);
+
+    let items: Vec<ListItem> = picker
+        .filtered
+        .iter()
+        .enumerate()
+        .map(|(row, &idx)| {
+            let style = if row == picker.highlight {
+                Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(picker.recent[idx].clone()).style(style)
+        })
+        .collect();
+    let list_block = Block::default().borders(Borders::ALL).title("Recent");
+    if items.is_empty() {
+        let message = if picker.recent.is_empty() {
+            "No recent repos yet"
+        } else {
+            "No recent repos match"
+        };
+        frame.render_widget(
+            List::new(vec![ListItem::new(message).style(Style::default().fg(DIM))])
+                .block(list_block),
+            chunks[1],
+        );
+    } else {
+        frame.render_widget(List::new(items).block(list_block), chunks[1]);
+    }
+
+    draw_shortcuts_hint(frame, chunks[2], state);
+
+    let error_line = picker
+        .error
+        .as_ref()
+        .map(|message| Paragraph::new(message.as_str()).style(Style::default().fg(Color::Red)))
+        .unwrap_or_else(|| Paragraph::new(""));
+    frame.render_widget(error_line.wrap(Wrap { trim: false }), chunks[3]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,6 +1107,43 @@ mod tests {
             map_settings_key(key(KeyCode::Char('z'))),
             SettingsInput::None
         );
+    }
+
+    #[test]
+    fn maps_shift_r_to_switch_repo() {
+        assert_eq!(map_list_key(key(KeyCode::Char('R'))), ListInput::SwitchRepo);
+        assert_eq!(map_list_key(key(KeyCode::Char('r'))), ListInput::Refresh);
+    }
+
+    #[test]
+    fn map_repo_picker_key_covers_typing_navigation_submit_and_cancel() {
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Char('a'))),
+            RepoPickerInput::Char('a')
+        );
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Backspace)),
+            RepoPickerInput::Backspace
+        );
+        assert_eq!(map_repo_picker_key(key(KeyCode::Up)), RepoPickerInput::Up);
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Down)),
+            RepoPickerInput::Down
+        );
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Enter)),
+            RepoPickerInput::Submit
+        );
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Esc)),
+            RepoPickerInput::Cancel
+        );
+    }
+
+    #[test]
+    fn map_repo_picker_key_swallows_ctrl_chars() {
+        let ctrl_c = key_with(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(map_repo_picker_key(ctrl_c), RepoPickerInput::None);
     }
 
     #[test]
@@ -2095,5 +2222,46 @@ mod tests {
         state.toggle_check();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Issues (Open) · 2 checked"));
+    }
+
+    #[test]
+    fn draw_repo_picker_shows_typed_input_and_recent_repos() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_push('j');
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains('j'));
+        assert!(rendered.contains("jeffdt/boomerang"));
+        assert!(rendered.contains("jeffdt/rolomux"));
+    }
+
+    #[test]
+    fn draw_repo_picker_shows_placeholder_with_no_recent_repos() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("No recent repos yet"));
+    }
+
+    #[test]
+    fn draw_repo_picker_shows_error_message() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_push('x');
+        state.repo_picker_submit();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("doesn't look like a repo"));
+    }
+
+    #[test]
+    fn draw_repo_picker_hint_mentions_recent_and_switch() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("up/down recent"));
+        assert!(rendered.contains("enter switch"));
     }
 }
