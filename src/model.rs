@@ -340,9 +340,7 @@ impl AppState {
         match SettingsRow::ALL[self.settings_cursor] {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
-            SettingsRow::ShortcutsOnDemand => {
-                self.shortcuts_on_demand = !self.shortcuts_on_demand
-            }
+            SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
         }
     }
 

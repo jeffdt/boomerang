@@ -1995,10 +1995,8 @@ mod tests {
     #[test]
     fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
-        let list_line1 =
-            "j/k move · h hide pane · / search · a state · space check · enter/e edit";
-        let list_line2 =
-            "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let list_line1 = "j/k move · h hide pane · / search · a state · space check · enter/e edit";
+        let list_line2 = "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
         for line in [list_line1, list_line2, form_line1, form_line2] {
