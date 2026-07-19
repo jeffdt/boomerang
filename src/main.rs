@@ -214,6 +214,7 @@ fn main() -> anyhow::Result<()> {
     };
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
+    state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
 }
@@ -820,6 +821,7 @@ fn event_loop<S: IssueSource>(
                         let mut cfg = config::Config::load_from(config_path);
                         cfg.exit_on_copy_yank = state.exit_on_copy_yank;
                         cfg.zebra_striping = state.zebra_striping;
+                        cfg.shortcuts_on_demand = state.shortcuts_on_demand;
                         let _ = cfg.save_to(config_path);
                     }
                     SettingsInput::Exit => state.exit_settings(),

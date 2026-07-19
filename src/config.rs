@@ -10,6 +10,7 @@ const MAX_RECENT_REPOS: usize = 8;
 pub struct Config {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
+    pub shortcuts_on_demand: bool,
     pub recent_repos: Vec<String>,
 }
 
@@ -18,6 +19,7 @@ impl Default for Config {
         Config {
             exit_on_copy_yank: false,
             zebra_striping: true,
+            shortcuts_on_demand: false,
             recent_repos: Vec::new(),
         }
     }
@@ -80,6 +82,7 @@ mod tests {
         let config = Config::default();
         assert!(!config.exit_on_copy_yank);
         assert!(config.zebra_striping);
+        assert!(!config.shortcuts_on_demand);
         assert!(config.recent_repos.is_empty());
     }
 
@@ -106,6 +109,7 @@ mod tests {
         let config = Config {
             exit_on_copy_yank: true,
             zebra_striping: false,
+            shortcuts_on_demand: true,
             recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
         };
         config.save_to(&path).unwrap();

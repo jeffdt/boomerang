@@ -757,11 +757,29 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .enumerate()
         .map(|(i, row)| {
             let selected = i == state.settings_cursor;
-            let value = match row {
-                SettingsRow::ExitOnCopyYank => state.exit_on_copy_yank,
-                SettingsRow::ZebraStriping => state.zebra_striping,
+            let value_text = match row {
+                SettingsRow::ExitOnCopyYank => {
+                    if state.exit_on_copy_yank {
+                        "On"
+                    } else {
+                        "Off"
+                    }
+                }
+                SettingsRow::ZebraStriping => {
+                    if state.zebra_striping {
+                        "On"
+                    } else {
+                        "Off"
+                    }
+                }
+                SettingsRow::ShortcutsOnDemand => {
+                    if state.shortcuts_on_demand {
+                        "On demand (?)"
+                    } else {
+                        "Always"
+                    }
+                }
             };
-            let value_text = if value { "On" } else { "Off" };
             let label = row.label();
             let pad = list_width
                 .saturating_sub(label.chars().count())
@@ -1151,6 +1169,15 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Exit popup after copy/yank"));
         assert!(rendered.contains("Zebra striping"));
+    }
+
+    #[test]
+    fn draw_settings_shows_shortcuts_on_demand_row_defaulting_to_always() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Show shortcuts"));
+        assert!(rendered.contains("Always"));
     }
 
     #[test]
