@@ -53,7 +53,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
-        KeyCode::Char('C') => ListInput::BigCreate,
+        KeyCode::Char('c') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
@@ -908,9 +908,9 @@ mod tests {
     }
 
     #[test]
-    fn maps_shift_c_to_big_create_and_lowercase_c_to_nothing() {
-        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::None);
-        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::BigCreate);
+    fn maps_lowercase_c_to_big_create_and_shift_c_to_nothing() {
+        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::BigCreate);
+        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::None);
     }
 
     #[test]
