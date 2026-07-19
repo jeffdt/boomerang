@@ -289,18 +289,27 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let mut header = state.issues_header();
+    let (prefix, repo) = state.issues_header_parts();
+    let mut spans = vec![Span::styled(prefix, Style::default().fg(DIM))];
+    if let Some(repo) = repo {
+        spans.push(Span::styled(" in ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            repo,
+            Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC),
+        ));
+    }
+    let mut trailer = String::new();
     if !state.checked.is_empty() {
-        header.push_str(&format!(" · {} checked", state.checked.len()));
+        trailer.push_str(&format!(" · {} checked", state.checked.len()));
     }
     if let Some(pending) = state.pending_message() {
-        header.push_str("  ");
-        header.push_str(&pending);
+        trailer.push_str("  ");
+        trailer.push_str(&pending);
     }
-    frame.render_widget(
-        Paragraph::new(header).style(Style::default().fg(DIM)),
-        chunks[1],
-    );
+    if !trailer.is_empty() {
+        spans.push(Span::styled(trailer, Style::default().fg(DIM)));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
     let list_area = chunks[2];
 
     let visible = state.visible_indices();
@@ -1316,6 +1325,37 @@ mod tests {
     }
 
     #[test]
+    fn repo_name_in_list_header_is_italic_and_accent_colored() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let buf = render_buffer(&state);
+
+        let (rx, ry) = find_in_buffer(&buf, "jeffdt/boomerang").expect("repo name should render");
+        let repo_style = buf[(rx, ry)].style();
+        assert!(
+            repo_style.add_modifier.contains(Modifier::ITALIC),
+            "repo name should be italic"
+        );
+        assert_eq!(
+            repo_style.fg,
+            Some(Color::Cyan),
+            "repo name should use the ACCENT color"
+        );
+
+        let (px, py) = find_in_buffer(&buf, "Open issues in").expect("prefix should render");
+        let prefix_style = buf[(px, py)].style();
+        assert_eq!(
+            prefix_style.fg,
+            Some(Color::DarkGray),
+            "the 'Open issues in' prefix should stay DIM"
+        );
+        assert!(
+            !prefix_style.add_modifier.contains(Modifier::ITALIC),
+            "the prefix should not be italic"
+        );
+    }
+
+    #[test]
     fn renders_issue_number_and_title() {
         let state = AppState::new(vec![issue(42, "Fix login bug")], vec![]);
         let rendered = render_to_string(&state);
@@ -2063,7 +2103,7 @@ mod tests {
     }
 
     #[test]
-    fn blank_spacer_row_appears_between_border_and_header() {
+    fn blank_spacer_row_appears_between_header_and_list() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let rendered = render_to_string(&state);
         let lines: Vec<&str> = rendered.lines().collect();
@@ -2077,14 +2117,14 @@ mod tests {
             .expect("list header should render");
         assert_eq!(
             header_row,
-            top_border_row + 2,
-            "expected exactly one blank row between the top border ({top_border_row}) and the header ({header_row})"
+            top_border_row + 1,
+            "expected the header ({header_row}) to sit directly below the top border ({top_border_row}), with no blank row above it"
         );
-        let spacer_row = lines[top_border_row + 1];
+        let spacer_row = lines[header_row + 1];
         let interior = spacer_row.trim_matches(|c: char| c == ' ' || c == '│');
         assert!(
             interior.is_empty(),
-            "expected the row between the top border and the header to be blank, got: {spacer_row:?}"
+            "expected the row between the header and the list to be blank, got: {spacer_row:?}"
         );
     }
 

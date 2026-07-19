@@ -32,7 +32,11 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Length(1),
         ])
         .split(area);
-    let mut header = state.issues_header();
+    let (prefix, repo) = state.issues_header_parts();
+    let mut header = match repo {
+        Some(repo) => format!("{prefix} in {repo}"),
+        None => prefix,
+    };
     if let Some(loading) = state.loading_message() {
         header.push_str("  ");
         header.push_str(&loading);
