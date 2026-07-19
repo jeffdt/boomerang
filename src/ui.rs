@@ -1885,7 +1885,7 @@ mod tests {
 
     #[test]
     fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
-        // 70 chars: longer than the list's title budget at this fixed 80x24
+        // 70 chars: longer than the list's title budget at this fixed 80x25
         // TestBackend size (74-char inner width minus the 6-char number
         // column = 68), but short enough to fit on one line at the detail
         // pane's full width, so it renders unwrapped and unclipped.
@@ -2146,7 +2146,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        // TestBackend is 80x24; the box+footer area must not stretch past 4 rows.
+        // TestBackend is 80x25; the box+footer area must not stretch past 4 rows.
         // No top margin, and the hint/toast rows are merged into one footer row:
         // content occupies rows 0-3 (4 rows), leaving rows 4+ blank.
         for y in 4..buf.area.height {
