@@ -2,9 +2,10 @@
 #
 # Prerequisites:
 #   - Run docs/demo/seed-issues.sh first so jeffdt/universe has a
-#     predictable, deduplicated issue list (this tape assumes issue #1 is
-#     the "spike: check if light speed is constant" issue and that five
-#     filler issues exist above it in the list).
+#     predictable, deduplicated issue list (this tape assumes the "Check if
+#     light speed is constant for every observer" spike issue is the
+#     oldest issue, sorting last, with four filler issues above it in the
+#     list - five open issues total).
 #   - Run from the repo root: vhs docs/demo/browse-and-yank.tape
 #   - `boomerang` on PATH (the real binary, not a dev build)
 #   - `gh` authenticated
@@ -67,8 +68,6 @@ Sleep 500ms
 Type "y"
 Sleep 1500ms
 
-Down
-Sleep 200ms
 Down
 Sleep 200ms
 Down

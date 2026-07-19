@@ -133,14 +133,19 @@ like Starship don't emit truecolor escapes that fight the recording's
 chosen `Set Theme`.
 
 **Run `docs/demo/seed-issues.sh` before recording.** It resets
-`jeffdt/universe` to a known-good state: closes duplicate "spike: check if
-light speed is constant" issues left over from prior recordings (keeping
-one, reset to a pristine no-body/no-labels state since `edit-issue.tape`
-adds those live), ensures the filler issues `browse-and-yank.tape` needs
-exist, and trims the repo's default label set so the "spike" label — which
-`edit-issue.tape` selects — lands inside boomerang's label picker without
-needing it to scroll (see the note on that below). It's idempotent, safe to
-run before every recording regardless of current state.
+`jeffdt/universe` to a known-good state: reconciles the repo's labels down
+to a small curated set (`bug`, `docs`, `feature`, `good first issue`,
+`spike` — anything else, including GitHub's own defaults, gets deleted),
+reconciles the filler issues `browse-and-yank.tape` needs (title, labels,
+and body all get overwritten to match on every run), and closes duplicate
+"Check if light speed is constant for every observer" issues left over
+from prior recordings (keeping one, reset to a pristine no-body/no-labels
+state since `edit-issue.tape` adds those live). It's idempotent, safe to
+run before every recording regardless of current state. If you change any
+of the titles/labels/bodies, edit `seed-issues.sh` and re-run it rather
+than hand-editing issues in `jeffdt/universe` directly — otherwise the next
+recording session silently reverts your edit back to whatever the script
+says.
 
 **Isolate `XDG_CONFIG_HOME` too, and preserve `gh`'s auth when you do.**
 Each tape exports `XDG_CONFIG_HOME` to a scratch directory before launching
@@ -189,8 +194,9 @@ one-liner reappears the moment boomerang exits back to the shell.
 cursor** (`render_labels` in `src/ui.rs` renders a plain ratatui `List` with
 no `ListState`, so the visible window is always the first N items
 regardless of where the cursor actually is — worth fixing in boomerang
-itself at some point). `seed-issues.sh` works around this for
-`edit-issue.tape` by trimming `jeffdt/universe`'s default label set down
-until "spike" (the newest, so it always sorts last) fits inside the visible
-window. If you add more labels to that repo, re-check that "spike" is still
-visible, or the recorded label selection will silently happen off-screen.
+itself at some point). `jeffdt/universe`'s curated 5-label set (see above)
+currently fits on screen in its entirety regardless of cursor position, so
+this doesn't bite `edit-issue.tape` today. If the label set grows again,
+re-check that whichever label the tape selects (currently "spike", the
+last one alphabetically) is still visible in the recorded frame, or the
+selection will silently happen off-screen.

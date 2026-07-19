@@ -1,10 +1,10 @@
 # Regenerates docs/images/edit-issue.gif for the README.
 #
 # Prerequisites:
-#   - Run docs/demo/seed-issues.sh first. It resets the "spike: check if
-#     light speed is constant" issue to a pristine just-captured state (no
-#     body, no labels) on every run, which this tape depends on - it's the
-#     one adding those live.
+#   - Run docs/demo/seed-issues.sh first. It resets the "Check if light
+#     speed is constant for every observer" issue to a pristine
+#     just-captured state (no body, no labels) on every run, which this
+#     tape depends on - it's the one adding those live.
 #   - Run from the repo root: vhs docs/demo/edit-issue.tape
 #   - `boomerang` on PATH (the real binary, not a dev build)
 #   - `gh` authenticated
@@ -21,18 +21,20 @@
 #
 # Story: this is the sequel to quick-capture.gif. That one shows an idea
 # caught on a whim with nothing but a title; this one shows it fleshed out
-# later - body written, "spike" label attached - once there's actually
-# time to think it through. Search finds it by title rather than scrolling,
-# since "where did I put that idea" is the whole reason capture-now,
-# flesh-out-later works: you don't have to remember where you left it.
+# before starting on it - not with findings, since nothing's been tested
+# yet, but with the rationale for why it's worth testing (the body below is
+# Einstein's actual 1905 "chasing a light beam" thought experiment,
+# adapted). Search finds it by title rather than scrolling, since "where
+# did I put that idea" is the whole reason capture-now, flesh-out-later
+# works: you don't have to remember where you left it.
 #
 # The Labels field renders as a plain list with no scroll-follow (see
 # src/ui.rs render_labels - a ratatui List with no ListState, so the
 # visible window never moves even if the cursor does; worth fixing in
-# boomerang itself at some point, but not attempted here). seed-issues.sh
-# works around it by trimming the repo's default labels down to 8, so
-# "spike" (the newest, sorting last) still lands inside the visible
-# window - the 7 Down presses below land exactly on it.
+# boomerang itself at some point, but not attempted here). This isn't
+# currently a problem for this recording - seed-issues.sh's curated label
+# set is only 5 entries, so the whole list fits on screen regardless of
+# cursor position - but re-check it if the label set ever grows again.
 
 Output "docs/images/edit-issue.gif"
 
@@ -71,11 +73,11 @@ Sleep 900ms
 
 Tab
 Sleep 400ms
-Type "Special relativity confirms it: c is invariant across inertial frames (Einstein, 1905). Traced it through the Michelson-Morley result by hand - checks out."
+Type "If you chased a beam of light at c, would it look frozen next to you, like a stationary wave? Maxwell's equations don't allow a light wave to just sit still. Worth spiking on whether c has to be the same for every observer regardless of their own motion, before anything downstream assumes velocities just add normally."
 Sleep 600ms
 Tab
 Sleep 500ms
-Down@150ms 7
+Down@150ms 4
 Sleep 400ms
 Space
 Sleep 600ms
