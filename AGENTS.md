@@ -22,6 +22,13 @@ family as its sibling project, [rolomux](https://github.com/jeffdt/rolomux)
   binary) in a new tmux window via `mux spawn --workspace caller`, so Jeff can
   look at it before design gets locked in. Skip this for changes with no
   visual surface (model/logic-only work).
+- **Isolate a manual binary run from Jeff's real config.** When running the
+  compiled binary directly to eyeball a change (not just tests), point
+  `XDG_CONFIG_HOME` at a scratch directory first, e.g. `XDG_CONFIG_HOME=/tmp/
+  boomerang-preview target/release/boomerang`. boomerang has no built-in
+  isolation flag, so without this any interaction with a config-writing
+  feature silently mutates Jeff's real `~/.config/boomerang/config.toml`.
+  Skip it only for changes with no config-writing surface at all.
 - **Named ANSI colors only.** Use the 16 named terminal colors (e.g.
   `Color::Cyan`, `Color::DarkGray`), never `Color::Rgb`. This is what lets the
   picker inherit the user's terminal theme rather than imposing fixed colors.
@@ -29,6 +36,12 @@ family as its sibling project, [rolomux](https://github.com/jeffdt/rolomux)
   brainstorming skill in this repo, skip the "user reviews written spec"
   checkpoint — go straight from a written spec into the implementation plan.
   Jeff reviews the plan, not the spec, before implementation starts.
+- **Check for bundleable issues when picking up a new one.** Before
+  brainstorming a requested issue, skim the other open issues for ones that
+  share the same area of code, were filed the same day, or carry matching
+  labels (e.g. the same `priority`+`small` pair) — fold those into the same
+  spec/plan/PR instead of leaving them for a separate pass. If it's a close
+  call whether something belongs in scope, ask rather than guessing.
 - **Always work in a worktree; never implement directly on `main`.** Before
   starting any implementation work (not just investigation/Q&A), check
   whether the session is already running in a worktree. If it isn't, create
