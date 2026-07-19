@@ -734,6 +734,7 @@ fn event_loop<S: IssueSource>(
                         let recent = config::Config::load_from(config_path).recent_repos;
                         state.enter_repo_picker(recent, true);
                     }
+                    ListInput::ToggleShortcuts => state.toggle_shortcuts(),
                     ListInput::Quit => {
                         if handle_quit(state) {
                             return Ok(());

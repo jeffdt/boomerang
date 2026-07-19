@@ -41,6 +41,7 @@ pub enum ListInput {
     Refresh,
     EnterSettings,
     SwitchRepo,
+    ToggleShortcuts,
     Quit,
     None,
 }
@@ -60,6 +61,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('r') => ListInput::Refresh,
         KeyCode::Char(',') => ListInput::EnterSettings,
         KeyCode::Char('R') => ListInput::SwitchRepo,
+        KeyCode::Char('?') => ListInput::ToggleShortcuts,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -469,7 +471,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             Mode::RepoPicker(_) => vec![styled_hint(
                 "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
             )],
-            _ => vec![
+            _ if state.shortcuts_visible() => vec![
                 styled_hint(
                     "j/k move · h hide pane · / search · a state · space check · enter/e edit",
                 ),
@@ -477,6 +479,10 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
                     "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
                 ),
             ],
+            _ => vec![Line::from(Span::styled(
+                "? shortcuts",
+                Style::default().fg(DIM),
+            ))],
         }
     };
     frame.render_widget(
@@ -938,6 +944,14 @@ mod tests {
     fn maps_lowercase_c_to_big_create_and_shift_c_to_nothing() {
         assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::BigCreate);
         assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::None);
+    }
+
+    #[test]
+    fn maps_question_mark_to_toggle_shortcuts() {
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('?'))),
+            ListInput::ToggleShortcuts
+        );
     }
 
     #[test]
@@ -2006,6 +2020,22 @@ mod tests {
                 line.chars().count()
             );
         }
+    }
+
+    #[test]
+    fn on_demand_shortcuts_collapse_to_a_nudge_until_toggled() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        state.shortcuts_on_demand = true;
+
+        let collapsed = render_to_string(&state);
+        assert!(collapsed.contains("? shortcuts"));
+        assert!(!collapsed.contains("h hide pane"));
+
+        state.toggle_shortcuts();
+        let revealed = render_to_string(&state);
+        assert!(revealed.contains("h hide pane"));
+        assert!(revealed.contains("c create"));
+        assert!(!revealed.contains("? shortcuts"));
     }
 
     #[test]

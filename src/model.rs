@@ -262,8 +262,6 @@ pub struct AppState {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
     pub shortcuts_on_demand: bool,
-    /// Consumed starting in Task 5, which wires the `?` key to it.
-    #[allow(dead_code)]
     pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
@@ -460,6 +458,20 @@ impl AppState {
 
     pub fn toggle_pane(&mut self) {
         self.pane_open = !self.pane_open;
+    }
+
+    /// Whether the main list's footer legend should render its full
+    /// two-line hint right now: always true unless the user has set
+    /// `shortcuts_on_demand`, in which case it's collapsed to a `?
+    /// shortcuts` nudge until `toggle_shortcuts` reveals it for this popup.
+    pub fn shortcuts_visible(&self) -> bool {
+        !self.shortcuts_on_demand || self.show_shortcuts_now
+    }
+
+    /// Flip the transient (non-persisted) per-launch reveal. Resets to
+    /// hidden every time boomerang starts, matching rolomux's `?` toggle.
+    pub fn toggle_shortcuts(&mut self) {
+        self.show_shortcuts_now = !self.show_shortcuts_now;
     }
 
     pub fn set_issues(&mut self, issues: Vec<Issue>) {
@@ -1894,6 +1906,24 @@ mod tests {
             !state.exit_on_copy_yank && state.zebra_striping,
             "toggling the third row must not affect the first two"
         );
+    }
+
+    #[test]
+    fn shortcuts_visible_is_always_true_when_setting_is_always() {
+        let state = AppState::new(vec![], vec![]);
+        assert!(!state.shortcuts_on_demand);
+        assert!(state.shortcuts_visible());
+    }
+
+    #[test]
+    fn toggle_shortcuts_reveals_and_hides_when_on_demand() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.shortcuts_on_demand = true;
+        assert!(!state.shortcuts_visible(), "on-demand starts collapsed");
+        state.toggle_shortcuts();
+        assert!(state.shortcuts_visible());
+        state.toggle_shortcuts();
+        assert!(!state.shortcuts_visible(), "toggles back off");
     }
 
     fn repo_picker_state(state: &AppState) -> &RepoPickerState {
