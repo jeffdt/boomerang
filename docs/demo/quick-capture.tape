@@ -13,7 +13,12 @@
 # inside the recording so the actual `display-popup` chrome renders, not just
 # boomerang's own UI. The pane runs `zsh -f` (no rc files) so prompt tools
 # like Starship don't load — those often emit truecolor escapes that bypass
-# `Set Theme` entirely, which would fight the chosen theme on screen.
+# `Set Theme` entirely, which would fight the chosen theme on screen. It also
+# points XDG_CONFIG_HOME at a scratch directory before starting the nested
+# tmux server, so the recording runs against boomerang's default settings
+# rather than whatever's currently in Jeff's real config.toml. `gh` also
+# honors XDG_CONFIG_HOME, so the scratch dir gets a symlinked-in `gh/`
+# pointing at the real config — otherwise `gh` loses its auth entirely.
 #
 # The recording opens mid-flow, not on a blank prompt: hidden setup builds up
 # a python REPL already a few steps into an unrelated Newtonian orbital-
@@ -34,7 +39,7 @@ Set Height 600
 Set Theme "GruvboxDark"
 
 Hide
-Type "unset TMUX; BOOMERANG_REPO=$PWD; cd ~/code/universe && tmux -L boomerang-demo-gif -f $BOOMERANG_REPO/docs/demo/demo.tmux.conf new-session -s demo zsh -f"
+Type "unset TMUX; export XDG_CONFIG_HOME=$(mktemp -d); mkdir -p $XDG_CONFIG_HOME/gh; ln -s ~/.config/gh/*.yml $XDG_CONFIG_HOME/gh/; BOOMERANG_REPO=$PWD; cd ~/code/universe && tmux -L boomerang-demo-gif -f $BOOMERANG_REPO/docs/demo/demo.tmux.conf new-session -s demo zsh -f"
 Enter
 Sleep 2s
 
