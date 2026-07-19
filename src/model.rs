@@ -132,15 +132,21 @@ pub struct RepoPickerState {
 pub enum SettingsRow {
     ExitOnCopyYank,
     ZebraStriping,
+    ShortcutsOnDemand,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 2] = [SettingsRow::ExitOnCopyYank, SettingsRow::ZebraStriping];
+    pub const ALL: [SettingsRow; 3] = [
+        SettingsRow::ExitOnCopyYank,
+        SettingsRow::ZebraStriping,
+        SettingsRow::ShortcutsOnDemand,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
             SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
             SettingsRow::ZebraStriping => "Zebra striping",
+            SettingsRow::ShortcutsOnDemand => "Show shortcuts",
         }
     }
 }
@@ -255,6 +261,8 @@ pub struct AppState {
     pub repo_name_with_owner: Option<String>,
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
+    pub shortcuts_on_demand: bool,
+    pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
 }
@@ -276,6 +284,8 @@ impl AppState {
             repo_name_with_owner: None,
             exit_on_copy_yank: false,
             zebra_striping: true,
+            shortcuts_on_demand: false,
+            show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
         }
@@ -328,6 +338,7 @@ impl AppState {
         match SettingsRow::ALL[self.settings_cursor] {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
+            SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
         }
     }
 
@@ -447,6 +458,20 @@ impl AppState {
 
     pub fn toggle_pane(&mut self) {
         self.pane_open = !self.pane_open;
+    }
+
+    /// Whether the main list's footer legend should render its full
+    /// two-line hint right now: always true unless the user has set
+    /// `shortcuts_on_demand`, in which case it's collapsed to a `?
+    /// shortcuts` nudge until `toggle_shortcuts` reveals it for this popup.
+    pub fn shortcuts_visible(&self) -> bool {
+        !self.shortcuts_on_demand || self.show_shortcuts_now
+    }
+
+    /// Flip the transient (non-persisted) per-launch reveal. Resets to
+    /// hidden every time boomerang starts, matching rolomux's `?` toggle.
+    pub fn toggle_shortcuts(&mut self) {
+        self.show_shortcuts_now = !self.show_shortcuts_now;
     }
 
     pub fn set_issues(&mut self, issues: Vec<Issue>) {
@@ -804,6 +829,18 @@ impl AppState {
             "{} {action}...",
             spinner_frame(&pending.started_at)
         ))
+    }
+
+    /// The list header's leading text: the state filter followed by the
+    /// known repo, e.g. "Open issues in jeffdt/boomerang". Falls back to
+    /// just "Open issues" while the repo name hasn't loaded yet (or failed
+    /// to). Shared by `ui::draw_list` and `loading::draw`, which show the
+    /// same header before and after the issue list itself has loaded.
+    pub fn issues_header(&self) -> String {
+        match &self.repo_name_with_owner {
+            Some(repo) => format!("{:?} issues in {repo}", self.state_filter),
+            None => format!("{:?} issues", self.state_filter),
+        }
     }
 
     pub fn clear_expired_status(&mut self) {
@@ -1816,7 +1853,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 1,
+            state.settings_cursor, 2,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -1849,6 +1886,44 @@ mod tests {
             !state.exit_on_copy_yank,
             "toggling the second row must not affect the first"
         );
+    }
+
+    #[test]
+    fn new_app_state_defaults_shortcuts_on_demand_off() {
+        let state = AppState::new(vec![], vec![]);
+        assert!(!state.shortcuts_on_demand);
+        assert!(!state.show_shortcuts_now);
+    }
+
+    #[test]
+    fn settings_toggle_flips_shortcuts_on_demand_independently() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(2);
+        assert!(!state.shortcuts_on_demand);
+        state.settings_toggle();
+        assert!(state.shortcuts_on_demand);
+        assert!(
+            !state.exit_on_copy_yank && state.zebra_striping,
+            "toggling the third row must not affect the first two"
+        );
+    }
+
+    #[test]
+    fn shortcuts_visible_is_always_true_when_setting_is_always() {
+        let state = AppState::new(vec![], vec![]);
+        assert!(!state.shortcuts_on_demand);
+        assert!(state.shortcuts_visible());
+    }
+
+    #[test]
+    fn toggle_shortcuts_reveals_and_hides_when_on_demand() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.shortcuts_on_demand = true;
+        assert!(!state.shortcuts_visible(), "on-demand starts collapsed");
+        state.toggle_shortcuts();
+        assert!(state.shortcuts_visible());
+        state.toggle_shortcuts();
+        assert!(!state.shortcuts_visible(), "toggles back off");
     }
 
     fn repo_picker_state(state: &AppState) -> &RepoPickerState {

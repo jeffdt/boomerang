@@ -3,7 +3,7 @@ use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRo
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::Input;
@@ -41,6 +41,7 @@ pub enum ListInput {
     Refresh,
     EnterSettings,
     SwitchRepo,
+    ToggleShortcuts,
     Quit,
     None,
 }
@@ -53,13 +54,14 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
-        KeyCode::Char('C') => ListInput::BigCreate,
+        KeyCode::Char('c') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
         KeyCode::Char('r') => ListInput::Refresh,
         KeyCode::Char(',') => ListInput::EnterSettings,
         KeyCode::Char('R') => ListInput::SwitchRepo,
+        KeyCode::Char('?') => ListInput::ToggleShortcuts,
         KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
         KeyCode::Char('y') => ListInput::CopyReference,
         KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
@@ -228,11 +230,6 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(ACCENT);
-    let title_text = state
-        .repo_name_with_owner
-        .as_deref()
-        .map(format_repo_title)
-        .unwrap_or_else(|| "boomerang".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -240,7 +237,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                format!("‹ {title_text} ›"),
+                "‹ boomerang ›",
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -263,7 +260,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(1),
-                    Constraint::Length(1),
+                    Constraint::Length(2),
                     Constraint::Length(1),
                 ])
                 .split(inner);
@@ -292,7 +289,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let mut header = format!("Issues ({:?})", state.state_filter);
+    let mut header = state.issues_header();
     if !state.checked.is_empty() {
         header.push_str(&format!(" · {} checked", state.checked.len()));
     }
@@ -462,21 +459,34 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     }
     // The pending spinner text itself renders in draw_toast; repeating it
     // here would show it twice stacked in the footer.
-    let text = if !idle {
-        "q quit".to_string()
+    let lines: Vec<Line> = if !idle {
+        vec![styled_hint("q quit")]
     } else {
         match &state.mode {
-            Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
-            Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
-            Mode::RepoPicker(_) => {
-                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel"
-                    .to_string()
-            }
-            _ => "j/k move · h hide pane · / search · a state · space check · C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · R repo · q quit".to_string(),
+            Mode::Form(_) => vec![
+                styled_hint("tab/shift+tab field · ctrl+s submit"),
+                styled_hint("ctrl+w delete word · ctrl+u clear line · esc cancel"),
+            ],
+            Mode::Settings => vec![styled_hint("j/k move · enter/space toggle · esc back")],
+            Mode::RepoPicker(_) => vec![styled_hint(
+                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
+            )],
+            _ if state.shortcuts_visible() => vec![
+                styled_hint(
+                    "j/k move · h hide pane · / search · a state · space check · enter/e edit",
+                ),
+                styled_hint(
+                    "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
+                ),
+            ],
+            _ => vec![Line::from(Span::styled(
+                "? shortcuts",
+                Style::default().fg(DIM),
+            ))],
         }
     };
     frame.render_widget(
-        Paragraph::new(styled_hint(&text)).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -538,12 +548,6 @@ fn truncate_title(title: &str, max_width: usize) -> String {
     }
     let kept: String = title.chars().take(max_width - 3).collect();
     format!("{kept}...")
-}
-
-/// Seam for a future settings feature (e.g. showing the repo name without its
-/// owner) to hook into without touching call sites; today it's a passthrough.
-fn format_repo_title(repo: &str) -> String {
-    repo.to_string()
 }
 
 fn label_style(color: Color) -> Style {
@@ -619,7 +623,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(1),
         ])
         .split(area);
@@ -759,11 +763,29 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .enumerate()
         .map(|(i, row)| {
             let selected = i == state.settings_cursor;
-            let value = match row {
-                SettingsRow::ExitOnCopyYank => state.exit_on_copy_yank,
-                SettingsRow::ZebraStriping => state.zebra_striping,
+            let value_text = match row {
+                SettingsRow::ExitOnCopyYank => {
+                    if state.exit_on_copy_yank {
+                        "On"
+                    } else {
+                        "Off"
+                    }
+                }
+                SettingsRow::ZebraStriping => {
+                    if state.zebra_striping {
+                        "On"
+                    } else {
+                        "Off"
+                    }
+                }
+                SettingsRow::ShortcutsOnDemand => {
+                    if state.shortcuts_on_demand {
+                        "On demand (?)"
+                    } else {
+                        "Always"
+                    }
+                }
             };
-            let value_text = if value { "On" } else { "Off" };
             let label = row.label();
             let pad = list_width
                 .saturating_sub(label.chars().count())
@@ -919,9 +941,17 @@ mod tests {
     }
 
     #[test]
-    fn maps_shift_c_to_big_create_and_lowercase_c_to_nothing() {
-        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::None);
-        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::BigCreate);
+    fn maps_lowercase_c_to_big_create_and_shift_c_to_nothing() {
+        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::BigCreate);
+        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::None);
+    }
+
+    #[test]
+    fn maps_question_mark_to_toggle_shortcuts() {
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('?'))),
+            ListInput::ToggleShortcuts
+        );
     }
 
     #[test]
@@ -1156,6 +1186,15 @@ mod tests {
     }
 
     #[test]
+    fn draw_settings_shows_shortcuts_on_demand_row_defaulting_to_always() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Show shortcuts"));
+        assert!(rendered.contains("Always"));
+    }
+
+    #[test]
     fn draw_settings_cursor_row_uses_selected_style() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_settings();
@@ -1194,7 +1233,7 @@ mod tests {
     }
 
     fn render_buffer(state: &AppState) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(80, 25);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
         terminal.backend().buffer().clone()
@@ -1270,7 +1309,7 @@ mod tests {
     fn list_header_uses_dim_color_not_dim_modifier() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let buf = render_buffer(&state);
-        let (x, y) = find_in_buffer(&buf, "Issues (").expect("header should render");
+        let (x, y) = find_in_buffer(&buf, "Open issues").expect("header should render");
         let style = buf[(x, y)].style();
         assert_eq!(style.fg, Some(Color::DarkGray));
         assert!(!style.add_modifier.contains(Modifier::DIM));
@@ -1289,6 +1328,33 @@ mod tests {
         let state = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains(&format!("{:?}", StateFilter::Open)));
+    }
+
+    #[test]
+    fn list_header_leads_with_state_filter_and_trails_with_repo() {
+        let mut with_repo = AppState::new(vec![], vec![]);
+        with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let rendered = render_to_string(&with_repo);
+        assert!(rendered.contains("Open issues in jeffdt/boomerang"));
+
+        let without_repo = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&without_repo);
+        assert!(rendered.contains("Open issues"));
+        assert!(!rendered.contains("Open issues in"));
+    }
+
+    #[test]
+    fn list_header_reflects_closed_and_all_state_filters() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+
+        state.cycle_state_filter(); // Open -> Closed
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Closed issues in jeffdt/boomerang"));
+
+        state.cycle_state_filter(); // Closed -> All
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("All issues in jeffdt/boomerang"));
     }
 
     #[test]
@@ -1543,23 +1609,16 @@ mod tests {
     }
 
     #[test]
-    fn format_repo_title_is_a_passthrough_today() {
-        assert_eq!(format_repo_title("jeffdt/boomerang"), "jeffdt/boomerang");
-    }
+    fn border_title_is_always_boomerang_regardless_of_repo_name() {
+        let mut with_repo = AppState::new(vec![issue(1, "a")], vec![]);
+        with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let rendered_with_repo = render_to_string(&with_repo);
+        assert!(rendered_with_repo.contains("‹ boomerang ›"));
+        assert!(!rendered_with_repo.contains("‹ jeffdt/boomerang ›"));
 
-    #[test]
-    fn border_title_shows_repo_name_when_available() {
-        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
-        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ jeffdt/boomerang ›"));
-    }
-
-    #[test]
-    fn border_title_falls_back_to_app_name_when_repo_unknown() {
-        let state = AppState::new(vec![issue(1, "a")], vec![]);
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ boomerang ›"));
+        let without_repo = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered_without_repo = render_to_string(&without_repo);
+        assert!(rendered_without_repo.contains("‹ boomerang ›"));
     }
 
     #[test]
@@ -1602,7 +1661,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header_line = rendered
             .lines()
-            .find(|line| line.contains("Issues ("))
+            .find(|line| line.contains("issues"))
             .expect("header line rendered");
         assert!(
             !header_line.contains('┌') && !header_line.contains('┐') && !header_line.contains('─'),
@@ -1711,7 +1770,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header = rendered
             .lines()
-            .find(|line| line.contains("Issues (Open)"))
+            .find(|line| line.contains("Open issues"))
             .expect("list header rendered");
         assert!(header.contains("Creating issue..."));
     }
@@ -1723,7 +1782,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header = rendered
             .lines()
-            .find(|line| line.contains("Issues (Open)"))
+            .find(|line| line.contains("Open issues"))
             .expect("list header rendered");
         assert!(header.contains("Updating issue..."));
     }
@@ -1867,7 +1926,7 @@ mod tests {
 
     #[test]
     fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
-        // 70 chars: longer than the list's title budget at this fixed 80x24
+        // 70 chars: longer than the list's title budget at this fixed 80x25
         // TestBackend size (74-char inner width minus the 6-char number
         // column = 68), but short enough to fit on one line at the detail
         // pane's full width, so it renders unwrapped and unclipped.
@@ -1888,16 +1947,11 @@ mod tests {
 
     #[test]
     fn list_mode_hint_mentions_h_to_hide_and_create() {
-        // Was list_mode_hint_mentions_h_to_hide_and_enter_or_e_to_edit,
-        // asserting "enter/e edit" too: adding "space check" pushed that
-        // segment past the single-row hint's visible width. The footer
-        // overflowing its row is a pre-existing, tracked-separately issue,
-        // not something this test should paper over by pretending to still
-        // check the truncated segment.
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
-        assert!(rendered.contains("C create"));
+        assert!(rendered.contains("c create"));
+        assert!(rendered.contains("enter/e edit"));
     }
 
     #[test]
@@ -1905,6 +1959,83 @@ mod tests {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("space check"));
+    }
+
+    #[test]
+    fn list_mode_hint_spans_two_rows_with_all_shortcuts_present() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        for shortcut in [
+            "j/k move",
+            "h hide pane",
+            "/ search",
+            "a state",
+            "space check",
+            "enter/e edit",
+            "c create",
+            "x close",
+            "o open",
+            "y/Y/^y copy",
+            ", settings",
+            "R repo",
+            "q quit",
+        ] {
+            assert!(
+                rendered.contains(shortcut),
+                "expected footer hint to mention {shortcut:?}, got: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn form_mode_hint_spans_two_rows_with_all_shortcuts_present() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        for shortcut in [
+            "tab/shift+tab field",
+            "ctrl+s submit",
+            "ctrl+w delete word",
+            "ctrl+u clear line",
+            "esc cancel",
+        ] {
+            assert!(
+                rendered.contains(shortcut),
+                "expected form footer hint to mention {shortcut:?}, got: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
+        const REAL_POPUP_INNER_WIDTH: usize = 78;
+        let list_line1 = "j/k move · h hide pane · / search · a state · space check · enter/e edit";
+        let list_line2 = "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let form_line1 = "tab/shift+tab field · ctrl+s submit";
+        let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
+        for line in [list_line1, list_line2, form_line1, form_line2] {
+            assert!(
+                line.chars().count() <= REAL_POPUP_INNER_WIDTH,
+                "hint line {line:?} is {} chars, over the {REAL_POPUP_INNER_WIDTH}-column popup budget",
+                line.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn on_demand_shortcuts_collapse_to_a_nudge_until_toggled() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        state.shortcuts_on_demand = true;
+
+        let collapsed = render_to_string(&state);
+        assert!(collapsed.contains("? shortcuts"));
+        assert!(!collapsed.contains("h hide pane"));
+
+        state.toggle_shortcuts();
+        let revealed = render_to_string(&state);
+        assert!(revealed.contains("h hide pane"));
+        assert!(revealed.contains("c create"));
+        assert!(!revealed.contains("? shortcuts"));
     }
 
     #[test]
@@ -1942,7 +2073,7 @@ mod tests {
             .expect("outer frame's top border should render");
         let header_row = lines
             .iter()
-            .position(|line| line.contains("Issues ("))
+            .position(|line| line.contains("issues"))
             .expect("list header should render");
         assert_eq!(
             header_row,
@@ -2070,7 +2201,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         let buf = render_buffer(&state);
-        // TestBackend is 80x24; the box+footer area must not stretch past 4 rows.
+        // TestBackend is 80x25; the box+footer area must not stretch past 4 rows.
         // No top margin, and the hint/toast rows are merged into one footer row:
         // content occupies rows 0-3 (4 rows), leaving rows 4+ blank.
         for y in 4..buf.area.height {
@@ -2221,7 +2352,7 @@ mod tests {
         state.move_cursor(1);
         state.toggle_check();
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Issues (Open) · 2 checked"));
+        assert!(rendered.contains("Open issues · 2 checked"));
     }
 
     #[test]
