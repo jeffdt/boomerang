@@ -1,59 +1,66 @@
 # boomerang
 
-A tmux-popup TUI for browsing, searching, creating, editing, and closing
-GitHub issues in the repo sitting in your current pane, without leaving the
-terminal. Same architectural family as
-[smux](https://github.com/jeffdt/smux): a small Rust binary launched on
-demand via `tmux display-popup`.
+![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust&logoColor=white)
+![TUI](https://img.shields.io/badge/TUI-ratatui-1f6feb)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey)
+![Vibe coded](https://img.shields.io/badge/vibe%20coded-100%25-ff69b4)
 
-## Install
+A tiny issue manager for tmux. Fling ideas into GitHub right when they occur and catch them again when it's time to build.
 
-Build from source:
+Good ideas often show up in the middle of other tasks (mid-refactor, mid-review, mid-standup).
+Switch over to your browser to file them and you lose momentum on whatever you were working on.
+Wait till you're done and you risk losing the idea.
 
+Boomerang turns "I have to remember this idea for later" into a 3 second operation right from your terminal.
+The idea becomes permanent immediately instead of a mental post-it that gets lost in the winds of chaos.
+
+It's a standalone binary that tmux pops open on demand, in the same spirit as [rolomux](https://github.com/jeffdt/rolomux): executes right where you work, does its job, and gets out of the way again.
+
+## Installation
+
+> [!IMPORTANT]
+> Boomerang shells out to the [GitHub CLI](https://cli.github.com) for everything rather than talking to GitHub directly. Install and authenticate `gh` first (`gh auth login`) if you haven't already; the steps below assume it's already working.
+
+### 1. Install from Homebrew
 ```sh
-cargo build --release
+brew install jeffdt/tap/boomerang
 ```
 
-Then add a keybind to `~/.tmux.conf`, pointing at the built binary (or a copy
-on your `PATH`):
+### 2. Add tmux keybind
+Add a keybind to `~/.tmux.conf`, pointing at the installed binary:
 
 ```tmux
 bind i display-popup -E -B -d "#{pane_current_path}" -w 84 -h 60% "exec boomerang"
 ```
 
-The `-d "#{pane_current_path}"` matters: without it, `display-popup` doesn't
-reliably inherit the current pane's working directory, so `gh` ends up
-running outside your repo and the popup exits (and closes) immediately.
+> [!IMPORTANT]
+> The `-d "#{pane_current_path}"` matters: without it, `display-popup` doesn't reliably inherit the current pane's working directory, so `gh` can't determine the repo you're working in.
 
-Reload tmux and press `prefix + i`. Popup dimensions are a starting point,
-not fixed — the create/edit form may want more vertical room than the list
-view; adjust `-w`/`-h` to taste.
+> [!TIP]
+> The popup dimensions are a starting point; adjust `-w`/`-h` to taste.
 
-For instant title-only capture without opening the full list (see
-`--capture` under Quick capture below), bind a second key to a much shorter
-popup. Unlike the rest of the app, the quick-create prompt is a deliberately
-distinct compact screen: it sits flush at the top with no margin, and its
-hint row doubles as the status line (showing the create-in-progress/error
-message in place of the hint rather than reserving a separate row for it),
-so it's a fixed 4 rows tall — the popup itself only needs to be exactly
-that tall:
+### 3. Reload tmux and launch it!
+Reload tmux with `tmux source-file ~/.tmux.conf` and press `prefix + i`.
+
+### 4. (Recommended) Add a second binding for quick-capture
+Boomerang also has a minimalist "capture" mode: it skips fetching the issue list entirely, so there's nothing to wait on and you can start typing your idea the instant the popup opens.
+
+To set it up, create a second binding to launch boomerang in capture mode.
 
 ```tmux
 bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang --capture"
 ```
 
+Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix + I`!
+
 ## How it works
 
-- Auto-detects the repo from the current directory via `gh`'s own git-remote
-  detection — no config or `--repo` flag needed.
-- Opens the TUI immediately with a rotating loading animation while issues and
-  labels are fetched in the background.
-- Fetches all open issues (including body and labels) in one `gh issue list`
-  call, so the description pane never needs a follow-up network call.
-- Create and edit submissions run in the background with an in-place pending
-  indicator, then refresh the issue list when `gh` returns.
-- All GitHub interaction shells out to the `gh` CLI, which must be installed
-  and authenticated (`gh auth login`).
+- **Minimal setup.** Auto-detects the repo from the current directory via `gh`'s own git-remote detection, no config or `--repo` flag needed.
+- **Instant open.** Just kidding, it takes a second to fetch issues and labels. But you get a sweet loading animation while it runs to keep you distracted.
+- **One network call.** Fetches all open issues (including body and labels) in a single `gh issue list` call, so the description pane never needs a follow-up round trip.
+- **Non-blocking edits.** Create and edit submissions run in the background with an in-place pending indicator, then refresh the list when `gh` returns.
+- **Built on `gh`.** All GitHub interaction shells out to the `gh` CLI, which must be installed and authenticated (`gh auth login`).
 
 ## Keys
 
@@ -73,9 +80,8 @@ bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang 
 | `,` | Open Settings |
 | `q` / `Esc` | Quit |
 
-`y`/`Y`/`Ctrl-y` shell out to `pbcopy`, so the clipboard keys only work on
-macOS. This is a macOS-only tool overall (built and shipped for
-`aarch64-apple-darwin` only); building from source elsewhere isn't supported.
+> [!NOTE]
+> `y`/`Y`/`Ctrl-y` only work on macOS, because they shell out to `pbcopy`.
 
 Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
@@ -94,52 +100,52 @@ row, and `q`/`Esc` returns to the list.
 
 ## Quick capture
 
-`boomerang --capture` skips the list view entirely and opens straight to
-the title-only quick-create prompt (`Enter` to create, `Esc` to cancel),
-then exits — handy bound to its own key (see the `bind I` example above) for
-firing off an issue without leaving your current pane's context. The prompt
-shows the repo it'll create the issue in once `gh repo view` resolves in the
-background. `boomerang --capture-full` does the same but opens the full
-title/body/label form instead.
+![Quick capture demo: a tmux popup opens over a Python REPL, a one-line issue title is typed and submitted, and the popup closes back into the still-running REPL](docs/images/quick-capture.gif)
+
+`boomerang --capture` skips the `gh` issue fetch entirely and opens straight to the title-only quick-create prompt (`Enter` to create, `Esc` to cancel), then exits.
+This is extra handy when bound to its own key (see the `bind I` example above) for firing off an issue with minimal disruption to your work.
+`boomerang --capture-full` does the same but opens the full form instead, if you prefer to capture body + label upfront at idea-time.
 
 ## Diagnostics
 
-Run `boomerang --doctor` from the target repo to print cwd, git remote,
-`gh` auth, detected GitHub repo, token-env, and diagnostic logging state.
+Run `boomerang --doctor` from the target repo to print cwd, git remote, `gh` auth, detected GitHub repo, token-env, and diagnostic logging state.
 
-`gh` follows normal environment precedence. If tmux exports `GITHUB_TOKEN`, that
-token overrides the `gh` keyring account. For personal repos where your shell has
-a work token, launch with:
+`gh` follows normal environment precedence. If tmux exports `GITHUB_TOKEN`, that token overrides the `gh` keyring account. For personal repos where your shell has a work token, launch with:
 
 ```sh
 env -u GITHUB_TOKEN boomerang
 ```
 
-Opt-in command diagnostics by setting `BOOMERANG_LOG=1`. Logs go to
-`~/.cache/boomerang/boomerang.log` by default, or to
-`BOOMERANG_LOG_PATH` when set. Logs include sanitized `gh` argv, elapsed
-milliseconds, exit status, stdout byte count, and stderr. Issue titles and bodies
-passed to `gh` are redacted.
+Opt-in command diagnostics by setting `BOOMERANG_LOG=1`.
+Logs go to `~/.cache/boomerang/boomerang.log` by default, or to `BOOMERANG_LOG_PATH` when set.
+Logs include sanitized `gh` argv, elapsed milliseconds, exit status, stdout byte count, and stderr.
+Issue titles and bodies passed to `gh` are redacted.
 
-Startup defaults to the Matrix rain animation because it reads best during the
-brief initial load. Set `BOOMERANG_LOADING_ANIMATION=ripple` to try the
-experimental color-ripple bullseye loader, or `rainbow` for continuous thick
-color-locked bands.
+## Animations
 
-Preview a loader without touching `gh`:
+The loading screen rotates between three animations (Matrix rain, color ripple, rainbow) at random each launch.
+Pin one with `BOOMERANG_LOADING_ANIMATION=matrix`, `ripple`, or `rainbow` if you'd rather always see the same one.
+
+If you want to watch the loaders for longer periods, you can launch them in preview mode:
 
 ```sh
 boomerang --preview-loading matrix 10s
 boomerang --preview-loading ripple 1500ms
-boomerang --preview-loading rainbow 10s
+boomerang --preview-loading rainbow 20s
 ```
 
-Bare durations are seconds, so `boomerang --preview-loading 10` previews the
-default loader for ten seconds.
+## Design philosophy
+
+boomerang is designed to be reached for constantly and thought about rarely.
+Ideas come quickly but are lost even quicker; boomerang's job is to be ready and waiting to capture your ideas the moment they occur.
+It is only running when you're actively using it.
+It is not responsible for your commits, PRs, releases, or builds.
+Its only job is to package your ideas into issues and help you find them again later.
+It should be fun to use and easy on the eyes, and should never clash with the aesthetics of your terminal.
 
 ## Disclaimer
 
-Early, single-purpose personal tool. Use at your own risk.
+This project was fully vibe coded. Use at your own risk.
 
 ## License
 

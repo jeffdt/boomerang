@@ -10,7 +10,7 @@ boomerang is a terminal UI for browsing, searching, creating, editing, and
 closing GitHub issues in the repo sitting in the current directory. It is a
 standalone compiled binary that tmux launches on demand via `tmux popup -E`;
 it is not a tmux plugin and runs no background process. Same architectural
-family as its sibling project, [rolomux](https://github.com/jeffdt/smux)
+family as its sibling project, [rolomux](https://github.com/jeffdt/rolomux)
 (formerly `smux`).
 
 ## Durable design decisions
@@ -93,3 +93,44 @@ succeeds:
   inside the feature worktree.
 
 Currently Apple Silicon only, matching rolomux.
+
+## Regenerating the README demo GIF
+
+`docs/images/quick-capture.gif` (the README's demo of `prefix+I` quick
+capture) is generated, not hand-recorded. Re-run it after any visible change
+to the quick-capture flow so the README doesn't go stale:
+
+```sh
+vhs docs/demo/quick-capture.tape
+```
+
+Run from the repo root. Full prerequisites and mechanics are documented in
+the tape file's own header comment; the short version: it nests a real,
+isolated tmux server inside the recording so the actual `display-popup`
+chrome renders (not just boomerang's own UI), submits one real throwaway
+issue to `jeffdt/universe` (a private sandbox repo that exists solely for
+this — no cleanup needed after), and runs the pane's shell as `zsh -f` so
+prompt tools like Starship don't emit truecolor escapes that fight the
+recording's chosen `Set Theme`.
+
+**The tmux isolation is load-bearing, never drop it.** The tape's
+`tmux -L boomerang-demo-gif ...` is not incidental — that flag is what keeps
+the recording's nested tmux server from touching Jeff's actual one. Running
+`tmux` commands against the default socket during a recording session (e.g.
+while debugging a tape by hand) and then issuing something like
+`kill-server` takes down every real tmux session on the machine, not just
+the throwaway one, since sessions aren't isolated by which pty invoked them,
+only by socket. This has happened before.
+
+**Verify the isolated session actually tore down after every recording.**
+Exiting the tape's nested shell relies on scripted keystrokes (e.g. `exit()`
+then `exit`); if a step in that chain doesn't land as expected — `Ctrl+D` not
+registering as EOF inside a REPL has already happened once — the isolated
+server is left running instead of exiting on its own. That's normally
+harmless in isolation, but the *next* recording's `tmux new-session -s demo`
+then fails with `duplicate session: demo` against the leftover one, silently
+drops out of any tmux context, and produces a broken take (keystrokes meant
+for the popup get typed as literal garbage into whatever's still running).
+After every run: `tmux -L boomerang-demo-gif ls` should report no server. If
+one is lingering, `tmux -L boomerang-demo-gif kill-server` is always safe to
+clean it up — it's scoped to that one socket, never the default one.
