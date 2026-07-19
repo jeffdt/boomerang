@@ -71,7 +71,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → closed → all |
 | `Space` | Check/uncheck the selected issue for a multi-copy |
-| `C` (shift+c) | Create: title + body + label picker |
+| `c` | Create: title + body + label picker |
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `o` | Open the selected issue in your browser |
@@ -80,6 +80,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `Ctrl-y` | Copy the plain URL to the clipboard |
 | `R` (shift+r) | Switch to a different repo |
 | `,` | Open Settings |
+| `?` | Reveal the shortcut legend, if "Show shortcuts" is set to On demand |
 | `q` / `Esc` | Quit |
 
 > [!NOTE]
@@ -99,6 +100,7 @@ row, and `q`/`Esc` returns to the list.
 | --- | --- | --- |
 | Exit popup after copy/yank | Off | When on, a successful `y`/`Y`/`Ctrl-y` copy closes the popup immediately instead of staying open. |
 | Zebra striping | On | Dims every other row in the issue list to make scanning easier. Uses your terminal's own faint/dim rendering rather than a fixed color, so it adapts to your terminal theme. |
+| Show shortcuts | Always | When set to On demand, the list's footer shortcut legend stays collapsed to a `? shortcuts` nudge until you press `?`; it starts collapsed again next launch. |
 
 ## Quick capture
 
