@@ -3,7 +3,7 @@ use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRo
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::Input;
@@ -258,7 +258,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(1),
-                    Constraint::Length(1),
+                    Constraint::Length(2),
                     Constraint::Length(1),
                 ])
                 .split(inner);
@@ -457,21 +457,30 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     }
     // The pending spinner text itself renders in draw_toast; repeating it
     // here would show it twice stacked in the footer.
-    let text = if !idle {
-        "q quit".to_string()
+    let lines: Vec<Line> = if !idle {
+        vec![styled_hint("q quit")]
     } else {
         match &state.mode {
-            Mode::Form(_) => "tab/shift+tab field · ctrl+s submit · ctrl+w delete word · ctrl+u clear line · esc cancel".to_string(),
-            Mode::Settings => "j/k move · enter/space toggle · esc back".to_string(),
-            Mode::RepoPicker(_) => {
-                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel"
-                    .to_string()
-            }
-            _ => "j/k move · h hide pane · / search · a state · space check · C create · enter/e edit · x close · o open · y/Y/^y copy · , settings · R repo · q quit".to_string(),
+            Mode::Form(_) => vec![
+                styled_hint("tab/shift+tab field · ctrl+s submit"),
+                styled_hint("ctrl+w delete word · ctrl+u clear line · esc cancel"),
+            ],
+            Mode::Settings => vec![styled_hint("j/k move · enter/space toggle · esc back")],
+            Mode::RepoPicker(_) => vec![styled_hint(
+                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
+            )],
+            _ => vec![
+                styled_hint(
+                    "j/k move · h hide pane · / search · a state · space check · enter/e edit",
+                ),
+                styled_hint(
+                    "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
+                ),
+            ],
         }
     };
     frame.render_widget(
-        Paragraph::new(styled_hint(&text)).wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -608,7 +617,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(1),
         ])
         .split(area);
@@ -1183,7 +1192,7 @@ mod tests {
     }
 
     fn render_buffer(state: &AppState) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(80, 25);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
         terminal.backend().buffer().clone()
@@ -1897,16 +1906,11 @@ mod tests {
 
     #[test]
     fn list_mode_hint_mentions_h_to_hide_and_create() {
-        // Was list_mode_hint_mentions_h_to_hide_and_enter_or_e_to_edit,
-        // asserting "enter/e edit" too: adding "space check" pushed that
-        // segment past the single-row hint's visible width. The footer
-        // overflowing its row is a pre-existing, tracked-separately issue,
-        // not something this test should paper over by pretending to still
-        // check the truncated segment.
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
-        assert!(rendered.contains("C create"));
+        assert!(rendered.contains("c create"));
+        assert!(rendered.contains("enter/e edit"));
     }
 
     #[test]
@@ -1914,6 +1918,69 @@ mod tests {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("space check"));
+    }
+
+    #[test]
+    fn list_mode_hint_spans_two_rows_with_all_shortcuts_present() {
+        let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        let rendered = render_to_string(&state);
+        for shortcut in [
+            "j/k move",
+            "h hide pane",
+            "/ search",
+            "a state",
+            "space check",
+            "enter/e edit",
+            "c create",
+            "x close",
+            "o open",
+            "y/Y/^y copy",
+            ", settings",
+            "R repo",
+            "q quit",
+        ] {
+            assert!(
+                rendered.contains(shortcut),
+                "expected footer hint to mention {shortcut:?}, got: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn form_mode_hint_spans_two_rows_with_all_shortcuts_present() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        for shortcut in [
+            "tab/shift+tab field",
+            "ctrl+s submit",
+            "ctrl+w delete word",
+            "ctrl+u clear line",
+            "esc cancel",
+        ] {
+            assert!(
+                rendered.contains(shortcut),
+                "expected form footer hint to mention {shortcut:?}, got: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
+        const REAL_POPUP_INNER_WIDTH: usize = 78;
+        let list_line1 =
+            "j/k move · h hide pane · / search · a state · space check · enter/e edit";
+        let list_line2 =
+            "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let form_line1 = "tab/shift+tab field · ctrl+s submit";
+        let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
+        for line in [list_line1, list_line2, form_line1, form_line2] {
+            assert!(
+                line.chars().count() <= REAL_POPUP_INNER_WIDTH,
+                "hint line {line:?} is {} chars, over the {REAL_POPUP_INNER_WIDTH}-column popup budget",
+                line.chars().count()
+            );
+        }
     }
 
     #[test]
