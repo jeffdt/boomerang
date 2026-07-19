@@ -112,10 +112,10 @@ This is extra handy when bound to its own key (see the `bind I` example above) f
 
 ## Picking it back up
 
-![Browse-and-yank demo: two issues get checked and copied together, then a single issue is copied on its own and its number pasted straight into a claude -p command](docs/images/browse-and-yank.gif)
+![Browse-and-yank demo: a claude -p command is half-typed in the terminal, the popup opens over it to browse the issue list, yanks the chosen issue, and closes back into the still-waiting shell to finish the command](docs/images/browse-and-yank.gif)
 
 Catching an idea is only half the point; getting it back out is the other half.
-`/` fuzzy-searches by title, `Space` checks off however many issues you want, and `y` copies `#123` for the selected issue, or every checked issue comma-joined if any are checked.
+Mid-task and need an issue number? Pop the picker open, `y` copies `#123` to the clipboard, and it closes right back into whatever you were doing.
 Paste straight into a commit message, a PR description, or - as above - a `claude -p` prompt to go straight from "I filed this" to "an agent is working on it."
 
 ## Fleshing it out
