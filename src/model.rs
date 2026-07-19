@@ -806,6 +806,18 @@ impl AppState {
         ))
     }
 
+    /// The list header's leading text: the state filter followed by the
+    /// known repo, e.g. "Open issues in jeffdt/boomerang". Falls back to
+    /// just "Open issues" while the repo name hasn't loaded yet (or failed
+    /// to). Shared by `ui::draw_list` and `loading::draw`, which show the
+    /// same header before and after the issue list itself has loaded.
+    pub fn issues_header(&self) -> String {
+        match &self.repo_name_with_owner {
+            Some(repo) => format!("{:?} issues in {repo}", self.state_filter),
+            None => format!("{:?} issues", self.state_filter),
+        }
+    }
+
     pub fn clear_expired_status(&mut self) {
         if let Some((_, set_at)) = &self.status {
             if set_at.elapsed() >= STATUS_TOAST_DURATION {

@@ -228,11 +228,6 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(ACCENT);
-    let title_text = state
-        .repo_name_with_owner
-        .as_deref()
-        .map(format_repo_title)
-        .unwrap_or_else(|| "boomerang".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -240,7 +235,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                format!("‹ {title_text} ›"),
+                "‹ boomerang ›",
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -292,7 +287,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let mut header = format!("Issues ({:?})", state.state_filter);
+    let mut header = state.issues_header();
     if !state.checked.is_empty() {
         header.push_str(&format!(" · {} checked", state.checked.len()));
     }
@@ -538,12 +533,6 @@ fn truncate_title(title: &str, max_width: usize) -> String {
     }
     let kept: String = title.chars().take(max_width - 3).collect();
     format!("{kept}...")
-}
-
-/// Seam for a future settings feature (e.g. showing the repo name without its
-/// owner) to hook into without touching call sites; today it's a passthrough.
-fn format_repo_title(repo: &str) -> String {
-    repo.to_string()
 }
 
 fn label_style(color: Color) -> Style {
@@ -1270,7 +1259,7 @@ mod tests {
     fn list_header_uses_dim_color_not_dim_modifier() {
         let state = AppState::new(vec![issue(1, "a")], vec![]);
         let buf = render_buffer(&state);
-        let (x, y) = find_in_buffer(&buf, "Issues (").expect("header should render");
+        let (x, y) = find_in_buffer(&buf, "Open issues").expect("header should render");
         let style = buf[(x, y)].style();
         assert_eq!(style.fg, Some(Color::DarkGray));
         assert!(!style.add_modifier.contains(Modifier::DIM));
@@ -1289,6 +1278,33 @@ mod tests {
         let state = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains(&format!("{:?}", StateFilter::Open)));
+    }
+
+    #[test]
+    fn list_header_leads_with_state_filter_and_trails_with_repo() {
+        let mut with_repo = AppState::new(vec![], vec![]);
+        with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let rendered = render_to_string(&with_repo);
+        assert!(rendered.contains("Open issues in jeffdt/boomerang"));
+
+        let without_repo = AppState::new(vec![], vec![]);
+        let rendered = render_to_string(&without_repo);
+        assert!(rendered.contains("Open issues"));
+        assert!(!rendered.contains("Open issues in"));
+    }
+
+    #[test]
+    fn list_header_reflects_closed_and_all_state_filters() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+
+        state.cycle_state_filter(); // Open -> Closed
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Closed issues in jeffdt/boomerang"));
+
+        state.cycle_state_filter(); // Closed -> All
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("All issues in jeffdt/boomerang"));
     }
 
     #[test]
@@ -1543,23 +1559,16 @@ mod tests {
     }
 
     #[test]
-    fn format_repo_title_is_a_passthrough_today() {
-        assert_eq!(format_repo_title("jeffdt/boomerang"), "jeffdt/boomerang");
-    }
+    fn border_title_is_always_boomerang_regardless_of_repo_name() {
+        let mut with_repo = AppState::new(vec![issue(1, "a")], vec![]);
+        with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let rendered_with_repo = render_to_string(&with_repo);
+        assert!(rendered_with_repo.contains("‹ boomerang ›"));
+        assert!(!rendered_with_repo.contains("‹ jeffdt/boomerang ›"));
 
-    #[test]
-    fn border_title_shows_repo_name_when_available() {
-        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
-        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ jeffdt/boomerang ›"));
-    }
-
-    #[test]
-    fn border_title_falls_back_to_app_name_when_repo_unknown() {
-        let state = AppState::new(vec![issue(1, "a")], vec![]);
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("‹ boomerang ›"));
+        let without_repo = AppState::new(vec![issue(1, "a")], vec![]);
+        let rendered_without_repo = render_to_string(&without_repo);
+        assert!(rendered_without_repo.contains("‹ boomerang ›"));
     }
 
     #[test]
@@ -1602,7 +1611,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header_line = rendered
             .lines()
-            .find(|line| line.contains("Issues ("))
+            .find(|line| line.contains("issues"))
             .expect("header line rendered");
         assert!(
             !header_line.contains('┌') && !header_line.contains('┐') && !header_line.contains('─'),
@@ -1711,7 +1720,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header = rendered
             .lines()
-            .find(|line| line.contains("Issues (Open)"))
+            .find(|line| line.contains("Open issues"))
             .expect("list header rendered");
         assert!(header.contains("Creating issue..."));
     }
@@ -1723,7 +1732,7 @@ mod tests {
         let rendered = render_to_string(&state);
         let header = rendered
             .lines()
-            .find(|line| line.contains("Issues (Open)"))
+            .find(|line| line.contains("Open issues"))
             .expect("list header rendered");
         assert!(header.contains("Updating issue..."));
     }
@@ -1942,7 +1951,7 @@ mod tests {
             .expect("outer frame's top border should render");
         let header_row = lines
             .iter()
-            .position(|line| line.contains("Issues ("))
+            .position(|line| line.contains("issues"))
             .expect("list header should render");
         assert_eq!(
             header_row,
@@ -2221,7 +2230,7 @@ mod tests {
         state.move_cursor(1);
         state.toggle_check();
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Issues (Open) · 2 checked"));
+        assert!(rendered.contains("Open issues · 2 checked"));
     }
 
     #[test]

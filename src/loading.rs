@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Length(1),
         ])
         .split(area);
-    let mut header = format!("Issues ({:?})", state.state_filter);
+    let mut header = state.issues_header();
     if let Some(loading) = state.loading_message() {
         header.push_str("  ");
         header.push_str(&loading);
