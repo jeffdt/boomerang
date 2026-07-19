@@ -3,24 +3,20 @@
 # docs/demo/*.tape recordings, see AGENTS.md's "Regenerating the README
 # demo GIFs") to a known-good state before recording:
 #
-#   - exactly one "spike: check if light speed is constant" issue survives
-#     across recordings, reset to a pristine just-captured state every time
-#     (no body, no labels). The edit-issue demo adds those live, so this
-#     issue needs to start empty on every run, not just the first one;
-#     duplicates left over from prior recording iterations get closed. The
-#     "spike" label itself is created (if missing) so it's selectable in
-#     the edit form, without being pre-applied to the issue.
-#   - a couple of the least-relevant default labels (invalid, wontfix) get
-#     removed so boomerang's label picker has few enough entries that
-#     "spike" (the newest, so it sorts last) still lands inside the
-#     picker's visible window. The picker doesn't scroll to follow the
-#     cursor past what fits on screen (src/ui.rs render_labels renders a
-#     plain ratatui List with no ListState/scroll-offset - worth fixing in
-#     boomerang itself at some point), so this keeps the edit-issue demo
-#     honest without relying on that fix.
-#   - a small curated set of filler issues exists so the picker/multi-select
-#     demos show a real, varied-looking list instead of five copies of the
-#     same title.
+#   - the label set is reconciled to exactly DESIRED_LABELS below: anything
+#     missing gets created, anything extra (leftover GitHub defaults, or a
+#     label since renamed away from) gets deleted. Keeping this list short
+#     and curated is what lets boomerang's Labels picker show every option
+#     on screen at once - see AGENTS.md for the scroll-follow limitation
+#     this sidesteps.
+#   - the four FILLER_ISSUES exist with their intended title/labels/body,
+#     reconciled the same way on every run (labels and body get overwritten
+#     to match), so drift from a previous recording session can't accumulate.
+#   - exactly one "$FEATURED_TITLE" issue survives across recordings, reset
+#     to a pristine just-captured state every run (no body, no labels).
+#     edit-issue.tape adds those live, so this issue needs to start empty
+#     every time, not just the first. Duplicates left over from prior
+#     recording iterations get closed.
 #
 # Every step is idempotent, so it's safe to run before every recording
 # session regardless of what state the sandbox repo is currently in.
@@ -30,29 +26,64 @@
 set -euo pipefail
 
 REPO="jeffdt/universe"
-FEATURED_TITLE="spike: check if light speed is constant for every observer"
-SPIKE_LABEL="spike"
-LABELS_TO_TRIM=(invalid wontfix)
+FEATURED_TITLE="Check if light speed is constant for every observer"
 
-FILLER_TITLES=(
-  "bug: apple falls up when observed on Tuesdays"
-  "fix: entropy occasionally decreases in prod"
-  "chore: recalibrate flux capacitor before next deploy"
-  "feat: add support for wormhole-based caching"
-  "docs: explain why the cat is both alive and dead in the README"
+# name|color|description
+DESIRED_LABELS=(
+  "bug|d73a4a|Something isn't working"
+  "docs|0075ca|Improvements or additions to documentation"
+  "feature|a2eeef|New feature or request"
+  "good first issue|7057ff|Good for newcomers"
+  "spike|8B5CF6|Time-boxed investigation, not committed work"
 )
 
-echo "==> Ensuring '$SPIKE_LABEL' label exists"
-if ! gh label list -R "$REPO" --json name -q '.[].name' | grep -qx "$SPIKE_LABEL"; then
-  gh label create "$SPIKE_LABEL" -R "$REPO" --color "8B5CF6" \
-    --description "Time-boxed investigation, not committed work"
-fi
+# title|comma-separated labels|body
+FILLER_ISSUES=(
+  "Solve FTL travel|feature,good first issue|Should be simple enough. Add energy until you reach c, then add some more. 🥳 Should only touch a handful of files."
+  "Add wormholes for local debugging|feature|Getting to another galaxy from the current one is currently O(n) hops. In production this is unavoidable, but for local dev, a deployable wormhole would make traversal much faster."
+  "Opened box and cat was neither alive nor dead|bug|Expected: observation collapses the cat to alive or dead. Actual: state stays superposed indefinitely. Reproducible 100% of the time, which is itself suspicious for a quantum system."
+  "Explain why light has a speed limit|docs|Docs indicate that light has a speed limit, but does not mention why. Add a short doc clarifying that c is the rate limit of causality itself, so nothing can exceed it, light included."
+)
 
-echo "==> Trimming least-relevant default labels"
-for l in "${LABELS_TO_TRIM[@]}"; do
-  if gh label list -R "$REPO" --json name -q '.[].name' | grep -qx "$l"; then
-    echo "    deleting: $l"
-    gh label delete "$l" -R "$REPO" --yes >/dev/null
+echo "==> Reconciling labels to the curated set"
+current_labels="$(gh label list -R "$REPO" --json name -q '.[].name')"
+
+for entry in "${DESIRED_LABELS[@]}"; do
+  IFS='|' read -r name color description <<< "$entry"
+  if grep -qxF "$name" <<< "$current_labels"; then
+    gh label edit "$name" -R "$REPO" --color "$color" --description "$description" >/dev/null
+  else
+    echo "    creating: $name"
+    gh label create "$name" -R "$REPO" --color "$color" --description "$description" >/dev/null
+  fi
+done
+
+desired_names="$(printf '%s\n' "${DESIRED_LABELS[@]}" | cut -d'|' -f1)"
+while IFS= read -r name; do
+  [ -z "$name" ] && continue
+  if ! grep -qxF "$name" <<< "$desired_names"; then
+    echo "    deleting: $name"
+    gh label delete "$name" -R "$REPO" --yes >/dev/null
+  fi
+done <<< "$current_labels"
+
+echo "==> Reconciling filler issues"
+existing_titles="$(gh issue list -R "$REPO" --state all --json title -q '.[].title')"
+for entry in "${FILLER_ISSUES[@]}"; do
+  IFS='|' read -r title labels body <<< "$entry"
+  IFS=',' read -ra label_args <<< "$labels"
+  label_flags=()
+  for l in "${label_args[@]}"; do
+    label_flags+=(--add-label "$l")
+  done
+
+  if grep -qxF "$title" <<< "$existing_titles"; then
+    echo "    updating: $title"
+    number="$(gh issue list -R "$REPO" --state all --json number,title -q ".[] | select(.title == \"$title\") | .number" | head -1)"
+    gh issue edit "$number" -R "$REPO" --body "$body" "${label_flags[@]}" >/dev/null
+  else
+    echo "    creating: $title"
+    gh issue create -R "$REPO" --title "$title" --body "$body" "${label_flags[@]}" >/dev/null
   fi
 done
 
@@ -85,17 +116,6 @@ if [ -n "$current_labels" ]; then
     gh issue edit "$keep" -R "$REPO" --remove-label "$l" >/dev/null
   done <<< "$current_labels"
 fi
-
-echo "==> Ensuring filler issues exist"
-existing_titles="$(gh issue list -R "$REPO" --state all --json title -q '.[].title')"
-for title in "${FILLER_TITLES[@]}"; do
-  if grep -qxF "$title" <<< "$existing_titles"; then
-    echo "    already exists: $title"
-  else
-    echo "    creating: $title"
-    gh issue create -R "$REPO" --title "$title" --body "" >/dev/null
-  fi
-done
 
 echo "==> Current state of $REPO"
 gh issue list -R "$REPO" --state open --json number,title,labels \

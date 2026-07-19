@@ -120,7 +120,7 @@ Paste straight into a commit message, a PR description, or - as above - a `claud
 
 ## Fleshing it out
 
-![Edit demo: the light-speed spike issue is found by search, then given a body explaining the finding and tagged with the spike label](docs/images/edit-issue.gif)
+![Edit demo: the light-speed spike issue is found by search, then given a body explaining why it's worth testing and tagged with the spike label](docs/images/edit-issue.gif)
 
 The point of capturing an idea in three seconds is that you don't have to flesh it out right then.
 `Enter`/`e` opens the full edit form on any issue - title, body, and labels - so when you do have time, you can find it again with `/` and fill in the rest without ever having lost it in the meantime.
