@@ -1,7 +1,10 @@
 /target
 plans/
 specs/
-.claude
+.claude/local
+.claude/worktrees
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 AGENTS.local.md
 CLAUDE.local.md
 
