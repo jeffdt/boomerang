@@ -239,13 +239,16 @@ expect actually exist) — the same pattern is worth copying whenever a
 recording depends on specific external state existing. Read them for
 concrete examples rather than starting from a blank tape:
 
-- `quick-capture.tape` — the full nested-tmux pattern: isolated server,
-  real `display-popup` chrome, Gruvbox theming with `zsh -f`, explicit
-  multi-step teardown.
-- `browse-and-yank.tape` and `edit-issue.tape` — the simpler direct
-  pattern for a tool that doesn't need tmux chrome on screen at all: no
-  nested server, but still `XDG_CONFIG_HOME` isolation (with `gh` auth
-  preserved) and the pre-launch `clear` fullscreen TUIs need.
+- `quick-capture.tape` and `browse-and-yank.tape` — the full nested-tmux
+  pattern: isolated server, real `display-popup` chrome, Gruvbox theming
+  with `zsh -f`. Both open on a moment where the popup interrupts something
+  already on screen (an in-progress calculation, a half-typed shell
+  command) rather than a blank prompt, since that's what actually sells
+  "this costs you nothing" per step 1 above.
+- `edit-issue.tape` — the simpler direct pattern for a tool that doesn't
+  need tmux chrome on screen at all: no nested server, but still
+  `XDG_CONFIG_HOME` isolation (with `gh` auth preserved) and the pre-launch
+  `clear` a fullscreen TUI recorded outside tmux needs.
 
 ```sh
 docs/demo/seed-issues.sh
