@@ -831,16 +831,14 @@ impl AppState {
         ))
     }
 
-    /// The list header's leading text: the state filter followed by the
-    /// known repo, e.g. "Open issues in jeffdt/boomerang". Falls back to
-    /// just "Open issues" while the repo name hasn't loaded yet (or failed
-    /// to). Shared by `ui::draw_list` and `loading::draw`, which show the
-    /// same header before and after the issue list itself has loaded.
-    pub fn issues_header(&self) -> String {
-        match &self.repo_name_with_owner {
-            Some(repo) => format!("{:?} issues in {repo}", self.state_filter),
-            None => format!("{:?} issues", self.state_filter),
-        }
+    /// The list header split into its two parts: the state-filter prefix
+    /// (e.g. "Open issues") and the known repo, if it has loaded. `None` for
+    /// the repo while it hasn't loaded yet (or failed to). Shared by
+    /// `ui::draw_list` and `loading::draw`, which show the same header
+    /// before and after the issue list itself has loaded.
+    pub fn issues_header_parts(&self) -> (String, Option<String>) {
+        let prefix = format!("{:?} issues", self.state_filter);
+        (prefix, self.repo_name_with_owner.clone())
     }
 
     pub fn clear_expired_status(&mut self) {
@@ -997,6 +995,19 @@ mod tests {
         assert_eq!(state.cycle_state_filter(), StateFilter::Closed);
         assert_eq!(state.cycle_state_filter(), StateFilter::All);
         assert_eq!(state.cycle_state_filter(), StateFilter::Open);
+    }
+
+    #[test]
+    fn issues_header_parts_splits_prefix_and_repo() {
+        let mut state = AppState::new(vec![], vec![]);
+        let (prefix, repo) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+        assert_eq!(repo, None);
+
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        let (prefix, repo) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+        assert_eq!(repo, Some("jeffdt/boomerang".to_string()));
     }
 
     #[test]
