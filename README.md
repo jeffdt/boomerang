@@ -70,12 +70,15 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `h` | Hide/show the description pane (shown by default) |
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → closed → all |
+| `Space` | Check/uncheck the selected issue for a multi-copy |
 | `C` (shift+c) | Create: title + body + label picker |
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
-| `y` | Copy `#123` to the clipboard |
+| `o` | Open the selected issue in your browser |
+| `y` | Copy `#123` to the clipboard (or every checked issue, comma-joined, if any are checked) |
 | `Y` (shift+y) | Copy a markdown link to the clipboard |
 | `Ctrl-y` | Copy the plain URL to the clipboard |
+| `R` (shift+r) | Switch to a different repo |
 | `,` | Open Settings |
 | `q` / `Esc` | Quit |
 
@@ -104,6 +107,21 @@ row, and `q`/`Esc` returns to the list.
 `boomerang --capture` skips the `gh` issue fetch entirely and opens straight to the title-only quick-create prompt (`Enter` to create, `Esc` to cancel), then exits.
 This is extra handy when bound to its own key (see the `bind I` example above) for firing off an issue with minimal disruption to your work.
 `boomerang --capture-full` does the same but opens the full form instead, if you prefer to capture body + label upfront at idea-time.
+
+## Picking it back up
+
+![Browse-and-yank demo: two issues get checked and copied together, then a single issue is copied on its own and its number pasted straight into a claude -p command](docs/images/browse-and-yank.gif)
+
+Catching an idea is only half the point; getting it back out is the other half.
+`/` fuzzy-searches by title, `Space` checks off however many issues you want, and `y` copies `#123` for the selected issue, or every checked issue comma-joined if any are checked.
+Paste straight into a commit message, a PR description, or - as above - a `claude -p` prompt to go straight from "I filed this" to "an agent is working on it."
+
+## Fleshing it out
+
+![Edit demo: the light-speed spike issue is found by search, then given a body explaining the finding and tagged with the spike label](docs/images/edit-issue.gif)
+
+The point of capturing an idea in three seconds is that you don't have to flesh it out right then.
+`Enter`/`e` opens the full edit form on any issue - title, body, and labels - so when you do have time, you can find it again with `/` and fill in the rest without ever having lost it in the meantime.
 
 ## Diagnostics
 

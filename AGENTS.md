@@ -94,43 +94,90 @@ succeeds:
 
 Currently Apple Silicon only, matching rolomux.
 
-## Regenerating the README demo GIF
+## Regenerating the README demo GIFs
 
-`docs/images/quick-capture.gif` (the README's demo of `prefix+I` quick
-capture) is generated, not hand-recorded. Re-run it after any visible change
-to the quick-capture flow so the README doesn't go stale:
+The README's three demo GIFs (`docs/images/quick-capture.gif`,
+`browse-and-yank.gif`, `edit-issue.gif`) are generated, not hand-recorded.
+Re-run the relevant tape after any visible change to that flow so the
+README doesn't go stale:
 
 ```sh
+docs/demo/seed-issues.sh          # always run first, see below
 vhs docs/demo/quick-capture.tape
+vhs docs/demo/browse-and-yank.tape
+vhs docs/demo/edit-issue.tape
 ```
 
 Run from the repo root. Full prerequisites and mechanics are documented in
-the tape file's own header comment; the short version: it nests a real,
-isolated tmux server inside the recording so the actual `display-popup`
-chrome renders (not just boomerang's own UI), submits one real throwaway
-issue to `jeffdt/universe` (a private sandbox repo that exists solely for
-this — no cleanup needed after), and runs the pane's shell as `zsh -f` so
-prompt tools like Starship don't emit truecolor escapes that fight the
-recording's chosen `Set Theme`.
+each tape file's own header comment; the short version: `quick-capture.tape`
+nests a real, isolated tmux server inside the recording so the actual
+`display-popup` chrome renders (not just boomerang's own UI) — the other two
+don't need that, since they only show boomerang's own list/edit views, so
+they run directly in the recorded shell. All three submit real writes to
+`jeffdt/universe` (a private sandbox repo that exists solely for this — no
+cleanup needed after) and run the pane's shell as `zsh -f` so prompt tools
+like Starship don't emit truecolor escapes that fight the recording's
+chosen `Set Theme`.
 
-**The tmux isolation is load-bearing, never drop it.** The tape's
-`tmux -L boomerang-demo-gif ...` is not incidental — that flag is what keeps
-the recording's nested tmux server from touching Jeff's actual one. Running
-`tmux` commands against the default socket during a recording session (e.g.
-while debugging a tape by hand) and then issuing something like
-`kill-server` takes down every real tmux session on the machine, not just
-the throwaway one, since sessions aren't isolated by which pty invoked them,
-only by socket. This has happened before.
+**Run `docs/demo/seed-issues.sh` before recording.** It resets
+`jeffdt/universe` to a known-good state: closes duplicate "spike: check if
+light speed is constant" issues left over from prior recordings (keeping
+one, reset to a pristine no-body/no-labels state since `edit-issue.tape`
+adds those live), ensures the filler issues `browse-and-yank.tape` needs
+exist, and trims the repo's default label set so the "spike" label — which
+`edit-issue.tape` selects — lands inside boomerang's label picker without
+needing it to scroll (see the note on that below). It's idempotent, safe to
+run before every recording regardless of current state.
 
-**Verify the isolated session actually tore down after every recording.**
-Exiting the tape's nested shell relies on scripted keystrokes (e.g. `exit()`
-then `exit`); if a step in that chain doesn't land as expected — `Ctrl+D` not
-registering as EOF inside a REPL has already happened once — the isolated
-server is left running instead of exiting on its own. That's normally
-harmless in isolation, but the *next* recording's `tmux new-session -s demo`
-then fails with `duplicate session: demo` against the leftover one, silently
-drops out of any tmux context, and produces a broken take (keystrokes meant
-for the popup get typed as literal garbage into whatever's still running).
-After every run: `tmux -L boomerang-demo-gif ls` should report no server. If
-one is lingering, `tmux -L boomerang-demo-gif kill-server` is always safe to
-clean it up — it's scoped to that one socket, never the default one.
+**Isolate `XDG_CONFIG_HOME` too, and preserve `gh`'s auth when you do.**
+Each tape exports `XDG_CONFIG_HOME` to a scratch directory before launching
+boomerang, so the recording always reflects boomerang's *default* settings
+rather than whatever's currently in Jeff's real `config.toml` — this bit
+Jeff once already, where `exit_on_copy_yank = true` in the real config made
+boomerang quit immediately after the first `y` press mid-recording, cutting
+a take short in a way that wasn't obvious from the tape itself. `gh` also
+honors `XDG_CONFIG_HOME`, so blindly overriding it strips `gh`'s real auth
+too; every tape symlinks the real `~/.config/gh/*.yml` into the scratch
+directory to avoid that.
+
+**The tmux isolation in `quick-capture.tape` is load-bearing, never drop
+it.** Its `tmux -L boomerang-demo-gif ...` is not incidental — that flag is
+what keeps the recording's nested tmux server from touching Jeff's actual
+one. Running `tmux` commands against the default socket during a recording
+session (e.g. while debugging a tape by hand) and then issuing something
+like `kill-server` takes down every real tmux session on the machine, not
+just the throwaway one, since sessions aren't isolated by which pty invoked
+them, only by socket. This has happened before.
+
+**Verify the isolated tmux session actually tore down after recording
+`quick-capture.tape`.** Exiting the tape's nested shell relies on scripted
+keystrokes (e.g. `exit()` then `exit`); if a step in that chain doesn't land
+as expected — `Ctrl+D` not registering as EOF inside a REPL has already
+happened once — the isolated server is left running instead of exiting on
+its own. That's normally harmless in isolation, but the *next* recording's
+`tmux new-session -s demo` then fails with `duplicate session: demo`
+against the leftover one, silently drops out of any tmux context, and
+produces a broken take (keystrokes meant for the popup get typed as literal
+garbage into whatever's still running). After every run:
+`tmux -L boomerang-demo-gif ls` should report no server. If one is
+lingering, `tmux -L boomerang-demo-gif kill-server` is always safe to clean
+it up — it's scoped to that one socket, never the default one.
+
+**`clear` the screen right before launching boomerang in the un-nested
+tapes.** `browse-and-yank.tape` and `edit-issue.tape` run boomerang directly
+rather than inside tmux, and boomerang is a fullscreen (alt-screen) TUI —
+when it quits, the terminal restores whatever the primary screen buffer
+looked like before it launched. `Hide` only skips *rendering* the hidden
+setup commands, it doesn't erase them from the pty's actual scrollback, so
+without a `clear` right before `Show`/launching boomerang, the whole setup
+one-liner reappears the moment boomerang exits back to the shell.
+
+**The Labels field in boomerang's edit form doesn't scroll to follow the
+cursor** (`render_labels` in `src/ui.rs` renders a plain ratatui `List` with
+no `ListState`, so the visible window is always the first N items
+regardless of where the cursor actually is — worth fixing in boomerang
+itself at some point). `seed-issues.sh` works around this for
+`edit-issue.tape` by trimming `jeffdt/universe`'s default label set down
+until "spike" (the newest, so it always sorts last) fits inside the visible
+window. If you add more labels to that repo, re-check that "spike" is still
+visible, or the recorded label selection will silently happen off-screen.

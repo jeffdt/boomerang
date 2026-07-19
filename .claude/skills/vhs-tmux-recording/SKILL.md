@@ -145,7 +145,45 @@ bash — so no prompt tool initializes at all. This also has the side
 benefit of a clean, fast-starting shell with no personal aliases or
 functions that could shadow something the tape depends on.
 
-### 5. Run it and inspect the result
+### 5. Isolate the app's own config too, not just the terminal
+
+If the tool being recorded reads its own persistent config (settings file,
+`XDG_CONFIG_HOME`, dotfile), point that at a scratch location the same way
+you isolate tmux — otherwise the recording's behavior depends on whatever
+happens to be in the operator's real config that day, and a setting nobody
+remembers is on (an "auto-exit after this action" toggle, a saved filter,
+a theme) can silently change what the tape produces or cut it short in a
+way that isn't obvious from reading the tape itself. `export
+XDG_CONFIG_HOME=$(mktemp -d)` before launching the app is usually enough
+to get its defaults.
+
+Watch for other tools sharing that same environment variable, though —
+`XDG_CONFIG_HOME` in particular is also where things like `gh` or other
+CLIs the tape shells out to keep their own config, including auth. Blindly
+redirecting it strips their credentials along with the app's settings, so
+if the tape needs one of those tools to actually work, symlink its real
+config into the scratch directory first (e.g.
+`ln -s ~/.config/gh/*.yml $XDG_CONFIG_HOME/gh/`).
+
+### 6. `clear` the screen before a fullscreen TUI launches
+
+If the tool being recorded takes over the whole terminal (an alternate
+screen buffer, same mechanism vim/tmux/less use) and the recording shows
+the shell both before *and after* it runs, put a `clear` immediately
+before launching it — even inside a `Hide` block. When a fullscreen program
+exits, the terminal restores whatever the primary screen buffer looked
+like before it launched, including anything typed during hidden setup:
+`Hide` only skips *rendering* those frames, it doesn't erase them from the
+pty's actual scrollback. Without the `clear`, the moment the program quits,
+the whole hidden setup command reappears on screen as if it had been
+visible all along.
+
+This doesn't come up when the recording nests an isolated tmux session per
+the sections above, since tmux's own alt-screen swallows the setup and the
+recording never returns to the outer shell to reveal it — it's specifically
+a concern for tools recorded directly in the outer pty.
+
+### 7. Run it and inspect the result
 
 ```sh
 vhs path/to/file.tape
@@ -162,7 +200,7 @@ ffmpeg -i output.gif -vf "fps=4" frame-%03d.png
 
 then read the relevant PNGs directly.
 
-### 6. Verify the isolated session actually tore down
+### 8. Verify the isolated session actually tore down
 
 Don't assume the tape's teardown worked just because vhs exited cleanly.
 If a scripted "exit" step doesn't land as expected — `Ctrl+D` failing to
@@ -190,32 +228,52 @@ inner REPL with its own explicit exit call, then exiting the outer shell)
 over relying on a single `Ctrl+D` to cascade through multiple nested
 programs.
 
-## Worked example
+## Worked examples
 
-boomerang's own `docs/demo/quick-capture.tape` and
-`docs/demo/demo.tmux.conf` are a complete, checked-in reference
-implementation of everything above: isolated nested tmux server, real
-`display-popup` chrome, a disposable sandbox repo for the real GitHub
-issue it creates, Gruvbox theming with `zsh -f` to suppress a themed
-prompt, and an explicit multi-step teardown. Read them for a concrete
-example rather than starting from a blank tape. Regenerate it with:
+boomerang's `docs/demo/` has three complete, checked-in reference tapes,
+plus `docs/demo/seed-issues.sh`, an idempotent script that resets their
+shared sandbox repo to a known-good state before every recording (dedupes
+issues left over from prior runs, resets the ones later tapes edit live
+back to a pristine state, ensures any labels/filler data those tapes
+expect actually exist) — the same pattern is worth copying whenever a
+recording depends on specific external state existing. Read them for
+concrete examples rather than starting from a blank tape:
+
+- `quick-capture.tape` — the full nested-tmux pattern: isolated server,
+  real `display-popup` chrome, Gruvbox theming with `zsh -f`, explicit
+  multi-step teardown.
+- `browse-and-yank.tape` and `edit-issue.tape` — the simpler direct
+  pattern for a tool that doesn't need tmux chrome on screen at all: no
+  nested server, but still `XDG_CONFIG_HOME` isolation (with `gh` auth
+  preserved) and the pre-launch `clear` fullscreen TUIs need.
 
 ```sh
+docs/demo/seed-issues.sh
 vhs docs/demo/quick-capture.tape
+vhs docs/demo/browse-and-yank.tape
+vhs docs/demo/edit-issue.tape
 ```
 
-run from the repo root (prerequisites are documented in the tape's own
+Run from the repo root (prerequisites are documented in each tape's own
 header comment).
 
 ## Checklist recap
 
 - [ ] Every `tmux` command carries `-L <isolated-socket>`; `$TMUX` is
-      unset before the isolated session is created.
+      unset before the isolated session is created. (Only applies if the
+      recording nests tmux at all — skip for tools recorded directly.)
 - [ ] Any real side effect lands in a disposable sandbox, never a real
       tracker or shared system.
 - [ ] Setup/teardown plumbing is wrapped in `Hide`/`Show` so only the
       actual demo renders.
 - [ ] The pane's shell skips rc files (`zsh -f` / `bash --norc`) if a
       themed prompt would otherwise fight `Set Theme`.
+- [ ] The app's own config is isolated too (e.g. scratch
+      `XDG_CONFIG_HOME`), with any tool it shells out to still able to
+      authenticate.
+- [ ] A fullscreen (alt-screen) app recorded outside of tmux gets a
+      `clear` right before it launches, if the recording returns to the
+      outer shell afterward.
 - [ ] After running, `tmux -L <isolated-socket> ls` reports no server —
-      teardown actually happened, not just "vhs exited."
+      teardown actually happened, not just "vhs exited." (If tmux was
+      nested at all.)
