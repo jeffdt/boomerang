@@ -29,6 +29,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
+pub const DONE_FLASH_DURATION: Duration = Duration::from_millis(400);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
@@ -260,6 +261,7 @@ pub struct AppState {
     pub status: Option<(String, Instant)>,
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
+    pub done_flash: Option<Instant>,
     pub pane_open: bool,
     pub repo_name_with_owner: Option<String>,
     pub exit_on_copy_yank: bool,
@@ -284,6 +286,7 @@ impl AppState {
             status: None,
             loading: None,
             pending: None,
+            done_flash: None,
             pane_open: true,
             repo_name_with_owner: None,
             exit_on_copy_yank: false,
@@ -851,6 +854,29 @@ impl AppState {
         if let Some((_, set_at)) = &self.status {
             if set_at.elapsed() >= STATUS_TOAST_DURATION {
                 self.status = None;
+            }
+        }
+    }
+
+    pub fn begin_done_flash(&mut self) {
+        if self.shimmer_effects {
+            self.done_flash = Some(Instant::now());
+        }
+    }
+
+    pub fn is_done_flash_active(&self) -> bool {
+        self.done_flash
+            .is_some_and(|started| started.elapsed() < DONE_FLASH_DURATION)
+    }
+
+    pub fn done_flash_elapsed(&self) -> Option<Duration> {
+        self.done_flash.map(|started| started.elapsed())
+    }
+
+    pub fn tick_shimmer(&mut self) {
+        if let Some(started) = self.done_flash {
+            if started.elapsed() >= DONE_FLASH_DURATION {
+                self.done_flash = None;
             }
         }
     }
@@ -1768,6 +1794,38 @@ mod tests {
         state.finish_pending();
         assert!(!state.is_pending());
         assert_eq!(state.pending_message(), None);
+    }
+
+    #[test]
+    fn begin_done_flash_arms_when_shimmer_effects_enabled() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert!(!state.is_done_flash_active());
+        state.begin_done_flash();
+        assert!(state.is_done_flash_active());
+    }
+
+    #[test]
+    fn begin_done_flash_is_noop_when_shimmer_effects_disabled() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.shimmer_effects = false;
+        state.begin_done_flash();
+        assert!(!state.is_done_flash_active());
+    }
+
+    #[test]
+    fn done_flash_expires_after_duration_via_tick_shimmer() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.done_flash = Some(Instant::now() - DONE_FLASH_DURATION - Duration::from_millis(1));
+        assert!(!state.is_done_flash_active());
+        state.tick_shimmer();
+        assert!(state.done_flash.is_none());
+    }
+
+    #[test]
+    fn done_flash_still_active_just_before_duration_elapses() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.done_flash = Some(Instant::now() - DONE_FLASH_DURATION + Duration::from_millis(50));
+        assert!(state.is_done_flash_active());
     }
 
     #[test]
