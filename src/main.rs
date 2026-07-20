@@ -216,6 +216,7 @@ fn main() -> anyhow::Result<()> {
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
     state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
+    state.shimmer_effects = loaded_config.shimmer_effects;
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
 }
@@ -342,6 +343,7 @@ fn capture_loop<S: IssueSource>(
 
         terminal.draw(|f| ui::draw(f, state))?;
         state.clear_expired_status();
+        state.tick_shimmer();
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
@@ -488,6 +490,7 @@ fn capture_full_loop<S: IssueSource>(
 
         terminal.draw(|f| ui::draw(f, state))?;
         state.clear_expired_status();
+        state.tick_shimmer();
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
@@ -675,6 +678,7 @@ fn event_loop<S: IssueSource>(
             first_draw_logged = true;
         }
         state.clear_expired_status();
+        state.tick_shimmer();
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
@@ -824,6 +828,7 @@ fn event_loop<S: IssueSource>(
                         cfg.exit_on_copy_yank = state.exit_on_copy_yank;
                         cfg.zebra_striping = state.zebra_striping;
                         cfg.shortcuts_on_demand = state.shortcuts_on_demand;
+                        cfg.shimmer_effects = state.shimmer_effects;
                         let _ = cfg.save_to(config_path);
                     }
                     SettingsInput::Exit => state.exit_settings(),
@@ -1016,6 +1021,7 @@ fn finish_refresh(state: &mut AppState, result: anyhow::Result<RefreshSuccess>) 
     state.finish_pending();
     match result {
         Ok(success) => {
+            state.begin_done_flash();
             let count = success.issues.len();
             state.all_labels = success.labels;
             state.set_issues(success.issues);
@@ -1091,6 +1097,7 @@ fn finish_mutation(
     state.finish_pending();
     match result {
         Ok(success) => {
+            state.begin_done_flash();
             state.mode = Mode::List;
             state.set_issues_selecting(success.issues, success.target_issue);
             state.set_status(format!(
