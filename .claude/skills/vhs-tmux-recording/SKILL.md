@@ -132,7 +132,44 @@ Notes:
   keybind looks like in a user's actual dotfiles, so the recording
   exercises the real chrome rather than a simplified stand-in.
 
-### 4. Watch for terminal-theme conflicts
+### 4. Vary typing speed so it doesn't read as robotic
+
+`Set TypingSpeed <duration>` applies one constant per-character delay to
+every `Type` call that follows it, and vhs has no built-in jitter or
+randomness — so a sentence typed at a single fixed speed comes out
+metronome-even, which reads as obviously synthetic the moment there's more
+than a few words on screen. Real typing isn't like that: familiar, short
+phrases (`claude -p`, a command someone types daily) fly by, longer or
+less-rehearsed words slow down, and there's often a brief hitch right
+before a word the person is still composing (like the specific noun in an
+issue title). None of that needs actual randomness to sell — it just needs
+more than one speed.
+
+The technique: split what would be a single `Type` call into a few chunks,
+changing `Set TypingSpeed` between them, and drop in an occasional short
+`Sleep` (100-250ms) at a natural pause point (after a comma, before the
+part of the sentence that took thought). Two or three speed changes across
+a sentence is enough — more than that starts to look arbitrary rather than
+human.
+
+```
+Set TypingSpeed 30ms
+Type `claude -p "let's implement `
+Set TypingSpeed 55ms
+Type `these issues `
+Sleep 150ms
+Set TypingSpeed 35ms
+Type `as a bundle: "`
+```
+
+Pick the slow chunks deliberately rather than at random intervals — slow
+down where a real person would actually be composing (the specific,
+content-bearing part of the sentence), not on filler words. `Set
+TypingSpeed` stays in effect for every `Type` call after it until changed
+again, so remember to set it back to the tape's baseline speed before any
+later typed text that isn't meant to carry this effect.
+
+### 5. Watch for terminal-theme conflicts
 
 `Set Theme` remaps vhs's 16 base ANSI colors. It has no effect on anything
 that emits truecolor (24-bit RGB) escape codes directly — most themed
@@ -145,7 +182,7 @@ bash — so no prompt tool initializes at all. This also has the side
 benefit of a clean, fast-starting shell with no personal aliases or
 functions that could shadow something the tape depends on.
 
-### 5. Isolate the app's own config too, not just the terminal
+### 6. Isolate the app's own config too, not just the terminal
 
 If the tool being recorded reads its own persistent config (settings file,
 `XDG_CONFIG_HOME`, dotfile), point that at a scratch location the same way
@@ -165,7 +202,7 @@ if the tape needs one of those tools to actually work, symlink its real
 config into the scratch directory first (e.g.
 `ln -s ~/.config/gh/*.yml $XDG_CONFIG_HOME/gh/`).
 
-### 6. `clear` the screen before a fullscreen TUI launches
+### 7. `clear` the screen before a fullscreen TUI launches
 
 If the tool being recorded takes over the whole terminal (an alternate
 screen buffer, same mechanism vim/tmux/less use) and the recording shows
@@ -183,7 +220,7 @@ the sections above, since tmux's own alt-screen swallows the setup and the
 recording never returns to the outer shell to reveal it — it's specifically
 a concern for tools recorded directly in the outer pty.
 
-### 7. Run it and inspect the result
+### 8. Run it and inspect the result
 
 ```sh
 vhs path/to/file.tape
@@ -200,7 +237,7 @@ ffmpeg -i output.gif -vf "fps=4" frame-%03d.png
 
 then read the relevant PNGs directly.
 
-### 8. Verify the isolated session actually tore down
+### 9. Verify the isolated session actually tore down
 
 Don't assume the tape's teardown worked just because vhs exited cleanly.
 If a scripted "exit" step doesn't land as expected — `Ctrl+D` failing to
@@ -241,10 +278,12 @@ concrete examples rather than starting from a blank tape:
 
 - `quick-capture.tape` and `browse-and-yank.tape` — the full nested-tmux
   pattern: isolated server, real `display-popup` chrome, Gruvbox theming
-  with `zsh -f`. Both open on a moment where the popup interrupts something
-  already on screen (an in-progress calculation, a half-typed shell
-  command) rather than a blank prompt, since that's what actually sells
-  "this costs you nothing" per step 1 above.
+  with `zsh -f`. `quick-capture.tape` opens mid-flow, with the popup
+  interrupting an in-progress calculation, per step 1's "interruption"
+  framing; `browse-and-yank.tape` opens on a genuinely blank prompt instead,
+  since its own story is the start of a task rather than an interruption of
+  one - typing begins from nothing on screen. Pick whichever framing fits
+  the story being told, not the same one by default.
 - `edit-issue.tape` — the simpler direct pattern for a tool that doesn't
   need tmux chrome on screen at all: no nested server, but still
   `XDG_CONFIG_HOME` isolation (with `gh` auth preserved) and the pre-launch

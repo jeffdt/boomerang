@@ -267,7 +267,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             if state.pane_open {
                 let list_and_pane = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                     .split(chunks[0]);
                 draw_list(frame, list_and_pane[0], state);
                 draw_pane(frame, list_and_pane[1], state);
@@ -412,12 +412,19 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Only reserve a 2nd title row when the title is actually long enough to
+    // wrap; most titles fit on one line, and that spare row is worth more to
+    // the body preview below, which is otherwise squeezed to a single line
+    // that hard-clips mid-word with no indication there's more to read.
+    let title_rows = if issue.title.chars().count() as u16 > inner.width.max(1) {
+        2
+    } else {
+        1
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        // 2 rows reserved for the title: most titles wrap to 1 line, leaving
-        // a blank row, but longer titles need the second line.
         .constraints([
-            Constraint::Length(2),
+            Constraint::Length(title_rows),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
@@ -1451,6 +1458,27 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("opened 2026-06-01"));
         assert!(rendered.contains("steps to repro"));
+    }
+
+    #[test]
+    fn pane_wraps_a_long_body_across_multiple_rows_instead_of_clipping_to_one() {
+        let mut selected = issue(1, "Fix bug");
+        selected.body = "word ".repeat(20) + "tail";
+        let state = AppState::new(vec![selected], vec![]);
+        let rendered = render_to_string(&state);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let first_line = lines
+            .iter()
+            .position(|l| l.contains("word word"))
+            .expect("body should start rendering");
+        let tail_line = lines
+            .iter()
+            .position(|l| l.contains("tail"))
+            .expect("body should wrap onto a later row rather than clip mid-word");
+        assert!(
+            tail_line > first_line,
+            "a long body should span more than one row of the description pane"
+        );
     }
 
     #[test]

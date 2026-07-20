@@ -25,21 +25,33 @@
 #
 # Story: the recording opens on a bare, already-waiting shell prompt - nothing
 # happened yet, this *is* the start of the task, unlike quick-capture's
-# mid-flow interruption. Typing begins on screen: `claude -p "help me tackle
-# issue `, then a pause, as if realizing the issue number isn't memorized.
-# The popup (Ctrl+B i) opens over the half-typed command, browses down/up/
-# down as if genuinely weighing a couple of issues before settling on one -
-# not a straight line to the target - then yanks it and closes. Control
-# lands right back in the still-half-typed shell command, and pasting the
-# yanked number finishes it. No multi-select in this one; that's its own
-# future recording rather than force-fit here.
+# mid-flow interruption. The full command line is typed out, closing quote
+# and all: `claude -p "let's implement these issues as a bundle: "` - the way
+# a shell with auto-paired quotes would leave it, or just how someone drafts
+# a quoted string in one go. Typed in a few chunks at varying TypingSpeed
+# (see the vhs-tmux-recording skill's "vary typing speed" step) rather than
+# one uniform speed for the whole line, since a constant per-character delay
+# reads as obviously scripted the moment there's a full sentence on screen.
+# The cursor then steps left, back inside the
+# quotes, before the popup opens - this is what makes the eventual paste land
+# in the middle of the line instead of magically appearing after a quote that
+# wasn't there yet. The popup (Ctrl+B i) opens over that half-typed command
+# and browses down through the list first - not a straight line to any
+# target, as if genuinely scanning what's open - then works back upward,
+# checking off three issues along the way (Space) as each one turns out to
+# be relevant, rather than deciding on all three up front. `y` yanks every
+# checked issue as one comma-joined `#7, #9, #12`, closing lands control
+# right back in the still-half-typed shell command with the cursor still
+# parked before the closing quote, and pasting drops the numbers straight in.
+# This is the multi-select follow-up to the single-issue paste story that
+# used to live here.
 
 Output "docs/images/browse-and-yank.gif"
 
 Set Shell zsh
 Set FontSize 14
 Set Width 1100
-Set Height 700
+Set Height 950
 Set Theme "GruvboxDark"
 
 Hide
@@ -49,36 +61,48 @@ Sleep 2s
 Show
 
 Sleep 600ms
-Type `claude -p "help me tackle issue `
+Set TypingSpeed 30ms
+Type `claude -p "`
+Set TypingSpeed 60ms
+Type `let's implement `
+Sleep 150ms
+Set TypingSpeed 35ms
+Type `these issues `
+Set TypingSpeed 55ms
+Type `as a bundle: "`
+Set TypingSpeed 50ms
+Sleep 500ms
+Left
 Sleep 900ms
 
 Ctrl+B
 Type "i"
-Sleep 1400ms
+Sleep 2000ms
 
 Down
-Sleep 250ms
+Sleep 350ms
 Down
-Sleep 250ms
+Sleep 350ms
 Down
-Sleep 500ms
+Sleep 700ms
+Space
+Sleep 700ms
 Up
-Sleep 250ms
+Sleep 700ms
+Space
+Sleep 700ms
 Up
-Sleep 500ms
-Down
-Sleep 250ms
-Down
-Sleep 250ms
-Down
-Sleep 400ms
+Sleep 350ms
+Up
+Sleep 700ms
+Space
+Sleep 900ms
 Type "y"
-Sleep 800ms
+Sleep 900ms
 Type "q"
 Sleep 900ms
 
 Paste
-Type `"`
 Sleep 2s
 
 Hide
