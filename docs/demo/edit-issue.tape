@@ -23,10 +23,16 @@
 # caught on a whim with nothing but a title; this one shows it fleshed out
 # before starting on it - not with findings, since nothing's been tested
 # yet, but with the rationale for why it's worth testing (the body below is
-# Einstein's actual 1905 "chasing a light beam" thought experiment,
-# adapted). Search finds it by title rather than scrolling, since "where
-# did I put that idea" is the whole reason capture-now, flesh-out-later
-# works: you don't have to remember where you left it.
+# Einstein's actual 1905 "chasing a light beam" thought experiment, cut
+# down to the one sentence that poses the paradox - long enough to convey
+# the idea, short enough that the recording doesn't sit there typing for
+# ages). The body types in chunks at varying TypingSpeed rather than one
+# constant rate for the whole sentence (see the vhs-tmux-recording skill's
+# "vary typing speed" step) - the base 25ms Set at the top stays the
+# baseline, with brief slow-downs where someone would actually be
+# composing the sentence. Search finds it by title rather than scrolling,
+# since "where did I put that idea" is the whole reason capture-now,
+# flesh-out-later works: you don't have to remember where you left it.
 #
 # The Labels field renders as a plain list with no scroll-follow (see
 # src/ui.rs render_labels - a ratatui List with no ListState, so the
@@ -73,7 +79,14 @@ Sleep 900ms
 
 Tab
 Sleep 400ms
-Type "If you chased a beam of light at c, would it look frozen next to you, like a stationary wave? Maxwell's equations don't allow a light wave to just sit still. Worth spiking on whether c has to be the same for every observer regardless of their own motion, before anything downstream assumes velocities just add normally."
+Type "If you chased a beam of light at c, "
+Set TypingSpeed 45ms
+Type "would it look frozen next to you like a stationary wave, "
+Sleep 150ms
+Set TypingSpeed 35ms
+Type "or would it still race away from you at c "
+Set TypingSpeed 25ms
+Type "no matter how fast you went?"
 Sleep 600ms
 Tab
 Sleep 500ms
