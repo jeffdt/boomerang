@@ -5,6 +5,7 @@ mod gh;
 mod loading;
 mod model;
 mod search;
+mod shimmer;
 mod ui;
 
 use crossterm::event::{self, Event};
