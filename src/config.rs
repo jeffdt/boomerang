@@ -11,6 +11,7 @@ pub struct Config {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
     pub shortcuts_on_demand: bool,
+    pub shimmer_effects: bool,
     pub recent_repos: Vec<String>,
 }
 
@@ -20,6 +21,7 @@ impl Default for Config {
             exit_on_copy_yank: false,
             zebra_striping: true,
             shortcuts_on_demand: false,
+            shimmer_effects: true,
             recent_repos: Vec::new(),
         }
     }
@@ -83,6 +85,7 @@ mod tests {
         assert!(!config.exit_on_copy_yank);
         assert!(config.zebra_striping);
         assert!(!config.shortcuts_on_demand);
+        assert!(config.shimmer_effects);
         assert!(config.recent_repos.is_empty());
     }
 
@@ -110,6 +113,7 @@ mod tests {
             exit_on_copy_yank: true,
             zebra_striping: false,
             shortcuts_on_demand: true,
+            shimmer_effects: false,
             recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
         };
         config.save_to(&path).unwrap();
