@@ -32,6 +32,9 @@ pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 pub const DONE_FLASH_DURATION: Duration = Duration::from_millis(400);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+const TITLE_SHIMMER_PAUSE: Duration = Duration::from_millis(800);
+const TITLE_SHIMMER_BREATHE_MIN_SECS: u64 = 10;
+const TITLE_SHIMMER_BREATHE_JITTER_SECS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -92,6 +95,40 @@ pub struct LoadingState {
     pub started_at: Instant,
     pub animation: LoadingAnimation,
     pub what: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TitleShimmer {
+    pub blessed: bool,
+    pub next_fire_at: Option<Instant>,
+    pub active_since: Option<Instant>,
+}
+
+impl TitleShimmer {
+    pub fn new() -> Self {
+        TitleShimmer {
+            blessed: pseudo_random_millis() % 10 == 0,
+            next_fire_at: None,
+            active_since: None,
+        }
+    }
+}
+
+/// Cheap, non-cryptographic pseudo-randomness for cosmetic timing only
+/// (which loading animation plays, whether/when the title shimmers) —
+/// mirrors `LoadingAnimation::rotated()`'s existing technique so this
+/// feature doesn't need a `rand` dependency.
+fn pseudo_random_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn jittered_breathe_interval() -> Duration {
+    Duration::from_secs(
+        TITLE_SHIMMER_BREATHE_MIN_SECS + (pseudo_random_millis() % TITLE_SHIMMER_BREATHE_JITTER_SECS),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -262,6 +299,7 @@ pub struct AppState {
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
     pub done_flash: Option<Instant>,
+    pub title_shimmer: TitleShimmer,
     pub pane_open: bool,
     pub repo_name_with_owner: Option<String>,
     pub exit_on_copy_yank: bool,
@@ -287,6 +325,7 @@ impl AppState {
             loading: None,
             pending: None,
             done_flash: None,
+            title_shimmer: TitleShimmer::new(),
             pane_open: true,
             repo_name_with_owner: None,
             exit_on_copy_yank: false,
@@ -309,6 +348,9 @@ impl AppState {
         self.all_labels = all_labels;
         self.set_issues(issues);
         self.finish_loading();
+        if self.shimmer_effects && self.title_shimmer.blessed {
+            self.title_shimmer.next_fire_at = Some(Instant::now() + TITLE_SHIMMER_PAUSE);
+        }
     }
 
     pub fn visible_indices(&self) -> Vec<usize> {
@@ -879,6 +921,25 @@ impl AppState {
                 self.done_flash = None;
             }
         }
+
+        if let Some(active_since) = self.title_shimmer.active_since {
+            if active_since.elapsed() >= crate::shimmer::SHIMMER_SWEEP {
+                self.title_shimmer.active_since = None;
+                self.title_shimmer.next_fire_at = Some(Instant::now() + jittered_breathe_interval());
+            }
+            return;
+        }
+
+        if let Some(next_fire_at) = self.title_shimmer.next_fire_at {
+            if Instant::now() >= next_fire_at {
+                self.title_shimmer.next_fire_at = None;
+                self.title_shimmer.active_since = Some(Instant::now());
+            }
+        }
+    }
+
+    pub fn title_shimmer_elapsed(&self) -> Option<Duration> {
+        self.title_shimmer.active_since.map(|started| started.elapsed())
     }
 }
 
@@ -1865,6 +1926,116 @@ mod tests {
         assert_eq!(state.all_labels, vec![label]);
         assert!(!state.is_loading());
         assert_eq!(state.loading_message(), None);
+    }
+
+    #[test]
+    fn title_shimmer_not_blessed_never_arms_from_set_loaded() {
+        let mut state = AppState::loading();
+        state.title_shimmer = TitleShimmer {
+            blessed: false,
+            next_fire_at: None,
+            active_since: None,
+        };
+        state.set_loaded(vec![], vec![]);
+        assert!(state.title_shimmer.next_fire_at.is_none());
+    }
+
+    #[test]
+    fn title_shimmer_blessed_schedules_first_fire_from_set_loaded() {
+        let mut state = AppState::loading();
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: None,
+            active_since: None,
+        };
+        let before = Instant::now();
+        state.set_loaded(vec![], vec![]);
+        let fire_at = state
+            .title_shimmer
+            .next_fire_at
+            .expect("blessed session should schedule a first fire");
+        assert!(fire_at > before);
+    }
+
+    #[test]
+    fn shimmer_effects_disabled_prevents_set_loaded_from_arming_title_shimmer() {
+        let mut state = AppState::loading();
+        state.shimmer_effects = false;
+        state.title_shimmer.blessed = true;
+        state.set_loaded(vec![], vec![]);
+        assert!(state.title_shimmer.next_fire_at.is_none());
+    }
+
+    #[test]
+    fn tick_shimmer_activates_sweep_once_next_fire_at_elapses() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: Some(Instant::now() - Duration::from_millis(1)),
+            active_since: None,
+        };
+        state.tick_shimmer();
+        assert!(state.title_shimmer.next_fire_at.is_none());
+        assert!(state.title_shimmer.active_since.is_some());
+    }
+
+    #[test]
+    fn tick_shimmer_leaves_unfired_schedule_untouched() {
+        let mut state = AppState::new(vec![], vec![]);
+        let fire_at = Instant::now() + Duration::from_secs(60);
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: Some(fire_at),
+            active_since: None,
+        };
+        state.tick_shimmer();
+        assert_eq!(state.title_shimmer.next_fire_at, Some(fire_at));
+        assert!(state.title_shimmer.active_since.is_none());
+    }
+
+    #[test]
+    fn tick_shimmer_reschedules_breathing_after_sweep_completes() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: None,
+            active_since: Some(Instant::now() - crate::shimmer::SHIMMER_SWEEP - Duration::from_millis(1)),
+        };
+        state.tick_shimmer();
+        assert!(state.title_shimmer.active_since.is_none());
+        let next = state
+            .title_shimmer
+            .next_fire_at
+            .expect("should reschedule the next breathing sweep");
+        assert!(next > Instant::now());
+    }
+
+    #[test]
+    fn tick_shimmer_leaves_in_progress_sweep_active() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: None,
+            active_since: Some(Instant::now() - Duration::from_millis(100)),
+        };
+        state.tick_shimmer();
+        assert!(state.title_shimmer.active_since.is_some());
+    }
+
+    #[test]
+    fn title_shimmer_elapsed_is_none_when_inactive() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.title_shimmer_elapsed(), None);
+    }
+
+    #[test]
+    fn title_shimmer_elapsed_reports_time_since_active_since() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.title_shimmer.active_since = Some(Instant::now() - Duration::from_millis(100));
+        let elapsed = state
+            .title_shimmer_elapsed()
+            .expect("active sweep should report elapsed time");
+        assert!(elapsed >= Duration::from_millis(100));
     }
 
     #[test]
