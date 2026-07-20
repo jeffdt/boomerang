@@ -107,7 +107,7 @@ pub struct TitleShimmer {
 impl TitleShimmer {
     pub fn new() -> Self {
         TitleShimmer {
-            blessed: pseudo_random_millis() % 10 == 0,
+            blessed: pseudo_random_millis().is_multiple_of(10),
             next_fire_at: None,
             active_since: None,
         }
@@ -920,6 +920,12 @@ impl AppState {
             if started.elapsed() >= DONE_FLASH_DURATION {
                 self.done_flash = None;
             }
+        }
+
+        if !self.shimmer_effects {
+            self.title_shimmer.next_fire_at = None;
+            self.title_shimmer.active_since = None;
+            return;
         }
 
         if let Some(active_since) = self.title_shimmer.active_since {
@@ -2019,6 +2025,20 @@ mod tests {
             .next_fire_at
             .expect("should reschedule the next breathing sweep");
         assert!(next > Instant::now());
+    }
+
+    #[test]
+    fn tick_shimmer_clears_title_shimmer_state_when_effects_disabled() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.shimmer_effects = false;
+        state.title_shimmer = TitleShimmer {
+            blessed: true,
+            next_fire_at: Some(Instant::now() + Duration::from_secs(5)),
+            active_since: Some(Instant::now() - Duration::from_millis(100)),
+        };
+        state.tick_shimmer();
+        assert!(state.title_shimmer.next_fire_at.is_none());
+        assert!(state.title_shimmer.active_since.is_none());
     }
 
     #[test]
