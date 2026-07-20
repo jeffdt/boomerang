@@ -1,5 +1,6 @@
 use crate::loading;
 use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRow};
+use crate::shimmer;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -230,17 +231,21 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(ACCENT);
+    let title_style = border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC);
+    let mut title_spans = vec![
+        Span::styled("─", border_style),
+        Span::styled("‹ ", title_style),
+    ];
+    match state.title_shimmer_elapsed() {
+        Some(elapsed) => title_spans.extend(shimmer::shimmer_spans("boomerang", elapsed, title_style)),
+        None => title_spans.push(Span::styled("boomerang", title_style)),
+    }
+    title_spans.push(Span::styled(" ›", title_style));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(Line::from(vec![
-            Span::styled("─", border_style),
-            Span::styled(
-                "‹ boomerang ›",
-                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
-            ),
-        ]));
+        .title(Line::from(title_spans));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -508,6 +513,15 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
+    if state.is_done_flash_active() {
+        let elapsed = state.done_flash_elapsed().unwrap_or_default();
+        let spans = shimmer::shimmer_spans("done!", elapsed, Style::default());
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
     let text = state
         .pending_message()
         .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
@@ -1241,7 +1255,7 @@ mod tests {
     use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn issue(number: u32, title: &str) -> Issue {
         Issue {
@@ -1880,6 +1894,58 @@ mod tests {
             !shortcuts_line.contains("Closing issue..."),
             "shortcuts hint row should not repeat the spinner text"
         );
+    }
+
+    #[test]
+    fn done_flash_shows_shimmering_text_in_toast_row_immediately_after_completion() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        state.finish_pending();
+        state.begin_done_flash();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("done!"));
+        assert!(!rendered.contains("Closing issue..."));
+    }
+
+    #[test]
+    fn done_flash_expired_falls_back_to_status_toast() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status("closed issue in 1.0s, refresh 0.1s".to_string());
+        state.done_flash = Some(Instant::now() - crate::model::DONE_FLASH_DURATION - Duration::from_millis(1));
+        let rendered = render_to_string(&state);
+        assert!(!rendered.contains("done!"));
+        assert!(rendered.contains("closed issue in 1.0s"));
+    }
+
+    #[test]
+    fn title_renders_static_boomerang_when_not_shimmering() {
+        let state = AppState::new(vec![], vec![]);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "boomerang").expect("title should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.fg, Some(ACCENT));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn title_shimmers_peak_character_when_active() {
+        let mut state = AppState::new(vec![], vec![]);
+        // Exactly half of the 600ms sweep: progress=0.5, "boomerang" has 9
+        // chars, peak = round(8*0.5) = 4 -> the 'e' in "boomerang".
+        state.title_shimmer.active_since = Some(Instant::now() - Duration::from_millis(300));
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "boomerang").expect("title should render");
+        let peak_style = buf[(x + 4, y)].style();
+        assert_eq!(peak_style.fg, Some(Color::LightCyan));
+        assert!(peak_style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn draw_settings_shows_shimmer_effects_row_defaulting_to_on() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Shimmer effects"));
     }
 
     #[test]
