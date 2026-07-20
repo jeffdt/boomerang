@@ -801,6 +801,13 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
                         "Always"
                     }
                 }
+                SettingsRow::ShimmerEffects => {
+                    if state.shimmer_effects {
+                        "On"
+                    } else {
+                        "Off"
+                    }
+                }
             };
             let label = row.label();
             let pad = list_width

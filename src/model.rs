@@ -133,13 +133,15 @@ pub enum SettingsRow {
     ExitOnCopyYank,
     ZebraStriping,
     ShortcutsOnDemand,
+    ShimmerEffects,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 3] = [
+    pub const ALL: [SettingsRow; 4] = [
         SettingsRow::ExitOnCopyYank,
         SettingsRow::ZebraStriping,
         SettingsRow::ShortcutsOnDemand,
+        SettingsRow::ShimmerEffects,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -147,6 +149,7 @@ impl SettingsRow {
             SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
             SettingsRow::ZebraStriping => "Zebra striping",
             SettingsRow::ShortcutsOnDemand => "Show shortcuts",
+            SettingsRow::ShimmerEffects => "Shimmer effects",
         }
     }
 }
@@ -262,6 +265,7 @@ pub struct AppState {
     pub exit_on_copy_yank: bool,
     pub zebra_striping: bool,
     pub shortcuts_on_demand: bool,
+    pub shimmer_effects: bool,
     pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
@@ -285,6 +289,7 @@ impl AppState {
             exit_on_copy_yank: false,
             zebra_striping: true,
             shortcuts_on_demand: false,
+            shimmer_effects: true,
             show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
@@ -339,6 +344,7 @@ impl AppState {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
             SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
+            SettingsRow::ShimmerEffects => self.shimmer_effects = !self.shimmer_effects,
         }
     }
 
@@ -1864,7 +1870,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 2,
+            state.settings_cursor, 3,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -1916,6 +1922,25 @@ mod tests {
         assert!(
             !state.exit_on_copy_yank && state.zebra_striping,
             "toggling the third row must not affect the first two"
+        );
+    }
+
+    #[test]
+    fn new_app_state_defaults_shimmer_effects_on() {
+        let state = AppState::new(vec![], vec![]);
+        assert!(state.shimmer_effects);
+    }
+
+    #[test]
+    fn settings_toggle_flips_shimmer_effects_independently() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        assert!(state.shimmer_effects);
+        state.settings_toggle();
+        assert!(!state.shimmer_effects);
+        assert!(
+            !state.exit_on_copy_yank && state.zebra_striping && !state.shortcuts_on_demand,
+            "toggling the fourth row must not affect the first three"
         );
     }
 
