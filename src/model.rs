@@ -1890,6 +1890,17 @@ mod tests {
     }
 
     #[test]
+    fn done_flash_elapsed_reports_none_when_unset_and_some_when_set() {
+        let mut state = AppState::new(vec![], vec![]);
+        assert_eq!(state.done_flash_elapsed(), None);
+        state.done_flash = Some(Instant::now() - Duration::from_millis(50));
+        let elapsed = state
+            .done_flash_elapsed()
+            .expect("done_flash_elapsed should report Some once done_flash is set");
+        assert!(elapsed >= Duration::from_millis(50));
+    }
+
+    #[test]
     fn loading_state_reports_message_and_selected_animation() {
         let state = AppState::loading();
         assert!(state.is_loading());
