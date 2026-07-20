@@ -1,6 +1,6 @@
 [package]
 name = "boomerang"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "A tmux-popup TUI for browsing, searching, creating, editing, and closing GitHub issues in the current repo"
 license = "MIT"
