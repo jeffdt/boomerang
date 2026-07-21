@@ -29,8 +29,8 @@ use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
-pub const FLASH_DURATION: Duration = Duration::from_millis(1000);
-const FLASH_PHASE: Duration = Duration::from_millis(250);
+pub const FLASH_DURATION: Duration = Duration::from_millis(1800);
+const FLASH_PHASE: Duration = Duration::from_millis(300);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
@@ -858,7 +858,8 @@ impl AppState {
     }
 
     /// Whether `number`'s row should render in its "on" flash phase right
-    /// now. Four 250ms phases across `FLASH_DURATION`: on, off, on, off.
+    /// now. Six 300ms phases across `FLASH_DURATION`: on, off, on, off, on,
+    /// off — three blinks.
     pub fn flash_is_on(&self, number: u32) -> bool {
         match self.flash {
             Some((flash_number, started_at)) if flash_number == number => {
@@ -1729,10 +1730,10 @@ mod tests {
     }
 
     #[test]
-    fn flash_is_on_at_start_and_toggles_through_two_blinks() {
+    fn flash_is_on_at_start_and_toggles_through_three_blinks() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        assert!(state.flash_is_on(1), "phase 0 (0-250ms) should be on");
+        assert!(state.flash_is_on(1), "phase 0 (0-300ms) should be on");
     }
 
     #[test]
@@ -1747,15 +1748,21 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
         let (number, _) = state.flash.unwrap();
-        // Phase 1 (250-500ms): off
-        state.flash = Some((number, Instant::now() - Duration::from_millis(260)));
+        // Phase 1 (300-600ms): off
+        state.flash = Some((number, Instant::now() - Duration::from_millis(310)));
         assert!(!state.flash_is_on(1), "phase 1 should be off");
-        // Phase 2 (500-750ms): on
-        state.flash = Some((number, Instant::now() - Duration::from_millis(510)));
+        // Phase 2 (600-900ms): on
+        state.flash = Some((number, Instant::now() - Duration::from_millis(610)));
         assert!(state.flash_is_on(1), "phase 2 should be on");
-        // Phase 3 (750-1000ms): off
-        state.flash = Some((number, Instant::now() - Duration::from_millis(760)));
+        // Phase 3 (900-1200ms): off
+        state.flash = Some((number, Instant::now() - Duration::from_millis(910)));
         assert!(!state.flash_is_on(1), "phase 3 should be off");
+        // Phase 4 (1200-1500ms): on
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1210)));
+        assert!(state.flash_is_on(1), "phase 4 should be on");
+        // Phase 5 (1500-1800ms): off
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1510)));
+        assert!(!state.flash_is_on(1), "phase 5 should be off");
         // Past FLASH_DURATION: off
         state.flash = Some((
             number,
