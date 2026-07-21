@@ -29,8 +29,8 @@ use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
-const FLASH_GREEN_DURATION: Duration = Duration::from_millis(1000);
-const FLASH_GRAY_DURATION: Duration = Duration::from_millis(800);
+const FLASH_GREEN_DURATION: Duration = Duration::from_millis(2000);
+const FLASH_GRAY_DURATION: Duration = Duration::from_millis(1600);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
@@ -1753,16 +1753,16 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
         let (number, _) = state.flash.unwrap();
-        // Still within the green window (0-1000ms).
-        state.flash = Some((number, Instant::now() - Duration::from_millis(900)));
+        // Still within the green window (0-2000ms).
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1800)));
         assert_eq!(state.flash_indicator(1), Some(Color::Green));
-        // Into the gray window (1000-1800ms).
-        state.flash = Some((number, Instant::now() - Duration::from_millis(1100)));
+        // Into the gray window (2000-3600ms).
+        state.flash = Some((number, Instant::now() - Duration::from_millis(2200)));
         assert_eq!(state.flash_indicator(1), Some(Color::DarkGray));
-        state.flash = Some((number, Instant::now() - Duration::from_millis(1700)));
+        state.flash = Some((number, Instant::now() - Duration::from_millis(3400)));
         assert_eq!(state.flash_indicator(1), Some(Color::DarkGray));
         // Past both windows: gone.
-        state.flash = Some((number, Instant::now() - Duration::from_millis(1900)));
+        state.flash = Some((number, Instant::now() - Duration::from_millis(3700)));
         assert_eq!(state.flash_indicator(1), None);
     }
 
@@ -1770,7 +1770,7 @@ mod tests {
     fn clear_expired_flash_clears_once_past_flash_duration() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        state.flash = Some((1, Instant::now() - Duration::from_millis(1900)));
+        state.flash = Some((1, Instant::now() - Duration::from_millis(3700)));
         state.clear_expired_flash();
         assert_eq!(state.flash, None);
     }
