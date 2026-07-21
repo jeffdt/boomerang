@@ -131,6 +131,21 @@ pub fn parse_repo_name(raw: &str) -> String {
     raw.trim().to_string()
 }
 
+/// Parses the newly created issue's number out of `gh issue create`'s
+/// stdout, which is just the issue's URL (e.g.
+/// `https://github.com/owner/repo/issues/71`).
+pub fn parse_created_issue_number(output: &str) -> Result<u32> {
+    let url = output.trim();
+    match url
+        .rsplit('/')
+        .next()
+        .and_then(|segment| segment.parse().ok())
+    {
+        Some(number) => Ok(number),
+        None => bail!("couldn't parse an issue number from gh's create output: {url:?}"),
+    }
+}
+
 pub fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<String> {
     let mut args = vec![
         "issue".into(),
@@ -182,7 +197,7 @@ pub trait IssueSource: Clone + Send + 'static {
     fn list(&self, state: StateFilter) -> Result<Vec<Issue>>;
     fn labels(&self) -> Result<Vec<Label>>;
     fn repo_name(&self) -> Result<String>;
-    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<()>;
+    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32>;
     fn edit(
         &self,
         number: u32,
@@ -266,8 +281,9 @@ impl IssueSource for GhCliSource {
         Ok(parse_repo_name(&self.run(&repo_name_args())?))
     }
 
-    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<()> {
-        self.run(&create_args(title, body, labels)).map(|_| ())
+    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32> {
+        let output = self.run(&create_args(title, body, labels))?;
+        parse_created_issue_number(&output)
     }
 
     fn edit(
@@ -426,6 +442,19 @@ mod tests {
                 "--label", "urgent"
             ])
         );
+    }
+
+    #[test]
+    fn parse_created_issue_number_reads_the_trailing_url_segment() {
+        assert_eq!(
+            parse_created_issue_number("https://github.com/owner/repo/issues/71\n").unwrap(),
+            71
+        );
+    }
+
+    #[test]
+    fn parse_created_issue_number_errors_on_unparseable_output() {
+        assert!(parse_created_issue_number("not a url").is_err());
     }
 
     #[test]

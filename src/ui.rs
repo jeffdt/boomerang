@@ -23,6 +23,13 @@ const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const SEL_BG: Color = Color::DarkGray;
 
+/// "Just edited" indicator shown in the margin between the issue number and
+/// title. Reserves a fixed 2-column slot (icon + trailing space) whether or
+/// not it's showing, so a row's title never shifts as the indicator fades in
+/// and out.
+const FLASH_ICON: &str = "\u{270E}";
+const FLASH_ICON_COLUMN_WIDTH: usize = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListInput {
     Up,
@@ -353,9 +360,11 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         let max_title_width = available_width
             .saturating_sub(checkbox_prefix.chars().count())
             .saturating_sub(number_col.chars().count())
+            .saturating_sub(FLASH_ICON_COLUMN_WIDTH)
             .saturating_sub(labels_width);
         let title = truncate_title(&issue.title, max_title_width);
         let selected = row == state.cursor;
+        let flash_color = state.flash_indicator(issue.number);
         // DIM is a render intensity modifier (SGR "faint"), unrelated to the
         // `DIM` *color* constant above used for de-emphasized text — this
         // never sets a background, so it can't collide with SEL_BG the way
@@ -367,11 +376,18 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             number_style = number_style.add_modifier(Modifier::DIM);
             title_style = title_style.add_modifier(Modifier::DIM);
         }
-        let left_width =
-            checkbox_prefix.chars().count() + number_col.chars().count() + title.chars().count();
+        let flash_icon_span = match flash_color {
+            Some(color) => Span::styled(format!("{FLASH_ICON} "), Style::default().fg(color)),
+            None => Span::raw(" ".repeat(FLASH_ICON_COLUMN_WIDTH)),
+        };
+        let left_width = checkbox_prefix.chars().count()
+            + number_col.chars().count()
+            + FLASH_ICON_COLUMN_WIDTH
+            + title.chars().count();
         let mut spans = vec![
             Span::styled(checkbox_prefix, number_style),
             Span::styled(number_col, number_style),
+            flash_icon_span,
             Span::styled(title, title_style),
         ];
         if !label_spans.is_empty() {
@@ -1299,6 +1315,96 @@ mod tests {
         assert!(
             !style.add_modifier.contains(Modifier::REVERSED),
             "selected row should not use REVERSED"
+        );
+    }
+
+    #[test]
+    fn flashing_row_shows_a_green_pencil_icon_in_the_margin() {
+        let mut state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        state.start_flash(2);
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("\u{270E}"),
+            "flashing row should show the pencil icon: {rendered}"
+        );
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "\u{270E}").expect("pencil icon should render on issue #2's row");
+        let style = buf[(x, y)].style();
+        assert_eq!(
+            style.fg,
+            Some(Color::Green),
+            "fresh flash icon should be green"
+        );
+    }
+
+    #[test]
+    fn non_flashing_row_shows_no_pencil_icon() {
+        let state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        let rendered = render_to_string(&state);
+        assert!(
+            !rendered.contains("\u{270E}"),
+            "no row should show the pencil icon when nothing is flashing: {rendered}"
+        );
+    }
+
+    #[test]
+    fn flashing_row_does_not_change_the_title_or_row_style() {
+        // The icon carries the color; the rest of the row (title text style,
+        // selection background) should render exactly as it would without a
+        // flash, whether the flashing row is selected or not.
+        let mut state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        state.start_flash(2);
+        let buf = render_buffer(&state);
+        let (tx, ty) = find_in_buffer(&buf, "Second").expect("title should render");
+        let title_style = buf[(tx, ty)].style();
+        assert_eq!(
+            title_style.fg,
+            Some(Color::Reset),
+            "flashing shouldn't recolor the title text itself"
+        );
+        assert!(
+            !title_style.add_modifier.contains(Modifier::BOLD),
+            "flashing shouldn't bold the title of an unselected row"
+        );
+
+        // Now with the cursor moved onto the flashing row: it should look
+        // exactly like a normal selected row (background + bold), same as
+        // if nothing were flashing at all.
+        state.move_cursor(1);
+        let buf = render_buffer(&state);
+        let (nx, ny) = find_in_buffer(&buf, "#2").expect("issue #2 should render");
+        let style = buf[(nx, ny)].style();
+        assert_eq!(
+            style.bg,
+            Some(Color::DarkGray),
+            "flashing selected row should still show the normal selection background"
+        );
+        assert!(
+            style.add_modifier.contains(Modifier::BOLD),
+            "flashing selected row should still render bold like any other selected row"
+        );
+    }
+
+    #[test]
+    fn flashing_row_reserves_its_icon_column_width_even_when_not_flashing() {
+        // The title's start column must not shift depending on whether the
+        // flash icon is showing, or text would jitter left/right as a flash
+        // starts and ends.
+        let state_no_flash = AppState::new(vec![issue(1, "First")], vec![]);
+        let buf_no_flash = render_buffer(&state_no_flash);
+        let (x_no_flash, _) =
+            find_in_buffer(&buf_no_flash, "First").expect("title should render without a flash");
+
+        let mut state_flashing = AppState::new(vec![issue(1, "First")], vec![]);
+        state_flashing.start_flash(1);
+        let buf_flashing = render_buffer(&state_flashing);
+        let (x_flashing, _) =
+            find_in_buffer(&buf_flashing, "First").expect("title should render while flashing");
+
+        assert_eq!(
+            x_no_flash, x_flashing,
+            "title's start column should be identical whether or not the row is flashing"
         );
     }
 

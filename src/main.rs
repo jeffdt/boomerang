@@ -281,7 +281,7 @@ fn spawn_create<S: IssueSource>(
 ) -> CreateReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(source.create(&title, &body, &labels));
+        let _ = tx.send(source.create(&title, &body, &labels).map(|_| ()));
     });
     rx
 }
@@ -595,27 +595,30 @@ impl MutationRequest {
         }
     }
 
-    /// The issue number to keep selected after the list refreshes, if any.
-    fn target_issue_number(&self) -> Option<u32> {
+    /// Runs the mutation against `source`, returning the issue number to
+    /// keep selected and flash once the list refreshes, if any: the newly
+    /// created issue for `Create`, the edited issue for `Edit`, and `None`
+    /// for `Close` (the closed issue drops out of the default Open-filtered
+    /// view, so there's nothing left to keep selected or flash).
+    fn run<S: IssueSource>(self, source: &S) -> anyhow::Result<Option<u32>> {
         match self {
-            MutationRequest::Edit(request) => Some(request.number),
-            MutationRequest::Create(_) | MutationRequest::Close(_) => None,
-        }
-    }
-
-    fn run<S: IssueSource>(self, source: &S) -> anyhow::Result<()> {
-        match self {
-            MutationRequest::Create(request) => {
-                source.create(&request.title, &request.body, &request.labels)
+            MutationRequest::Create(request) => source
+                .create(&request.title, &request.body, &request.labels)
+                .map(Some),
+            MutationRequest::Edit(request) => {
+                source.edit(
+                    request.number,
+                    &request.title,
+                    &request.body,
+                    &request.add_labels,
+                    &request.remove_labels,
+                )?;
+                Ok(Some(request.number))
             }
-            MutationRequest::Edit(request) => source.edit(
-                request.number,
-                &request.title,
-                &request.body,
-                &request.add_labels,
-                &request.remove_labels,
-            ),
-            MutationRequest::Close(number) => source.close(number),
+            MutationRequest::Close(number) => {
+                source.close(number)?;
+                Ok(None)
+            }
         }
     }
 }
@@ -674,6 +677,7 @@ fn event_loop<S: IssueSource>(
             first_draw_logged = true;
         }
         state.clear_expired_status();
+        state.clear_expired_flash();
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
@@ -1061,11 +1065,10 @@ fn spawn_mutation<S: IssueSource>(
     state_filter: StateFilter,
 ) -> MutationReceiver {
     let operation = request.operation();
-    let target_issue = request.target_issue_number();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let action_started = Instant::now();
-        let result = request.run(&source).and_then(|()| {
+        let result = request.run(&source).and_then(|target_issue| {
             let action_elapsed = action_started.elapsed();
             let refresh_started = Instant::now();
             let issues = source.list(state_filter)?;
@@ -1092,6 +1095,9 @@ fn finish_mutation(
         Ok(success) => {
             state.mode = Mode::List;
             state.set_issues_selecting(success.issues, success.target_issue);
+            if let Some(number) = success.target_issue {
+                state.start_flash(number);
+            }
             state.set_status(format!(
                 "{} in {}, refresh {}",
                 success_status_action(success.operation),
@@ -1814,6 +1820,68 @@ mod tests {
         assert_eq!(
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("gh error: network failed")
+        );
+    }
+
+    #[test]
+    fn finish_mutation_starts_flash_for_edit_target() {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::EditIssue,
+                issues: vec![issue(1, "one"), issue(2, "two")],
+                action_elapsed: Duration::from_millis(1),
+                refresh_elapsed: Duration::from_millis(1),
+                target_issue: Some(2),
+            }),
+        );
+        assert_eq!(
+            state.flash.map(|(number, _)| number),
+            Some(2),
+            "edit success should start a flash on the target issue"
+        );
+    }
+
+    #[test]
+    fn finish_mutation_starts_flash_for_create_target() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::CreateIssue,
+                issues: vec![issue(1, "one"), issue(42, "Created issue")],
+                action_elapsed: Duration::from_millis(1),
+                refresh_elapsed: Duration::from_millis(1),
+                target_issue: Some(42),
+            }),
+        );
+        assert_eq!(
+            state.flash.map(|(number, _)| number),
+            Some(42),
+            "create success should start a flash on the newly created issue"
+        );
+    }
+
+    #[test]
+    fn finish_mutation_does_not_flash_when_there_is_no_target_issue() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::CloseIssue,
+                issues: vec![],
+                action_elapsed: Duration::from_millis(1),
+                refresh_elapsed: Duration::from_millis(1),
+                target_issue: None,
+            }),
+        );
+        assert_eq!(
+            state.flash, None,
+            "close success has no target issue, so nothing should flash"
         );
     }
 
