@@ -674,6 +674,7 @@ fn event_loop<S: IssueSource>(
             first_draw_logged = true;
         }
         state.clear_expired_status();
+        state.clear_expired_flash();
         if !event::poll(Duration::from_millis(100))? {
             continue;
         }
@@ -1092,6 +1093,9 @@ fn finish_mutation(
         Ok(success) => {
             state.mode = Mode::List;
             state.set_issues_selecting(success.issues, success.target_issue);
+            if let Some(number) = success.target_issue {
+                state.start_flash(number);
+            }
             state.set_status(format!(
                 "{} in {}, refresh {}",
                 success_status_action(success.operation),
@@ -1814,6 +1818,47 @@ mod tests {
         assert_eq!(
             state.status.as_ref().map(|(msg, _)| msg.as_str()),
             Some("gh error: network failed")
+        );
+    }
+
+    #[test]
+    fn finish_mutation_starts_flash_for_edit_target() {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::EditIssue,
+                issues: vec![issue(1, "one"), issue(2, "two")],
+                action_elapsed: Duration::from_millis(1),
+                refresh_elapsed: Duration::from_millis(1),
+                target_issue: Some(2),
+            }),
+        );
+        assert_eq!(
+            state.flash.map(|(number, _)| number),
+            Some(2),
+            "edit success should start a flash on the target issue"
+        );
+    }
+
+    #[test]
+    fn finish_mutation_does_not_flash_when_there_is_no_target_issue() {
+        let mut state = AppState::new(vec![issue(1, "one")], vec![]);
+        finish_mutation(
+            &mut state,
+            None,
+            Ok(MutationSuccess {
+                operation: PendingOperation::CreateIssue,
+                issues: vec![issue(1, "one")],
+                action_elapsed: Duration::from_millis(1),
+                refresh_elapsed: Duration::from_millis(1),
+                target_issue: None,
+            }),
+        );
+        assert_eq!(
+            state.flash, None,
+            "create success has no target issue, so nothing should flash"
         );
     }
 
