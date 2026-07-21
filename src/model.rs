@@ -29,6 +29,8 @@ use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
+pub const FLASH_DURATION: Duration = Duration::from_millis(1000);
+const FLASH_PHASE: Duration = Duration::from_millis(250);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
@@ -255,6 +257,7 @@ pub struct AppState {
     pub search_query: String,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, Instant)>,
+    pub flash: Option<(u32, Instant)>,
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
     pub pane_open: bool,
@@ -278,6 +281,7 @@ impl AppState {
             search_query: String::new(),
             search_ranked: Vec::new(),
             status: None,
+            flash: None,
             loading: None,
             pending: None,
             pane_open: true,
@@ -845,6 +849,31 @@ impl AppState {
         if let Some((_, set_at)) = &self.status {
             if set_at.elapsed() >= STATUS_TOAST_DURATION {
                 self.status = None;
+            }
+        }
+    }
+
+    pub fn start_flash(&mut self, number: u32) {
+        self.flash = Some((number, Instant::now()));
+    }
+
+    /// Whether `number`'s row should render in its "on" flash phase right
+    /// now. Four 250ms phases across `FLASH_DURATION`: on, off, on, off.
+    pub fn flash_is_on(&self, number: u32) -> bool {
+        match self.flash {
+            Some((flash_number, started_at)) if flash_number == number => {
+                let elapsed = started_at.elapsed();
+                elapsed < FLASH_DURATION
+                    && (elapsed.as_millis() / FLASH_PHASE.as_millis()) % 2 == 0
+            }
+            _ => false,
+        }
+    }
+
+    pub fn clear_expired_flash(&mut self) {
+        if let Some((_, started_at)) = self.flash {
+            if started_at.elapsed() >= FLASH_DURATION {
+                self.flash = None;
             }
         }
     }
@@ -1697,6 +1726,56 @@ mod tests {
             state.status.is_none(),
             "a status older than STATUS_TOAST_DURATION should be cleared"
         );
+    }
+
+    #[test]
+    fn flash_is_on_at_start_and_toggles_through_two_blinks() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.start_flash(1);
+        assert!(state.flash_is_on(1), "phase 0 (0-250ms) should be on");
+    }
+
+    #[test]
+    fn flash_is_on_is_false_for_a_different_issue_number() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.start_flash(1);
+        assert!(!state.flash_is_on(2));
+    }
+
+    #[test]
+    fn flash_is_on_reflects_manually_backdated_phases() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.start_flash(1);
+        let (number, _) = state.flash.unwrap();
+        // Phase 1 (250-500ms): off
+        state.flash = Some((number, Instant::now() - Duration::from_millis(260)));
+        assert!(!state.flash_is_on(1), "phase 1 should be off");
+        // Phase 2 (500-750ms): on
+        state.flash = Some((number, Instant::now() - Duration::from_millis(510)));
+        assert!(state.flash_is_on(1), "phase 2 should be on");
+        // Phase 3 (750-1000ms): off
+        state.flash = Some((number, Instant::now() - Duration::from_millis(760)));
+        assert!(!state.flash_is_on(1), "phase 3 should be off");
+        // Past FLASH_DURATION: off
+        state.flash = Some((number, Instant::now() - FLASH_DURATION - Duration::from_millis(1)));
+        assert!(!state.flash_is_on(1), "expired flash should be off");
+    }
+
+    #[test]
+    fn clear_expired_flash_clears_once_past_flash_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.start_flash(1);
+        state.flash = Some((1, Instant::now() - FLASH_DURATION - Duration::from_millis(1)));
+        state.clear_expired_flash();
+        assert_eq!(state.flash, None);
+    }
+
+    #[test]
+    fn clear_expired_flash_is_a_no_op_while_still_active() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.start_flash(1);
+        state.clear_expired_flash();
+        assert!(state.flash.is_some());
     }
 
     #[test]
