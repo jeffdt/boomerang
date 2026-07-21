@@ -13,7 +13,7 @@ Switch over to your browser to file them and you lose momentum on whatever you w
 Wait till you're done and you risk losing the idea.
 
 Boomerang turns "I have to remember this idea for later" into a 3 second operation right from your terminal.
-The idea becomes permanent immediately instead of a mental post-it that gets lost in the winds of chaos.
+The idea becomes permanent immediately instead of a mental post-it that gets lost in the chaos of your puny human mind.
 
 It's a standalone binary that tmux pops open on demand, in the same spirit as [rolomux](https://github.com/jeffdt/rolomux): executes right where you work, does its job, and gets out of the way again.
 
