@@ -1497,17 +1497,29 @@ mod tests {
     }
 
     #[test]
-    fn list_header_reflects_closed_and_all_state_filters() {
+    fn list_header_reflects_triage_closed_and_all_state_filters() {
         let mut state = AppState::new(vec![], vec![]);
         state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
 
-        state.cycle_state_filter(); // Open -> Closed
+        state.cycle_state_filter(); // Open -> Triage
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Triage issues in jeffdt/boomerang"));
+
+        state.cycle_state_filter(); // Triage -> Closed
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Closed issues in jeffdt/boomerang"));
 
         state.cycle_state_filter(); // Closed -> All
         let rendered = render_to_string(&state);
         assert!(rendered.contains("All issues in jeffdt/boomerang"));
+    }
+
+    #[test]
+    fn empty_triage_queue_shows_state_filter_in_message() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.state_filter = StateFilter::Triage;
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("No issues found for state filter Triage"));
     }
 
     #[test]

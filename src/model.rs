@@ -308,10 +308,17 @@ impl AppState {
     }
 
     pub fn visible_indices(&self) -> Vec<usize> {
-        match self.mode {
+        let mut indices = match self.mode {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
+        };
+        if self.state_filter == StateFilter::Triage {
+            indices.retain(|&i| {
+                let issue = &self.issues[i];
+                issue.labels.is_empty() && issue.body.trim().is_empty()
+            });
         }
+        indices
     }
 
     pub fn selected_issue(&self) -> Option<&Issue> {
@@ -1025,11 +1032,31 @@ mod tests {
     }
 
     #[test]
-    fn cycle_state_filter_advances_open_closed_all() {
+    fn cycle_state_filter_advances_open_triage_closed_all() {
         let mut state = AppState::new(vec![], vec![]);
+        assert_eq!(state.cycle_state_filter(), StateFilter::Triage);
         assert_eq!(state.cycle_state_filter(), StateFilter::Closed);
         assert_eq!(state.cycle_state_filter(), StateFilter::All);
         assert_eq!(state.cycle_state_filter(), StateFilter::Open);
+    }
+
+    #[test]
+    fn triage_filter_shows_only_untouched_issues() {
+        let untouched = issue(1, "quick capture stub");
+        let has_label = Issue {
+            labels: vec![Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+            ..issue(2, "labeled")
+        };
+        let has_body = Issue {
+            body: "written up already".into(),
+            ..issue(3, "described")
+        };
+        let mut state = AppState::new(vec![untouched, has_label, has_body], vec![]);
+        state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), vec![0]);
     }
 
     #[test]
