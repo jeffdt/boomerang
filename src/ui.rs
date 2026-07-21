@@ -368,10 +368,15 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             number_style = number_style.add_modifier(Modifier::DIM);
             title_style = title_style.add_modifier(Modifier::DIM);
         }
-        // Apply flashing style to the span styles as well
+        // A span's own style clobbers the item-level style for any field it
+        // sets (ratatui applies the item-level style to the whole row first,
+        // then overlays each span's style on top). `secondary(selected)` sets
+        // an explicit DIM fg when not selected, which would otherwise hide
+        // the item-level green on this row's number column — title_style
+        // never sets a conflicting fg, and BOLD is already set by the
+        // item-level style below, so neither needs its own override here.
         if flashing {
-            number_style = number_style.fg(Color::Green).add_modifier(Modifier::BOLD);
-            title_style = title_style.fg(Color::Green).add_modifier(Modifier::BOLD);
+            number_style = number_style.fg(Color::Green);
         }
         let left_width =
             checkbox_prefix.chars().count() + number_col.chars().count() + title.chars().count();
