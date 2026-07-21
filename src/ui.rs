@@ -356,6 +356,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             .saturating_sub(labels_width);
         let title = truncate_title(&issue.title, max_title_width);
         let selected = row == state.cursor;
+        let flashing = state.flash_is_on(issue.number);
         // DIM is a render intensity modifier (SGR "faint"), unrelated to the
         // `DIM` *color* constant above used for de-emphasized text — this
         // never sets a background, so it can't collide with SEL_BG the way
@@ -366,6 +367,11 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         if dim_row {
             number_style = number_style.add_modifier(Modifier::DIM);
             title_style = title_style.add_modifier(Modifier::DIM);
+        }
+        // Apply flashing style to the span styles as well
+        if flashing {
+            number_style = number_style.fg(Color::Green).add_modifier(Modifier::BOLD);
+            title_style = title_style.fg(Color::Green).add_modifier(Modifier::BOLD);
         }
         let left_width =
             checkbox_prefix.chars().count() + number_col.chars().count() + title.chars().count();
@@ -381,10 +387,14 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             spans.push(Span::raw(" ".repeat(pad)));
             spans.extend(label_spans);
         }
-        let style = if selected {
-            Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
+        let style = match (selected, flashing) {
+            (true, true) => Style::default()
+                .bg(SEL_BG)
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+            (true, false) => Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD),
+            (false, true) => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            (false, false) => Style::default(),
         };
         items.push(ListItem::new(Line::from(spans)).style(style));
     }
@@ -1300,6 +1310,47 @@ mod tests {
             !style.add_modifier.contains(Modifier::REVERSED),
             "selected row should not use REVERSED"
         );
+    }
+
+    #[test]
+    fn flashing_row_renders_green_and_bold_when_not_selected() {
+        let mut state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        // Cursor stays on row 0 (#1); the flash targets #2 on row 1.
+        state.start_flash(2);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "#2").expect("issue #2 should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.fg, Some(Color::Green), "flashing row should be green");
+        assert!(
+            style.add_modifier.contains(Modifier::BOLD),
+            "flashing row should be bold"
+        );
+        // Check that an unselected non-flashing row has no background
+        let state2 = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        let buf2 = render_buffer(&state2);
+        let (x2, y2) = find_in_buffer(&buf2, "#2").expect("issue #2 should render");
+        let style2 = buf2[(x2, y2)].style();
+        assert_eq!(
+            style.bg, style2.bg,
+            "flashing a non-selected row should have the same background as a normal unselected row"
+        );
+    }
+
+    #[test]
+    fn flashing_selected_row_keeps_its_background_and_turns_green() {
+        let mut state = AppState::new(vec![issue(1, "First")], vec![]);
+        // Cursor is on row 0 (#1), which is also the flash target.
+        state.start_flash(1);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "#1").expect("issue #1 should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(
+            style.bg,
+            Some(Color::DarkGray),
+            "flashing selected row should keep the selection background"
+        );
+        assert_eq!(style.fg, Some(Color::Green), "flashing selected row should turn green");
+        assert!(style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
