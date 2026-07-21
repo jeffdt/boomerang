@@ -1936,7 +1936,7 @@ mod tests {
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "boomerang").expect("title should render");
         let peak_style = buf[(x + 4, y)].style();
-        assert_eq!(peak_style.fg, Some(Color::LightCyan));
+        assert_eq!(peak_style.fg, Some(Color::White));
         assert!(peak_style.add_modifier.contains(Modifier::BOLD));
     }
 

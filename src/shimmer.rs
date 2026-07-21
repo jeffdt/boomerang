@@ -4,6 +4,12 @@ use std::time::Duration;
 
 pub const SHIMMER_SWEEP: Duration = Duration::from_millis(600);
 
+/// The shimmer always peaks in White rather than a brightened variant of the
+/// base color: a same-hue brighten (e.g. Cyan -> LightCyan) proved too subtle
+/// to notice in practice against several terminal themes, while a fixed
+/// contrasting color reads clearly regardless of the accent color in use.
+const SHIMMER_PEAK_COLOR: Color = Color::White;
+
 pub fn shimmer_spans(text: &str, elapsed: Duration, base_style: Style) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() || elapsed >= SHIMMER_SWEEP {
@@ -13,7 +19,7 @@ pub fn shimmer_spans(text: &str, elapsed: Duration, base_style: Style) -> Vec<Sp
     let progress = elapsed.as_secs_f64() / SHIMMER_SWEEP.as_secs_f64();
     let peak = ((chars.len() - 1) as f64 * progress).round() as usize;
 
-    let shoulder_style = base_style.fg(brighten(base_style.fg));
+    let shoulder_style = base_style.fg(SHIMMER_PEAK_COLOR);
     let peak_style = shoulder_style.add_modifier(Modifier::BOLD);
 
     chars
@@ -32,20 +38,6 @@ pub fn shimmer_spans(text: &str, elapsed: Duration, base_style: Style) -> Vec<Sp
         .collect()
 }
 
-fn brighten(color: Option<Color>) -> Color {
-    match color {
-        Some(Color::Cyan) => Color::LightCyan,
-        Some(Color::Blue) => Color::LightBlue,
-        Some(Color::Green) => Color::LightGreen,
-        Some(Color::Red) => Color::LightRed,
-        Some(Color::Yellow) => Color::LightYellow,
-        Some(Color::Magenta) => Color::LightMagenta,
-        Some(Color::DarkGray) => Color::Gray,
-        Some(Color::Gray) | None => Color::White,
-        Some(other) => other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,15 +46,6 @@ mod tests {
         spans
             .iter()
             .position(|s| s.style.add_modifier.contains(Modifier::BOLD))
-    }
-
-    #[test]
-    fn brighten_maps_named_colors_to_light_variants() {
-        assert_eq!(brighten(Some(Color::Cyan)), Color::LightCyan);
-        assert_eq!(brighten(Some(Color::DarkGray)), Color::Gray);
-        assert_eq!(brighten(Some(Color::Gray)), Color::White);
-        assert_eq!(brighten(None), Color::White);
-        assert_eq!(brighten(Some(Color::White)), Color::White);
     }
 
     #[test]
@@ -97,12 +80,12 @@ mod tests {
     }
 
     #[test]
-    fn peak_brightens_cyan_base_to_light_cyan_and_keeps_other_modifiers() {
+    fn peak_uses_white_regardless_of_base_color_and_keeps_other_modifiers() {
         let base = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::ITALIC);
         let spans = shimmer_spans("b", Duration::from_millis(0), base);
-        assert_eq!(spans[0].style.fg, Some(Color::LightCyan));
+        assert_eq!(spans[0].style.fg, Some(Color::White));
         assert!(spans[0].style.add_modifier.contains(Modifier::ITALIC));
         assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
