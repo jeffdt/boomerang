@@ -23,14 +23,14 @@ pub struct Issue {
 
 use crate::gh::StateFilter;
 use crate::search;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui_textarea::{CursorMove, TextArea, WrapMode};
 use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
-pub const FLASH_DURATION: Duration = Duration::from_millis(1800);
-const FLASH_PHASE: Duration = Duration::from_millis(300);
+const FLASH_GREEN_DURATION: Duration = Duration::from_millis(1000);
+const FLASH_GRAY_DURATION: Duration = Duration::from_millis(800);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
@@ -857,23 +857,28 @@ impl AppState {
         self.flash = Some((number, Instant::now()));
     }
 
-    /// Whether `number`'s row should render in its "on" flash phase right
-    /// now. Six 300ms phases across `FLASH_DURATION`: on, off, on, off, on,
-    /// off — three blinks.
-    pub fn flash_is_on(&self, number: u32) -> bool {
+    /// The "just edited" indicator color for `number`'s row right now, if
+    /// any: green while fresh, then dark gray as it fades, then `None` once
+    /// it's fully expired (or if `number` isn't the flash target at all).
+    pub fn flash_indicator(&self, number: u32) -> Option<Color> {
         match self.flash {
             Some((flash_number, started_at)) if flash_number == number => {
                 let elapsed = started_at.elapsed();
-                elapsed < FLASH_DURATION
-                    && (elapsed.as_millis() / FLASH_PHASE.as_millis()).is_multiple_of(2)
+                if elapsed < FLASH_GREEN_DURATION {
+                    Some(Color::Green)
+                } else if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
+                    Some(Color::DarkGray)
+                } else {
+                    None
+                }
             }
-            _ => false,
+            _ => None,
         }
     }
 
     pub fn clear_expired_flash(&mut self) {
         if let Some((_, started_at)) = self.flash {
-            if started_at.elapsed() >= FLASH_DURATION {
+            if started_at.elapsed() >= FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
                 self.flash = None;
             }
         }
@@ -1730,55 +1735,42 @@ mod tests {
     }
 
     #[test]
-    fn flash_is_on_at_start_and_toggles_through_three_blinks() {
+    fn flash_indicator_is_green_at_start() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        assert!(state.flash_is_on(1), "phase 0 (0-300ms) should be on");
+        assert_eq!(state.flash_indicator(1), Some(Color::Green));
     }
 
     #[test]
-    fn flash_is_on_is_false_for_a_different_issue_number() {
+    fn flash_indicator_is_none_for_a_different_issue_number() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        assert!(!state.flash_is_on(2));
+        assert_eq!(state.flash_indicator(2), None);
     }
 
     #[test]
-    fn flash_is_on_reflects_manually_backdated_phases() {
+    fn flash_indicator_fades_from_green_to_gray_to_gone() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
         let (number, _) = state.flash.unwrap();
-        // Phase 1 (300-600ms): off
-        state.flash = Some((number, Instant::now() - Duration::from_millis(310)));
-        assert!(!state.flash_is_on(1), "phase 1 should be off");
-        // Phase 2 (600-900ms): on
-        state.flash = Some((number, Instant::now() - Duration::from_millis(610)));
-        assert!(state.flash_is_on(1), "phase 2 should be on");
-        // Phase 3 (900-1200ms): off
-        state.flash = Some((number, Instant::now() - Duration::from_millis(910)));
-        assert!(!state.flash_is_on(1), "phase 3 should be off");
-        // Phase 4 (1200-1500ms): on
-        state.flash = Some((number, Instant::now() - Duration::from_millis(1210)));
-        assert!(state.flash_is_on(1), "phase 4 should be on");
-        // Phase 5 (1500-1800ms): off
-        state.flash = Some((number, Instant::now() - Duration::from_millis(1510)));
-        assert!(!state.flash_is_on(1), "phase 5 should be off");
-        // Past FLASH_DURATION: off
-        state.flash = Some((
-            number,
-            Instant::now() - FLASH_DURATION - Duration::from_millis(1),
-        ));
-        assert!(!state.flash_is_on(1), "expired flash should be off");
+        // Still within the green window (0-1000ms).
+        state.flash = Some((number, Instant::now() - Duration::from_millis(900)));
+        assert_eq!(state.flash_indicator(1), Some(Color::Green));
+        // Into the gray window (1000-1800ms).
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1100)));
+        assert_eq!(state.flash_indicator(1), Some(Color::DarkGray));
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1700)));
+        assert_eq!(state.flash_indicator(1), Some(Color::DarkGray));
+        // Past both windows: gone.
+        state.flash = Some((number, Instant::now() - Duration::from_millis(1900)));
+        assert_eq!(state.flash_indicator(1), None);
     }
 
     #[test]
     fn clear_expired_flash_clears_once_past_flash_duration() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        state.flash = Some((
-            1,
-            Instant::now() - FLASH_DURATION - Duration::from_millis(1),
-        ));
+        state.flash = Some((1, Instant::now() - Duration::from_millis(1900)));
         state.clear_expired_flash();
         assert_eq!(state.flash, None);
     }
