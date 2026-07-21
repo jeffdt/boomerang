@@ -361,7 +361,7 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         // `DIM` *color* constant above used for de-emphasized text — this
         // never sets a background, so it can't collide with SEL_BG the way
         // an alternating background color would.
-        let dim_row = state.zebra_striping && !selected && row % 2 == 1;
+        let dim_row = state.zebra_striping && !selected && row % 2 == 1 && !flashing;
         let mut number_style = secondary(selected);
         let mut title_style = Style::default();
         if dim_row {
@@ -398,7 +398,9 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
             (true, false) => Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD),
-            (false, true) => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            (false, true) => Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
             (false, false) => Style::default(),
         };
         items.push(ListItem::new(Line::from(spans)).style(style));
@@ -1342,6 +1344,27 @@ mod tests {
     }
 
     #[test]
+    fn flashing_row_on_odd_zebra_stripe_is_not_dimmed() {
+        let mut state = AppState::new(vec![issue(1, "First"), issue(2, "Second")], vec![]);
+        assert!(state.zebra_striping, "zebra striping should default on");
+        // Cursor stays on row 0 (#1); the flash targets #2, which lands on
+        // the odd row 1 that zebra striping would otherwise dim.
+        state.start_flash(2);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "#2").expect("issue #2 should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.fg, Some(Color::Green), "flashing row should be green");
+        assert!(
+            style.add_modifier.contains(Modifier::BOLD),
+            "flashing row should be bold"
+        );
+        assert!(
+            !style.add_modifier.contains(Modifier::DIM),
+            "flash should win over zebra dimming on an odd row"
+        );
+    }
+
+    #[test]
     fn flashing_selected_row_keeps_its_background_and_turns_green() {
         let mut state = AppState::new(vec![issue(1, "First")], vec![]);
         // Cursor is on row 0 (#1), which is also the flash target.
@@ -1354,7 +1377,11 @@ mod tests {
             Some(Color::DarkGray),
             "flashing selected row should keep the selection background"
         );
-        assert_eq!(style.fg, Some(Color::Green), "flashing selected row should turn green");
+        assert_eq!(
+            style.fg,
+            Some(Color::Green),
+            "flashing selected row should turn green"
+        );
         assert!(style.add_modifier.contains(Modifier::BOLD));
     }
 

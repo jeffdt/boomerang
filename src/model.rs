@@ -864,7 +864,7 @@ impl AppState {
             Some((flash_number, started_at)) if flash_number == number => {
                 let elapsed = started_at.elapsed();
                 elapsed < FLASH_DURATION
-                    && (elapsed.as_millis() / FLASH_PHASE.as_millis()) % 2 == 0
+                    && (elapsed.as_millis() / FLASH_PHASE.as_millis()).is_multiple_of(2)
             }
             _ => false,
         }
@@ -1757,7 +1757,10 @@ mod tests {
         state.flash = Some((number, Instant::now() - Duration::from_millis(760)));
         assert!(!state.flash_is_on(1), "phase 3 should be off");
         // Past FLASH_DURATION: off
-        state.flash = Some((number, Instant::now() - FLASH_DURATION - Duration::from_millis(1)));
+        state.flash = Some((
+            number,
+            Instant::now() - FLASH_DURATION - Duration::from_millis(1),
+        ));
         assert!(!state.flash_is_on(1), "expired flash should be off");
     }
 
@@ -1765,7 +1768,10 @@ mod tests {
     fn clear_expired_flash_clears_once_past_flash_duration() {
         let mut state = AppState::new(vec![], vec![]);
         state.start_flash(1);
-        state.flash = Some((1, Instant::now() - FLASH_DURATION - Duration::from_millis(1)));
+        state.flash = Some((
+            1,
+            Instant::now() - FLASH_DURATION - Duration::from_millis(1),
+        ));
         state.clear_expired_flash();
         assert_eq!(state.flash, None);
     }
