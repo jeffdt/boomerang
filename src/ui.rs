@@ -1515,6 +1515,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_triage_queue_shows_state_filter_in_message() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.state_filter = StateFilter::Triage;
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("No issues found for state filter Triage"));
+    }
+
+    #[test]
     fn loading_state_renders_header_hint_and_animation_area() {
         let mut state = AppState::loading();
         state.loading.as_mut().unwrap().animation = LoadingAnimation::MatrixRain;
