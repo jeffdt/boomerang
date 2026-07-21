@@ -1025,8 +1025,9 @@ mod tests {
     }
 
     #[test]
-    fn cycle_state_filter_advances_open_closed_all() {
+    fn cycle_state_filter_advances_open_triage_closed_all() {
         let mut state = AppState::new(vec![], vec![]);
+        assert_eq!(state.cycle_state_filter(), StateFilter::Triage);
         assert_eq!(state.cycle_state_filter(), StateFilter::Closed);
         assert_eq!(state.cycle_state_filter(), StateFilter::All);
         assert_eq!(state.cycle_state_filter(), StateFilter::Open);

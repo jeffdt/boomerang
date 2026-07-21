@@ -9,6 +9,7 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateFilter {
     Open,
+    Triage,
     Closed,
     All,
 }
@@ -16,7 +17,8 @@ pub enum StateFilter {
 impl StateFilter {
     pub fn cycle(self) -> Self {
         match self {
-            StateFilter::Open => StateFilter::Closed,
+            StateFilter::Open => StateFilter::Triage,
+            StateFilter::Triage => StateFilter::Closed,
             StateFilter::Closed => StateFilter::All,
             StateFilter::All => StateFilter::Open,
         }
@@ -27,6 +29,7 @@ impl StateFilter {
             StateFilter::Open => "open",
             StateFilter::Closed => "closed",
             StateFilter::All => "all",
+            StateFilter::Triage => "open",
         }
     }
 }
@@ -418,10 +421,18 @@ mod tests {
     }
 
     #[test]
-    fn state_filter_cycles_open_closed_all() {
-        assert_eq!(StateFilter::Open.cycle(), StateFilter::Closed);
+    fn state_filter_cycles_open_triage_closed_all() {
+        assert_eq!(StateFilter::Open.cycle(), StateFilter::Triage);
+        assert_eq!(StateFilter::Triage.cycle(), StateFilter::Closed);
         assert_eq!(StateFilter::Closed.cycle(), StateFilter::All);
         assert_eq!(StateFilter::All.cycle(), StateFilter::Open);
+    }
+
+    #[test]
+    fn list_args_treats_triage_as_open() {
+        let args = list_args(StateFilter::Triage);
+        assert!(args.contains(&"--state".to_string()));
+        assert!(args.contains(&"open".to_string()));
     }
 
     fn strs(items: &[&str]) -> Vec<String> {
