@@ -854,6 +854,22 @@ fn event_loop<S: IssueSource>(
     }
 }
 
+fn merge_issue_lists(open: Vec<Issue>, closed: Vec<Issue>) -> Vec<Issue> {
+    let mut issues = open;
+    issues.extend(closed);
+    issues
+}
+
+fn join_issue_list_handle(
+    handle: std::thread::JoinHandle<anyhow::Result<Vec<Issue>>>,
+    bucket: &str,
+) -> anyhow::Result<Vec<Issue>> {
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("{bucket} issue list thread panicked"))
+        .and_then(|result| result)
+}
+
 fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1536,6 +1552,22 @@ mod tests {
             parse_command(args(&["--preview-loading", "0"])),
             Err("preview duration must be greater than zero".to_string())
         );
+    }
+
+    #[test]
+    fn merge_issue_lists_concatenates_open_then_closed() {
+        let open = vec![issue(1, "Open one")];
+        let closed = vec![issue(2, "Closed one")];
+        assert_eq!(
+            merge_issue_lists(open.clone(), closed.clone()),
+            vec![issue(1, "Open one"), issue(2, "Closed one")]
+        );
+    }
+
+    #[test]
+    fn merge_issue_lists_handles_an_empty_bucket() {
+        let open = vec![issue(1, "Only open")];
+        assert_eq!(merge_issue_lists(open.clone(), vec![]), open);
     }
 
     #[test]
