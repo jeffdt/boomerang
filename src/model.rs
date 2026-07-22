@@ -932,13 +932,7 @@ impl AppState {
             return Some(Color::Yellow);
         }
         match &self.status {
-            Some((_, StatusKind::Success, set_at)) => {
-                if set_at.elapsed() < FLASH_GREEN_DURATION {
-                    Some(Color::Green)
-                } else {
-                    Some(Color::DarkGray)
-                }
-            }
+            Some((_, StatusKind::Success, set_at)) => Some(green_then_gray(set_at.elapsed())),
             Some((_, StatusKind::Error, _)) => Some(Color::Red),
             Some((_, StatusKind::Info, _)) | None => None,
         }
@@ -955,10 +949,8 @@ impl AppState {
         match self.flash {
             Some((flash_number, started_at)) if flash_number == number => {
                 let elapsed = started_at.elapsed();
-                if elapsed < FLASH_GREEN_DURATION {
-                    Some(Color::Green)
-                } else if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
-                    Some(Color::DarkGray)
+                if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
+                    Some(green_then_gray(elapsed))
                 } else {
                     None
                 }
@@ -973,6 +965,16 @@ impl AppState {
                 self.flash = None;
             }
         }
+    }
+}
+
+/// Green for `FLASH_GREEN_DURATION`, then dark gray — the fade shared by the
+/// row flash (`flash_indicator`) and the status toast (`status_color`).
+fn green_then_gray(elapsed: Duration) -> Color {
+    if elapsed < FLASH_GREEN_DURATION {
+        Color::Green
+    } else {
+        Color::DarkGray
     }
 }
 

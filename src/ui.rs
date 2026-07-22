@@ -1330,17 +1330,7 @@ mod tests {
     }
 
     fn find_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
-        for y in 0..buf.area.height {
-            let mut row = String::new();
-            for x in 0..buf.area.width {
-                row.push_str(buf[(x, y)].symbol());
-            }
-            if let Some(byte_idx) = row.find(needle) {
-                let x = row[..byte_idx].chars().count() as u16;
-                return Some((x, y));
-            }
-        }
-        None
+        find_all_in_buffer(buf, needle).into_iter().next()
     }
 
     fn find_all_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Vec<(u16, u16)> {
