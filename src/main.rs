@@ -709,7 +709,6 @@ fn event_loop<S: IssueSource>(
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
                         state.cycle_state_filter();
-                        start_refresh(state, &mut refresh_rx, (*source).clone());
                     }
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
@@ -854,6 +853,36 @@ fn event_loop<S: IssueSource>(
     }
 }
 
+fn merge_issue_lists(open: Vec<Issue>, closed: Vec<Issue>) -> Vec<Issue> {
+    let mut issues = open;
+    issues.extend(closed);
+    issues
+}
+
+fn join_issue_list_handle(
+    handle: std::thread::JoinHandle<anyhow::Result<Vec<Issue>>>,
+    bucket: &str,
+) -> anyhow::Result<Vec<Issue>> {
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("{bucket} issue list thread panicked"))
+        .and_then(|result| result)
+}
+
+/// Fetches open and closed issues in parallel and merges them into one list.
+/// Blocks until both fetches complete, so callers that also need other data
+/// (labels, repo name) should spawn those threads first and call this after,
+/// to keep everything running concurrently.
+fn fetch_open_and_closed<S: IssueSource>(source: S) -> anyhow::Result<Vec<Issue>> {
+    let open_source = source.clone();
+    let closed_source = source;
+    let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
+    let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
+    let open_result = join_issue_list_handle(open_handle, "open");
+    let closed_result = join_issue_list_handle(closed_handle, "closed");
+    open_result.and_then(|open| closed_result.map(|closed| merge_issue_lists(open, closed)))
+}
+
 fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -861,14 +890,10 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
         let issues_source = source.clone();
         let labels_source = source.clone();
         let repo_name_source = source;
-        let issues_handle = std::thread::spawn(move || issues_source.list(StateFilter::Open));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
         let repo_name_handle = std::thread::spawn(move || repo_name_source.repo_name());
-        let issues_result = issues_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
-            .and_then(|result| result)
-            .map_err(diagnose_initial_load_error);
+        let issues_result =
+            fetch_open_and_closed(issues_source).map_err(diagnose_initial_load_error);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(InitialLoadSuccess {
@@ -965,18 +990,14 @@ struct RefreshSuccess {
 
 type RefreshReceiver = Receiver<anyhow::Result<RefreshSuccess>>;
 
-fn spawn_refresh<S: IssueSource>(source: S, state_filter: StateFilter) -> RefreshReceiver {
+fn spawn_refresh<S: IssueSource>(source: S) -> RefreshReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let started = Instant::now();
         let issues_source = source.clone();
         let labels_source = source;
-        let issues_handle = std::thread::spawn(move || issues_source.list(state_filter));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
-        let issues_result = issues_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
-            .and_then(|result| result);
+        let issues_result = fetch_open_and_closed(issues_source);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(RefreshSuccess {
@@ -1011,7 +1032,7 @@ fn start_refresh<S: IssueSource>(
     if state.is_pending() {
         return;
     }
-    *refresh_rx = Some(spawn_refresh(source, state.state_filter));
+    *refresh_rx = Some(spawn_refresh(source));
     state.begin_pending(PendingOperation::RefreshList);
 }
 
@@ -1054,16 +1075,12 @@ fn start_mutation<S: IssueSource>(
     }
     let operation = request.operation();
     show_pending_draft(state, &draft);
-    *mutation_rx = Some(spawn_mutation(source, request, state.state_filter));
+    *mutation_rx = Some(spawn_mutation(source, request));
     *mutation_draft = Some(draft);
     state.begin_pending(operation);
 }
 
-fn spawn_mutation<S: IssueSource>(
-    source: S,
-    request: MutationRequest,
-    state_filter: StateFilter,
-) -> MutationReceiver {
+fn spawn_mutation<S: IssueSource>(source: S, request: MutationRequest) -> MutationReceiver {
     let operation = request.operation();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1071,8 +1088,7 @@ fn spawn_mutation<S: IssueSource>(
         let result = request.run(&source).and_then(|target_issue| {
             let action_elapsed = action_started.elapsed();
             let refresh_started = Instant::now();
-            let issues = source.list(state_filter)?;
-            Ok(MutationSuccess {
+            fetch_open_and_closed(source.clone()).map(|issues| MutationSuccess {
                 operation,
                 issues,
                 action_elapsed,
@@ -1536,6 +1552,22 @@ mod tests {
             parse_command(args(&["--preview-loading", "0"])),
             Err("preview duration must be greater than zero".to_string())
         );
+    }
+
+    #[test]
+    fn merge_issue_lists_concatenates_open_then_closed() {
+        let open = vec![issue(1, "Open one")];
+        let closed = vec![issue(2, "Closed one")];
+        assert_eq!(
+            merge_issue_lists(open.clone(), closed.clone()),
+            vec![issue(1, "Open one"), issue(2, "Closed one")]
+        );
+    }
+
+    #[test]
+    fn merge_issue_lists_handles_an_empty_bucket() {
+        let open = vec![issue(1, "Only open")];
+        assert_eq!(merge_issue_lists(open.clone(), vec![]), open);
     }
 
     #[test]

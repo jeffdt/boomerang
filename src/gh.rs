@@ -43,7 +43,7 @@ pub fn list_args(state: StateFilter) -> Vec<String> {
         "--json".into(),
         "number,title,body,labels,state,url,createdAt".into(),
         "--limit".into(),
-        "200".into(),
+        "500".into(),
     ]
 }
 
@@ -418,6 +418,16 @@ mod tests {
             args.iter().any(|a| a.contains("createdAt")),
             "must request createdAt for the description pane"
         );
+    }
+
+    #[test]
+    fn list_args_requests_a_500_item_limit() {
+        let args = list_args(StateFilter::Open);
+        let limit_index = args
+            .iter()
+            .position(|a| a == "--limit")
+            .expect("list_args must pass --limit");
+        assert_eq!(args[limit_index + 1], "500");
     }
 
     #[test]

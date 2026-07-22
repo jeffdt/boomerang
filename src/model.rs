@@ -312,13 +312,21 @@ impl AppState {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
         };
-        if self.state_filter == StateFilter::Triage {
-            indices.retain(|&i| {
-                let issue = &self.issues[i];
-                issue.labels.is_empty() && issue.body.trim().is_empty()
-            });
-        }
+        indices.retain(|&i| Self::matches_state_filter(&self.issues[i], self.state_filter));
         indices
+    }
+
+    fn matches_state_filter(issue: &Issue, filter: StateFilter) -> bool {
+        match filter {
+            StateFilter::Open => issue.state == IssueState::Open,
+            StateFilter::Closed => issue.state == IssueState::Closed,
+            StateFilter::All => true,
+            StateFilter::Triage => {
+                issue.state == IssueState::Open
+                    && issue.labels.is_empty()
+                    && issue.body.trim().is_empty()
+            }
+        }
     }
 
     pub fn selected_issue(&self) -> Option<&Issue> {
@@ -494,9 +502,22 @@ impl AppState {
     /// in the new list instead of resetting to the top.
     pub fn set_issues_selecting(&mut self, issues: Vec<Issue>, select_number: Option<u32>) {
         self.issues = issues;
-        self.cursor = select_number
-            .and_then(|number| self.issues.iter().position(|i| i.number == number))
-            .unwrap_or(0);
+        let target =
+            select_number.and_then(|number| self.issues.iter().position(|i| i.number == number));
+        self.cursor = self.visible_position_of(target);
+    }
+
+    /// Maps an absolute index into `self.issues` to its position within the
+    /// current `visible_indices()`, or `0` if it isn't visible under the
+    /// active filter (e.g. it was filtered out, or `target` is `None`).
+    fn visible_position_of(&self, target: Option<usize>) -> usize {
+        target
+            .and_then(|absolute_index| {
+                self.visible_indices()
+                    .iter()
+                    .position(|&i| i == absolute_index)
+            })
+            .unwrap_or(0)
     }
 
     pub fn cycle_state_filter(&mut self) -> StateFilter {
@@ -547,11 +568,10 @@ impl AppState {
     }
 
     pub fn exit_search(&mut self) {
-        if let Some(&idx) = self.search_ranked.get(self.cursor) {
-            self.cursor = idx;
-        }
+        let target = self.search_ranked.get(self.cursor).copied();
         self.mode = Mode::List;
         self.search_query.clear();
+        self.cursor = self.visible_position_of(target);
     }
 
     pub fn enter_little_create(&mut self) {
@@ -1003,6 +1023,73 @@ mod tests {
     }
 
     #[test]
+    fn exit_search_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: `self.issues` holds both open and closed issues, so
+        // an absolute index into it is no longer the same thing as a position
+        // within List mode's `visible_indices()` once a filter narrows things
+        // down. The closed issue ranks first in search results, but under the
+        // Open filter it must not be selectable back in List mode.
+        // Both titles score identically against "login", so the tie-break
+        // (candidate string ascending, see search::rank) decides the order:
+        // "Fix login bug" < "Fix login redirect", putting the closed issue
+        // first.
+        let open_issue = issue(1, "Fix login redirect");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login bug")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(
+            state.search_ranked,
+            vec![1, 0],
+            "closed issue ranks first for this query"
+        );
+        state.exit_search();
+        assert_eq!(state.mode, Mode::List);
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(1),
+            "cursor must land on the open issue's row, not blank and not the closed issue"
+        );
+    }
+
+    #[test]
+    fn set_issues_selecting_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: closed issues are not a prefix of the merged list,
+        // so `select_number`'s absolute index in `self.issues` must be
+        // re-mapped to its position within Closed's `visible_indices()`.
+        let issues = vec![
+            issue(1, "open one"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(2, "closed one")
+            },
+            issue(3, "open two"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(4, "closed two")
+            },
+        ];
+        let mut state = AppState::new(vec![], vec![]);
+        state.state_filter = StateFilter::Closed;
+        state.set_issues_selecting(issues, Some(4));
+        assert_eq!(
+            state.visible_indices(),
+            vec![1, 3],
+            "closed issues sit at absolute indices 1 and 3"
+        );
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(4),
+            "cursor must resolve to issue 4's visible position (1), not its absolute index (3)"
+        );
+    }
+
+    #[test]
     fn search_delete_word_removes_last_word() {
         let mut state = AppState::new(vec![issue(1, "fix login error")], vec![]);
         state.enter_search();
@@ -1056,6 +1143,67 @@ mod tests {
         };
         let mut state = AppState::new(vec![untouched, has_label, has_body], vec![]);
         state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn open_filter_excludes_closed_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn closed_filter_excludes_open_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::Closed;
+        assert_eq!(state.visible_indices(), vec![1]);
+    }
+
+    #[test]
+    fn all_filter_shows_every_issue_regardless_of_state() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::All;
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn triage_filter_excludes_closed_issues_even_without_labels_or_body() {
+        let untouched_but_closed = Issue {
+            state: IssueState::Closed,
+            ..issue(1, "quick capture stub")
+        };
+        let mut state = AppState::new(vec![untouched_but_closed], vec![]);
+        state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn search_respects_active_state_filter() {
+        let open_issue = issue(1, "Fix login bug");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login redirect")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
         assert_eq!(state.visible_indices(), vec![0]);
     }
 
