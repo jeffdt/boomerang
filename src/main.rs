@@ -905,6 +905,7 @@ fn switch_repo<S: IssueSource>(
     state.issues = Vec::new();
     state.all_labels = Vec::new();
     state.state_filter = StateFilter::Open;
+    state.label_filter = None;
     state.checked.clear();
     state.search_query.clear();
     state.repo_name_with_owner = None;

@@ -252,6 +252,7 @@ pub struct AppState {
     pub issues: Vec<Issue>,
     pub all_labels: Vec<Label>,
     pub state_filter: StateFilter,
+    pub label_filter: Option<String>,
     pub mode: Mode,
     pub cursor: usize,
     pub search_query: String,
@@ -276,6 +277,7 @@ impl AppState {
             issues,
             all_labels,
             state_filter: StateFilter::Open,
+            label_filter: None,
             mode: Mode::List,
             cursor: 0,
             search_query: String::new(),
@@ -317,6 +319,9 @@ impl AppState {
                 let issue = &self.issues[i];
                 issue.labels.is_empty() && issue.body.trim().is_empty()
             });
+        }
+        if let Some(name) = &self.label_filter {
+            indices.retain(|&i| self.issues[i].labels.iter().any(|l| &l.name == name));
         }
         indices
     }
@@ -848,7 +853,10 @@ impl AppState {
     /// `ui::draw_list` and `loading::draw`, which show the same header
     /// before and after the issue list itself has loaded.
     pub fn issues_header_parts(&self) -> (String, Option<String>) {
-        let prefix = format!("{:?} issues", self.state_filter);
+        let mut prefix = format!("{:?} issues", self.state_filter);
+        if let Some(name) = &self.label_filter {
+            prefix.push_str(&format!(" · label: {name}"));
+        }
         (prefix, self.repo_name_with_owner.clone())
     }
 
@@ -913,6 +921,13 @@ mod tests {
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn labeled(number: u32, title: &str, label_name: &str) -> Issue {
+        Issue {
+            labels: vec![Label { name: label_name.into(), color: "ff0000".into() }],
+            ..issue(number, title)
         }
     }
 
@@ -1057,6 +1072,57 @@ mod tests {
         let mut state = AppState::new(vec![untouched, has_label, has_body], vec![]);
         state.state_filter = StateFilter::Triage;
         assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn visible_indices_filters_by_active_label() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn visible_indices_with_no_label_filter_shows_everything() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let state = AppState::new(issues, vec![]);
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn visible_indices_combines_label_filter_with_triage_state_filter() {
+        let issues = vec![
+            labeled(1, "triage candidate with bug label", "bug"),
+            issue(2, "true triage candidate, no bug label"),
+        ];
+        let mut state = AppState::new(issues, vec![]);
+        state.state_filter = StateFilter::Triage;
+        state.label_filter = Some("bug".to_string());
+        // Issue 1 has the bug label but isn't empty-labels, so Triage excludes
+        // it regardless of the label filter; issue 2 passes Triage but doesn't
+        // carry the bug label. Combined, nothing should be visible.
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn issues_header_parts_includes_active_label_filter() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        let (prefix, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues · label: bug");
+    }
+
+    #[test]
+    fn issues_header_parts_omits_label_suffix_when_not_filtering() {
+        let state = AppState::new(vec![], vec![]);
+        let (prefix, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+    }
+
+    #[test]
+    fn new_app_state_always_starts_with_no_label_filter() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.label_filter, None);
     }
 
     #[test]
