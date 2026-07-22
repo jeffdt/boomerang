@@ -1091,14 +1091,16 @@ fn spawn_mutation<S: IssueSource>(source: S, request: MutationRequest) -> Mutati
             let closed_source = source.clone();
             let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
             let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
-            let open = join_issue_list_handle(open_handle, "open")?;
-            let closed = join_issue_list_handle(closed_handle, "closed")?;
-            Ok(MutationSuccess {
-                operation,
-                issues: merge_issue_lists(open, closed),
-                action_elapsed,
-                refresh_elapsed: refresh_started.elapsed(),
-                target_issue,
+            let open_result = join_issue_list_handle(open_handle, "open");
+            let closed_result = join_issue_list_handle(closed_handle, "closed");
+            open_result.and_then(|open| {
+                closed_result.map(|closed| MutationSuccess {
+                    operation,
+                    issues: merge_issue_lists(open, closed),
+                    action_elapsed,
+                    refresh_elapsed: refresh_started.elapsed(),
+                    target_issue,
+                })
             })
         });
         let _ = tx.send(result);
