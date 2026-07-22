@@ -316,16 +316,18 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC),
         ));
     }
-    let mut trailer = String::new();
     if !state.checked.is_empty() {
-        trailer.push_str(&format!(" · {} checked", state.checked.len()));
+        spans.push(Span::styled(
+            format!(" · {} checked", state.checked.len()),
+            Style::default().fg(DIM),
+        ));
     }
     if let Some(pending) = state.pending_message() {
-        trailer.push_str("  ");
-        trailer.push_str(&pending);
-    }
-    if !trailer.is_empty() {
-        spans.push(Span::styled(trailer, Style::default().fg(DIM)));
+        let color = state.status_color().unwrap_or(DIM);
+        spans.push(Span::styled(
+            format!("  {pending}"),
+            Style::default().fg(color),
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
     let list_area = chunks[2];
@@ -537,9 +539,16 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()))
         .unwrap_or_default();
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+    let style = match state.status_color() {
+        Some(color) => Style::default().fg(color),
+        None => Style::default(),
+    };
+    frame.render_widget(
+        Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 /// Style a `"key desc · key desc"` hint line so each segment's leading key
@@ -650,9 +659,15 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
     // same pattern draw_shortcuts_hint already uses for the main list.
     let footer_message = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()));
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()));
     let footer_line = match footer_message {
-        Some(msg) => Line::from(msg),
+        Some(msg) => {
+            let style = match state.status_color() {
+                Some(color) => Style::default().fg(color),
+                None => Style::default(),
+            };
+            Line::styled(msg, style)
+        }
         None => styled_hint("enter create · esc cancel"),
     };
     frame.render_widget(
@@ -1315,17 +1330,75 @@ mod tests {
     }
 
     fn find_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+        find_all_in_buffer(buf, needle).into_iter().next()
+    }
+
+    fn find_all_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Vec<(u16, u16)> {
+        let mut matches = Vec::new();
         for y in 0..buf.area.height {
             let mut row = String::new();
             for x in 0..buf.area.width {
                 row.push_str(buf[(x, y)].symbol());
             }
-            if let Some(byte_idx) = row.find(needle) {
-                let x = row[..byte_idx].chars().count() as u16;
-                return Some((x, y));
+            let mut start = 0;
+            while let Some(byte_idx) = row[start..].find(needle) {
+                let abs_byte_idx = start + byte_idx;
+                let x = row[..abs_byte_idx].chars().count() as u16;
+                matches.push((x, y));
+                start = abs_byte_idx + needle.len();
             }
         }
-        None
+        matches
+    }
+
+    #[test]
+    fn pending_spinner_renders_yellow_in_header_and_toast() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let buf = render_buffer(&state);
+        let matches = find_all_in_buffer(&buf, "Creating issue...");
+        assert_eq!(matches.len(), 2, "expected header + toast occurrences");
+        for (x, y) in matches {
+            assert_eq!(buf[(x, y)].style().fg, Some(Color::Yellow));
+        }
+    }
+
+    #[test]
+    fn success_toast_text_renders_green_then_fades_to_gray() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("status toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Green));
+
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (msg, kind, set_at - std::time::Duration::from_millis(2000))
+        });
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("status toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn error_toast_text_renders_red() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "gh error: boom").expect("error toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn little_create_pending_footer_renders_yellow() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.begin_pending(PendingOperation::CreateIssue);
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "Creating issue...").expect("little-create footer should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Yellow));
     }
 
     #[test]

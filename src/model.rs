@@ -32,7 +32,58 @@ pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 const FLASH_GREEN_DURATION: Duration = Duration::from_millis(2000);
 const FLASH_GRAY_DURATION: Duration = Duration::from_millis(1600);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
-const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+const ACTIVITY_SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+
+const SPINNER_BRAILLE: &[char] = &['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣽', '⣻'];
+const SPINNER_SQUARE: &[char] = &['◰', '◳', '◲', '◱'];
+const SPINNER_BOUNCE: &[char] = &['⠉', '⠒', '⣀', '⠒'];
+const SPINNER_PULSE: &[char] = &['⣀', '⣤', '⣶', '⣾', '⣿', '⣾', '⣶', '⣤'];
+const SPINNER_MOON: &[char] = &['◓', '◑', '◒', '◐'];
+const SPINNER_CLOCK: &[char] = &['◷', '◶', '◵', '◴'];
+const SPINNER_DICE: &[char] = &['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+const SPINNER_CIRCLE_FILL: &[char] = &['○', '◔', '◑', '◕', '●'];
+const SPINNER_PISTON: &[char] = &['▁', '▃', '▅', '▇', '█', '▇', '▅', '▃'];
+const SPINNER_STAR: &[char] = &['✶', '✷', '✸', '✹'];
+const SPINNER_RINGS: &[char] = &['○', '◎', '●', '◎'];
+const SPINNER_MUSIC: &[char] = &['♩', '♪', '♫', '♬'];
+
+const SPINNER_PRESETS: [&[char]; 12] = [
+    SPINNER_BRAILLE,
+    SPINNER_SQUARE,
+    SPINNER_BOUNCE,
+    SPINNER_PULSE,
+    SPINNER_MOON,
+    SPINNER_CLOCK,
+    SPINNER_DICE,
+    SPINNER_CIRCLE_FILL,
+    SPINNER_PISTON,
+    SPINNER_STAR,
+    SPINNER_RINGS,
+    SPINNER_MUSIC,
+];
+
+/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
+/// operation, so repeated actions (create, edit, close, refresh) don't
+/// always show the same glyph. Mirrors `LoadingAnimation::rotated`'s
+/// no-dependency, `SystemTime`-seeded approach below rather than pulling in
+/// a `rand` crate — deliberately using `.as_millis()` rather than
+/// `.as_nanos()`: on clocks whose real resolution is coarser than a
+/// nanosecond (e.g. microsecond-granular, where every sample's nanos are a
+/// multiple of 1000), raw nanos mod `SPINNER_PRESETS.len()` collapses onto
+/// whichever residues share a factor with 1000, reaching only a handful of
+/// the 12 presets no matter how many times it's called. Millis don't have
+/// that padding, so the modulo spreads across the full range.
+fn random_spinner_frames() -> &'static [char] {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as usize)
+        .unwrap_or(0);
+    spinner_preset_for_tick(millis)
+}
+
+fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
+    SPINNER_PRESETS[tick % SPINNER_PRESETS.len()]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -47,6 +98,7 @@ pub enum PendingOperation {
 pub struct PendingState {
     pub operation: PendingOperation,
     pub started_at: Instant,
+    pub frames: &'static [char],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,6 +300,13 @@ pub struct FormSubmission {
     pub remove_labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatusKind {
+    Info,
+    Success,
+    Error,
+}
+
 pub struct AppState {
     pub issues: Vec<Issue>,
     pub all_labels: Vec<Label>,
@@ -256,7 +315,7 @@ pub struct AppState {
     pub cursor: usize,
     pub search_query: String,
     pub search_ranked: Vec<usize>,
-    pub status: Option<(String, Instant)>,
+    pub status: Option<(String, StatusKind, Instant)>,
     pub flash: Option<(u32, Instant)>,
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
@@ -805,7 +864,15 @@ impl AppState {
     }
 
     pub fn set_status(&mut self, message: String) {
-        self.status = Some((message, Instant::now()));
+        self.status = Some((message, StatusKind::Info, Instant::now()));
+    }
+
+    pub fn set_status_success(&mut self, message: String) {
+        self.status = Some((message, StatusKind::Success, Instant::now()));
+    }
+
+    pub fn set_status_error(&mut self, message: String) {
+        self.status = Some((message, StatusKind::Error, Instant::now()));
     }
 
     pub fn begin_loading(&mut self, what: &'static str) {
@@ -828,7 +895,7 @@ impl AppState {
         let loading = self.loading.as_ref()?;
         Some(format!(
             "{} Loading {}...",
-            spinner_frame(&loading.started_at),
+            spinner_frame(&loading.started_at, &ACTIVITY_SPINNER_FRAMES),
             loading.what
         ))
     }
@@ -837,6 +904,7 @@ impl AppState {
         self.pending = Some(PendingState {
             operation,
             started_at: Instant::now(),
+            frames: random_spinner_frames(),
         });
     }
 
@@ -858,7 +926,7 @@ impl AppState {
         };
         Some(format!(
             "{} {action}...",
-            spinner_frame(&pending.started_at)
+            spinner_frame(&pending.started_at, pending.frames)
         ))
     }
 
@@ -873,10 +941,30 @@ impl AppState {
     }
 
     pub fn clear_expired_status(&mut self) {
-        if let Some((_, set_at)) = &self.status {
-            if set_at.elapsed() >= STATUS_TOAST_DURATION {
+        if let Some((_, kind, set_at)) = &self.status {
+            let lifetime = match kind {
+                StatusKind::Success => FLASH_GREEN_DURATION + FLASH_GRAY_DURATION,
+                StatusKind::Info | StatusKind::Error => STATUS_TOAST_DURATION,
+            };
+            if set_at.elapsed() >= lifetime {
                 self.status = None;
             }
+        }
+    }
+
+    /// The color the pending/status text should render in right now: yellow
+    /// while an operation is in flight (always wins over any stale status
+    /// color), green fading to dark gray for a few seconds after a success
+    /// (the same timing `flash_indicator` uses for the row flash), flat red
+    /// for an error, or `None` for a plain info message.
+    pub fn status_color(&self) -> Option<Color> {
+        if self.pending.is_some() {
+            return Some(Color::Yellow);
+        }
+        match &self.status {
+            Some((_, StatusKind::Success, set_at)) => Some(green_then_gray(set_at.elapsed())),
+            Some((_, StatusKind::Error, _)) => Some(Color::Red),
+            Some((_, StatusKind::Info, _)) | None => None,
         }
     }
 
@@ -891,10 +979,8 @@ impl AppState {
         match self.flash {
             Some((flash_number, started_at)) if flash_number == number => {
                 let elapsed = started_at.elapsed();
-                if elapsed < FLASH_GREEN_DURATION {
-                    Some(Color::Green)
-                } else if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
-                    Some(Color::DarkGray)
+                if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
+                    Some(green_then_gray(elapsed))
                 } else {
                     None
                 }
@@ -912,11 +998,21 @@ impl AppState {
     }
 }
 
-fn spinner_frame(started_at: &Instant) -> &'static str {
+/// Green for `FLASH_GREEN_DURATION`, then dark gray — the fade shared by the
+/// row flash (`flash_indicator`) and the status toast (`status_color`).
+fn green_then_gray(elapsed: Duration) -> Color {
+    if elapsed < FLASH_GREEN_DURATION {
+        Color::Green
+    } else {
+        Color::DarkGray
+    }
+}
+
+fn spinner_frame(started_at: &Instant, frames: &'static [char]) -> char {
     let frame_index = ((started_at.elapsed().as_millis() / ACTIVITY_SPINNER_INTERVAL.as_millis())
         as usize)
-        % ACTIVITY_SPINNER_FRAMES.len();
-    ACTIVITY_SPINNER_FRAMES[frame_index]
+        % frames.len();
+    frames[frame_index]
 }
 
 #[cfg(test)]
@@ -1901,12 +1997,100 @@ mod tests {
     fn stale_status_is_cleared_by_expiry_check() {
         let mut state = AppState::new(vec![], vec![]);
         let set_at = Instant::now() - STATUS_TOAST_DURATION - Duration::from_millis(1);
-        state.status = Some(("copied: #1".to_string(), set_at));
+        state.status = Some(("copied: #1".to_string(), StatusKind::Info, set_at));
         state.clear_expired_status();
         assert!(
             state.status.is_none(),
             "a status older than STATUS_TOAST_DURATION should be cleared"
         );
+    }
+
+    #[test]
+    fn set_status_defaults_to_info_kind_with_no_color() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status("copied: #1".to_string());
+        assert_eq!(state.status_color(), None);
+    }
+
+    #[test]
+    fn set_status_success_is_green_immediately() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        assert_eq!(state.status_color(), Some(Color::Green));
+    }
+
+    #[test]
+    fn set_status_success_fades_to_gray_after_green_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state
+            .status
+            .take()
+            .map(|(msg, kind, set_at)| (msg, kind, set_at - FLASH_GREEN_DURATION));
+        assert_eq!(state.status_color(), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn set_status_error_is_red() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        assert_eq!(state.status_color(), Some(Color::Red));
+    }
+
+    #[test]
+    fn pending_overrides_a_stale_success_color_with_yellow() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.begin_pending(PendingOperation::RefreshList);
+        assert_eq!(state.status_color(), Some(Color::Yellow));
+    }
+
+    #[test]
+    fn success_status_survives_longer_than_the_old_toast_duration_before_expiring() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(
+            state.status.is_some(),
+            "a Success status shouldn't expire at the old 2s Info/Error duration"
+        );
+    }
+
+    #[test]
+    fn success_status_expires_after_the_full_fade_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - FLASH_GREEN_DURATION - FLASH_GRAY_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
+    }
+
+    #[test]
+    fn error_status_still_expires_at_the_original_toast_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
     }
 
     #[test]
@@ -2338,5 +2522,66 @@ mod tests {
             should_quit,
             "with nothing to fall back to, cancel should tell the caller to quit"
         );
+    }
+
+    #[test]
+    fn random_spinner_frames_always_returns_a_known_preset() {
+        for _ in 0..50 {
+            let frames = random_spinner_frames();
+            assert!(
+                SPINNER_PRESETS.contains(&frames),
+                "random_spinner_frames returned a slice not in SPINNER_PRESETS"
+            );
+        }
+    }
+
+    #[test]
+    fn spinner_preset_for_tick_reaches_every_preset_across_a_realistic_tick_range() {
+        // Regression test: seeding the pick off raw `.as_nanos()` on a clock
+        // whose actual resolution is coarser than a nanosecond (e.g. a
+        // microsecond-granular clock, where every sample's nanos are a
+        // multiple of 1000) confined the result to whichever residues share
+        // a factor with `1000 % SPINNER_PRESETS.len()` — only 3 of the 12
+        // presets, no matter how many times or how far apart it was called.
+        // Exercised here as a pure function over synthetic tick values
+        // (a plain, deterministic range) instead of real `SystemTime::now()`
+        // calls plus `thread::sleep` — same property, no reliance on real
+        // wall-clock time or its resolution, so nothing to be flaky about.
+        let seen: std::collections::HashSet<_> = (0..SPINNER_PRESETS.len())
+            .map(|tick| spinner_preset_for_tick(tick) as *const [char])
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SPINNER_PRESETS.len(),
+            "expected every preset to be reachable across one full tick cycle, got {} distinct ones",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn begin_pending_assigns_a_known_preset_to_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        let frames = state.pending.as_ref().unwrap().frames;
+        assert!(SPINNER_PRESETS.contains(&frames));
+    }
+
+    #[test]
+    fn pending_message_first_glyph_is_a_char_from_the_assigned_preset() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let frames = state.pending.as_ref().unwrap().frames;
+        let message = state.pending_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(frames.contains(&first_char));
+    }
+
+    #[test]
+    fn loading_message_glyph_still_uses_fixed_ascii_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_loading("issues");
+        let message = state.loading_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
     }
 }
