@@ -869,23 +869,31 @@ fn join_issue_list_handle(
         .and_then(|result| result)
 }
 
+/// Fetches open and closed issues in parallel and merges them into one list.
+/// Blocks until both fetches complete, so callers that also need other data
+/// (labels, repo name) should spawn those threads first and call this after,
+/// to keep everything running concurrently.
+fn fetch_open_and_closed<S: IssueSource>(source: S) -> anyhow::Result<Vec<Issue>> {
+    let open_source = source.clone();
+    let closed_source = source;
+    let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
+    let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
+    let open_result = join_issue_list_handle(open_handle, "open");
+    let closed_result = join_issue_list_handle(closed_handle, "closed");
+    open_result.and_then(|open| closed_result.map(|closed| merge_issue_lists(open, closed)))
+}
+
 fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let started = Instant::now();
-        let open_source = source.clone();
-        let closed_source = source.clone();
+        let issues_source = source.clone();
         let labels_source = source.clone();
         let repo_name_source = source;
-        let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
-        let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
         let repo_name_handle = std::thread::spawn(move || repo_name_source.repo_name());
-        let open_result = join_issue_list_handle(open_handle, "open");
-        let closed_result = join_issue_list_handle(closed_handle, "closed");
-        let issues_result = open_result
-            .and_then(|open| closed_result.map(|closed| merge_issue_lists(open, closed)))
-            .map_err(diagnose_initial_load_error);
+        let issues_result =
+            fetch_open_and_closed(issues_source).map_err(diagnose_initial_load_error);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(InitialLoadSuccess {
@@ -986,16 +994,10 @@ fn spawn_refresh<S: IssueSource>(source: S) -> RefreshReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let started = Instant::now();
-        let open_source = source.clone();
-        let closed_source = source.clone();
+        let issues_source = source.clone();
         let labels_source = source;
-        let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
-        let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
-        let open_result = join_issue_list_handle(open_handle, "open");
-        let closed_result = join_issue_list_handle(closed_handle, "closed");
-        let issues_result = open_result
-            .and_then(|open| closed_result.map(|closed| merge_issue_lists(open, closed)));
+        let issues_result = fetch_open_and_closed(issues_source);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(RefreshSuccess {
@@ -1086,20 +1088,12 @@ fn spawn_mutation<S: IssueSource>(source: S, request: MutationRequest) -> Mutati
         let result = request.run(&source).and_then(|target_issue| {
             let action_elapsed = action_started.elapsed();
             let refresh_started = Instant::now();
-            let open_source = source.clone();
-            let closed_source = source.clone();
-            let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
-            let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
-            let open_result = join_issue_list_handle(open_handle, "open");
-            let closed_result = join_issue_list_handle(closed_handle, "closed");
-            open_result.and_then(|open| {
-                closed_result.map(|closed| MutationSuccess {
-                    operation,
-                    issues: merge_issue_lists(open, closed),
-                    action_elapsed,
-                    refresh_elapsed: refresh_started.elapsed(),
-                    target_issue,
-                })
+            fetch_open_and_closed(source.clone()).map(|issues| MutationSuccess {
+                operation,
+                issues,
+                action_elapsed,
+                refresh_elapsed: refresh_started.elapsed(),
+                target_issue,
             })
         });
         let _ = tx.send(result);
