@@ -66,13 +66,19 @@ const SPINNER_PRESETS: [&[char]; 12] = [
 /// operation, so repeated actions (create, edit, close, refresh) don't
 /// always show the same glyph. Mirrors `LoadingAnimation::rotated`'s
 /// no-dependency, `SystemTime`-seeded approach below rather than pulling in
-/// a `rand` crate.
+/// a `rand` crate — deliberately using `.as_millis()` rather than
+/// `.as_nanos()`: on clocks whose real resolution is coarser than a
+/// nanosecond (e.g. microsecond-granular, where every sample's nanos are a
+/// multiple of 1000), raw nanos mod `SPINNER_PRESETS.len()` collapses onto
+/// whichever residues share a factor with 1000, reaching only a handful of
+/// the 12 presets no matter how many times it's called. Millis don't have
+/// that padding, so the modulo spreads across the full range.
 fn random_spinner_frames() -> &'static [char] {
-    let nanos = SystemTime::now()
+    let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as usize)
+        .map(|duration| duration.as_millis() as usize)
         .unwrap_or(0);
-    SPINNER_PRESETS[nanos % SPINNER_PRESETS.len()]
+    SPINNER_PRESETS[millis % SPINNER_PRESETS.len()]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2375,6 +2381,28 @@ mod tests {
                 "random_spinner_frames returned a slice not in SPINNER_PRESETS"
             );
         }
+    }
+
+    #[test]
+    fn random_spinner_frames_reaches_more_than_a_third_of_the_presets() {
+        // Regression test: seeding the pick off raw `.as_nanos()` on a clock
+        // whose actual resolution is coarser than a nanosecond (e.g. this
+        // machine's microsecond-granular clock, where every sample's nanos
+        // are a multiple of 1000) confines the result to whichever residues
+        // share a factor with `1000 % SPINNER_PRESETS.len()` — only 3 of the
+        // 12 presets, no matter how many times or how far apart it's called.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..60 {
+            seen.insert(random_spinner_frames() as *const [char]);
+            std::thread::sleep(Duration::from_millis(3));
+        }
+        assert!(
+            seen.len() > SPINNER_PRESETS.len() / 3,
+            "expected more than a third of the {} presets to appear across 60 spaced-out \
+             samples, got only {} distinct ones — the seed is confined to a small subset",
+            SPINNER_PRESETS.len(),
+            seen.len()
+        );
     }
 
     #[test]
