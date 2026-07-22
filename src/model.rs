@@ -312,13 +312,21 @@ impl AppState {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
         };
-        if self.state_filter == StateFilter::Triage {
-            indices.retain(|&i| {
-                let issue = &self.issues[i];
-                issue.labels.is_empty() && issue.body.trim().is_empty()
-            });
-        }
+        indices.retain(|&i| Self::matches_state_filter(&self.issues[i], self.state_filter));
         indices
+    }
+
+    fn matches_state_filter(issue: &Issue, filter: StateFilter) -> bool {
+        match filter {
+            StateFilter::Open => issue.state == IssueState::Open,
+            StateFilter::Closed => issue.state == IssueState::Closed,
+            StateFilter::All => true,
+            StateFilter::Triage => {
+                issue.state == IssueState::Open
+                    && issue.labels.is_empty()
+                    && issue.body.trim().is_empty()
+            }
+        }
     }
 
     pub fn selected_issue(&self) -> Option<&Issue> {
@@ -1056,6 +1064,67 @@ mod tests {
         };
         let mut state = AppState::new(vec![untouched, has_label, has_body], vec![]);
         state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn open_filter_excludes_closed_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn closed_filter_excludes_open_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::Closed;
+        assert_eq!(state.visible_indices(), vec![1]);
+    }
+
+    #[test]
+    fn all_filter_shows_every_issue_regardless_of_state() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::All;
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn triage_filter_excludes_closed_issues_even_without_labels_or_body() {
+        let untouched_but_closed = Issue {
+            state: IssueState::Closed,
+            ..issue(1, "quick capture stub")
+        };
+        let mut state = AppState::new(vec![untouched_but_closed], vec![]);
+        state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn search_respects_active_state_filter() {
+        let open_issue = issue(1, "Fix login bug");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login redirect")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
         assert_eq!(state.visible_indices(), vec![0]);
     }
 
