@@ -240,6 +240,26 @@ fn inset(area: Rect, margin: u16) -> Rect {
     }
 }
 
+/// Title for the outer popup frame. Static `"boomerang"` for every mode
+/// except the create/edit form, where it names the target repo (and, when
+/// editing, the issue number) so the form is never ambiguous about what
+/// it's about to submit to.
+fn outer_title_text(state: &AppState) -> String {
+    match &state.mode {
+        Mode::Form(form) => match form.editing {
+            Some(number) => match state.repo_name_with_owner.as_deref() {
+                Some(repo) => format!("Editing issue #{number} in {repo}"),
+                None => format!("Editing issue #{number}"),
+            },
+            None => match state.repo_name_with_owner.as_deref() {
+                Some(repo) => format!("New issue in {repo}"),
+                None => "New issue".to_string(),
+            },
+        },
+        _ => "boomerang".to_string(),
+    }
+}
+
 pub fn draw(frame: &mut Frame, state: &AppState) {
     if let Mode::LittleCreate(buf) = &state.mode {
         draw_little_create(frame, buf, state);
@@ -248,6 +268,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(ACCENT);
+    let title_text = outer_title_text(state);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -255,7 +276,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                "‹ boomerang ›",
+                format!("‹ {title_text} ›"),
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -1899,7 +1920,7 @@ mod tests {
     }
 
     #[test]
-    fn border_title_is_always_boomerang_regardless_of_repo_name() {
+    fn list_border_title_is_boomerang_regardless_of_repo_name() {
         let mut with_repo = AppState::new(vec![issue(1, "a")], vec![]);
         with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let rendered_with_repo = render_to_string(&with_repo);
@@ -2462,6 +2483,66 @@ mod tests {
         );
         assert!(
             !rendered.contains("New issue in"),
+            "title should not claim a repo it doesn't have, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn big_create_form_shows_new_issue_title_with_repo_when_known() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue in jeffdt/boomerang"),
+            "title should include the known repo, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn big_create_form_falls_back_to_plain_title_when_repo_unknown() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue"),
+            "title should fall back to a plain label, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("New issue in"),
+            "title should not claim a repo it doesn't have, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn edit_form_shows_editing_issue_title_with_repo_when_known() {
+        let mut state = AppState::new(
+            vec![issue(76, "Full create form does not tell you what repo")],
+            vec![],
+        );
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        state.enter_edit();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Editing issue #76 in jeffdt/boomerang"),
+            "title should include the issue number and known repo, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn edit_form_falls_back_to_issue_number_only_when_repo_unknown() {
+        let mut state = AppState::new(
+            vec![issue(76, "Full create form does not tell you what repo")],
+            vec![],
+        );
+        state.enter_edit();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Editing issue #76"),
+            "title should include the issue number, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("Editing issue #76 in"),
             "title should not claim a repo it doesn't have, got: {rendered:?}"
         );
     }
