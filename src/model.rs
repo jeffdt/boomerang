@@ -141,6 +141,12 @@ pub struct LabelPickerState {
     pub cursor: usize,
 }
 
+impl LabelPickerState {
+    fn selected_label(&self) -> Option<&str> {
+        (self.cursor > 0).then(|| self.labels[self.cursor - 1].as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     ExitOnCopyYank,
@@ -325,15 +331,16 @@ impl AppState {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
         };
-        if self.state_filter == StateFilter::Triage {
-            indices.retain(|&i| {
-                let issue = &self.issues[i];
-                issue.labels.is_empty() && issue.body.trim().is_empty()
-            });
-        }
-        if let Some(name) = &self.label_filter {
-            indices.retain(|&i| self.issues[i].labels.iter().any(|l| &l.name == name));
-        }
+        indices.retain(|&i| {
+            let issue = &self.issues[i];
+            let passes_triage = self.state_filter != StateFilter::Triage
+                || (issue.labels.is_empty() && issue.body.trim().is_empty());
+            let passes_label = self
+                .label_filter
+                .as_ref()
+                .is_none_or(|name| issue.labels.iter().any(|l| &l.name == name));
+            passes_triage && passes_label
+        });
         indices
     }
 
@@ -463,7 +470,7 @@ impl AppState {
     }
 
     pub fn enter_label_picker(&mut self) {
-        let labels: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let labels: Vec<String> = self.all_label_names();
         let cursor = match &self.label_filter {
             Some(active) => labels.iter().position(|name| name == active).map_or(0, |i| i + 1),
             None => 0,
@@ -483,16 +490,10 @@ impl AppState {
         let Mode::LabelPicker(picker) = &self.mode else {
             return;
         };
-        self.label_filter = if picker.cursor == 0 {
-            None
-        } else {
-            let name = picker.labels[picker.cursor - 1].clone();
-            if self.label_filter.as_deref() == Some(name.as_str()) {
-                None
-            } else {
-                Some(name)
-            }
-        };
+        let selected = picker.selected_label().map(str::to_string);
+        // Reselecting the row already active as the filter (or "All labels"
+        // when there's no selection) clears it instead of leaving it a no-op.
+        self.label_filter = if selected == self.label_filter { None } else { selected };
         self.mode = Mode::List;
     }
 
@@ -662,8 +663,12 @@ impl AppState {
         }
     }
 
+    fn all_label_names(&self) -> Vec<String> {
+        self.all_labels.iter().map(|l| l.name.clone()).collect()
+    }
+
     fn new_form_state(&self, editing: Option<u32>) -> FormState {
-        let all_label_names: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let all_label_names: Vec<String> = self.all_label_names();
         let (title, body, selected_labels) = match editing.and_then(|n| self.find_issue(n)) {
             Some(issue) => (
                 issue.title.clone(),

@@ -948,7 +948,7 @@ fn draw_label_picker(frame: &mut Frame, area: Rect, picker: &LabelPickerState, s
         } else {
             let name = &picker.labels[row - 1];
             spans.push(Span::styled(
-                name.clone(),
+                name.as_str(),
                 label_style(label_palette_color(&state.all_labels, name)),
             ));
         }
