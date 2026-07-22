@@ -502,8 +502,14 @@ impl AppState {
     /// in the new list instead of resetting to the top.
     pub fn set_issues_selecting(&mut self, issues: Vec<Issue>, select_number: Option<u32>) {
         self.issues = issues;
-        self.cursor = select_number
-            .and_then(|number| self.issues.iter().position(|i| i.number == number))
+        let target =
+            select_number.and_then(|number| self.issues.iter().position(|i| i.number == number));
+        self.cursor = target
+            .and_then(|absolute_index| {
+                self.visible_indices()
+                    .iter()
+                    .position(|&i| i == absolute_index)
+            })
             .unwrap_or(0);
     }
 
@@ -555,11 +561,16 @@ impl AppState {
     }
 
     pub fn exit_search(&mut self) {
-        if let Some(&idx) = self.search_ranked.get(self.cursor) {
-            self.cursor = idx;
-        }
+        let target = self.search_ranked.get(self.cursor).copied();
         self.mode = Mode::List;
         self.search_query.clear();
+        self.cursor = target
+            .and_then(|absolute_index| {
+                self.visible_indices()
+                    .iter()
+                    .position(|&i| i == absolute_index)
+            })
+            .unwrap_or(0);
     }
 
     pub fn enter_little_create(&mut self) {
@@ -1008,6 +1019,72 @@ mod tests {
             "cursor lands on issue 2's absolute index in the full list"
         );
         assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn exit_search_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: `self.issues` holds both open and closed issues, so
+        // an absolute index into it is no longer the same thing as a position
+        // within List mode's `visible_indices()` once a filter narrows things
+        // down. The closed issue ranks first in search results, but under the
+        // Open filter it must not be selectable back in List mode.
+        // Both titles score identically against "login", so the tie-break
+        // (candidate string ascending, see search::rank) decides the order:
+        // "Fix login bug" < "Fix login redirect", putting the closed issue
+        // first.
+        let open_issue = issue(1, "Fix login redirect");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login bug")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(
+            state.search_ranked, vec![1, 0],
+            "closed issue ranks first for this query"
+        );
+        state.exit_search();
+        assert_eq!(state.mode, Mode::List);
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(1),
+            "cursor must land on the open issue's row, not blank and not the closed issue"
+        );
+    }
+
+    #[test]
+    fn set_issues_selecting_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: closed issues are not a prefix of the merged list,
+        // so `select_number`'s absolute index in `self.issues` must be
+        // re-mapped to its position within Closed's `visible_indices()`.
+        let issues = vec![
+            issue(1, "open one"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(2, "closed one")
+            },
+            issue(3, "open two"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(4, "closed two")
+            },
+        ];
+        let mut state = AppState::new(vec![], vec![]);
+        state.state_filter = StateFilter::Closed;
+        state.set_issues_selecting(issues, Some(4));
+        assert_eq!(
+            state.visible_indices(),
+            vec![1, 3],
+            "closed issues sit at absolute indices 1 and 3"
+        );
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(4),
+            "cursor must resolve to issue 4's visible position (1), not its absolute index (3)"
+        );
     }
 
     #[test]
