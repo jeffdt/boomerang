@@ -204,18 +204,44 @@ pub struct RepoPickerState {
     pub can_cancel: bool,
 }
 
+/// The 16 named `ratatui::style::Color` variants, in the same order
+/// `ratatui::style::Color` defines them, used to cycle the app's accent
+/// color. Never add an RGB entry here — named ANSI colors only, so the
+/// picker inherits the user's terminal theme (AGENTS.md durable design
+/// decision).
+pub(crate) const ALL_NAMED_COLORS: [&str; 16] = [
+    "Black",
+    "Red",
+    "Green",
+    "Yellow",
+    "Blue",
+    "Magenta",
+    "Cyan",
+    "Gray",
+    "DarkGray",
+    "LightRed",
+    "LightGreen",
+    "LightYellow",
+    "LightBlue",
+    "LightMagenta",
+    "LightCyan",
+    "White",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     ExitOnCopyYank,
     ZebraStriping,
     ShortcutsOnDemand,
+    AccentColor,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 3] = [
+    pub const ALL: [SettingsRow; 4] = [
         SettingsRow::ExitOnCopyYank,
         SettingsRow::ZebraStriping,
         SettingsRow::ShortcutsOnDemand,
+        SettingsRow::AccentColor,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -223,6 +249,7 @@ impl SettingsRow {
             SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
             SettingsRow::ZebraStriping => "Zebra striping",
             SettingsRow::ShortcutsOnDemand => "Show shortcuts",
+            SettingsRow::AccentColor => "Accent color",
         }
     }
 }
@@ -349,6 +376,7 @@ pub struct AppState {
     pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
+    pub accent_color: String,
 }
 
 impl AppState {
@@ -373,6 +401,7 @@ impl AppState {
             show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
+            accent_color: "Blue".to_string(),
         }
     }
 
@@ -439,6 +468,14 @@ impl AppState {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
             SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
+            SettingsRow::AccentColor => {
+                let idx = ALL_NAMED_COLORS
+                    .iter()
+                    .position(|&name| name == self.accent_color)
+                    .unwrap_or(0);
+                self.accent_color =
+                    ALL_NAMED_COLORS[(idx + 1) % ALL_NAMED_COLORS.len()].to_string();
+            }
         }
     }
 
@@ -2339,7 +2376,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 2,
+            state.settings_cursor, 3,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -2392,6 +2429,34 @@ mod tests {
             !state.exit_on_copy_yank && state.zebra_striping,
             "toggling the third row must not affect the first two"
         );
+    }
+
+    #[test]
+    fn new_app_state_defaults_accent_color_to_blue() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.accent_color, "Blue");
+    }
+
+    #[test]
+    fn settings_toggle_cycles_accent_color_forward_and_wraps() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        assert_eq!(state.accent_color, "Blue");
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Magenta");
+        assert!(
+            !state.exit_on_copy_yank && state.zebra_striping && !state.shortcuts_on_demand,
+            "cycling the fourth row must not affect the other three"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_accent_color_wraps_from_white_back_to_black() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        state.accent_color = "White".to_string();
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Black");
     }
 
     #[test]

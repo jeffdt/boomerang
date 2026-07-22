@@ -12,6 +12,7 @@ pub struct Config {
     pub zebra_striping: bool,
     pub shortcuts_on_demand: bool,
     pub recent_repos: Vec<String>,
+    pub accent_color: String,
 }
 
 impl Default for Config {
@@ -21,6 +22,7 @@ impl Default for Config {
             zebra_striping: true,
             shortcuts_on_demand: false,
             recent_repos: Vec::new(),
+            accent_color: "Blue".to_string(),
         }
     }
 }
@@ -84,6 +86,7 @@ mod tests {
         assert!(config.zebra_striping);
         assert!(!config.shortcuts_on_demand);
         assert!(config.recent_repos.is_empty());
+        assert_eq!(config.accent_color, "Blue");
     }
 
     #[test]
@@ -111,6 +114,7 @@ mod tests {
             zebra_striping: false,
             shortcuts_on_demand: true,
             recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            accent_color: "Magenta".to_string(),
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
