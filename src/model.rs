@@ -1170,6 +1170,24 @@ mod tests {
     }
 
     #[test]
+    fn label_filter_survives_state_filter_cycling() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.cycle_state_filter();
+        state.cycle_state_filter();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+    }
+
+    #[test]
+    fn visible_indices_combines_label_filter_with_search() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.enter_search();
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
     fn new_app_state_always_starts_with_no_label_filter() {
         let state = AppState::new(vec![], vec![]);
         assert_eq!(state.label_filter, None);
