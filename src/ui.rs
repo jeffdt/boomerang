@@ -1,5 +1,5 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRow};
+use crate::model::{AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -294,6 +294,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
         Mode::Settings => draw_settings(frame, inner, state),
         Mode::RepoPicker(picker) => draw_repo_picker(frame, inner, picker, state),
+        Mode::LabelPicker(picker) => draw_label_picker(frame, inner, picker, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -535,9 +536,10 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             Mode::RepoPicker(_) => vec![styled_hint(
                 "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
             )],
+            Mode::LabelPicker(_) => vec![styled_hint("j/k move · enter select · esc cancel")],
             _ if state.shortcuts_visible() => vec![
                 styled_hint(
-                    "j/k move · h hide pane · / search · a state · space check · enter/e edit",
+                    "j/k move · h hide pane · / search · a state · l label · space check · e edit",
                 ),
                 styled_hint(
                     "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
@@ -925,6 +927,42 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
         .map(|message| Paragraph::new(message.as_str()).style(Style::default().fg(Color::Red)))
         .unwrap_or_else(|| Paragraph::new(""));
     frame.render_widget(error_line.wrap(Wrap { trim: false }), chunks[3]);
+}
+
+fn draw_label_picker(frame: &mut Frame, area: Rect, picker: &LabelPickerState, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let active_row = match &state.label_filter {
+        Some(name) => picker.labels.iter().position(|l| l == name).map(|i| i + 1),
+        None => None,
+    };
+    for row in 0..=picker.labels.len() {
+        let marker = if Some(row) == active_row { "\u{2713} " } else { "  " };
+        let mut spans = vec![Span::raw(marker)];
+        if row == 0 {
+            spans.push(Span::raw("All labels"));
+        } else {
+            let name = &picker.labels[row - 1];
+            spans.push(Span::styled(
+                name.clone(),
+                label_style(label_palette_color(&state.all_labels, name)),
+            ));
+        }
+        let style = if row == picker.cursor {
+            Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        items.push(ListItem::new(Line::from(spans)).style(style));
+    }
+    let block = Block::default().borders(Borders::ALL).title("Filter by label");
+    frame.render_widget(List::new(items).block(block), chunks[0]);
+
+    draw_shortcuts_hint(frame, chunks[1], state);
 }
 
 #[cfg(test)]
@@ -1334,7 +1372,7 @@ mod tests {
     }
 
     fn render_buffer(state: &AppState) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(80, 25);
+        let backend = TestBackend::new(84, 25);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
         terminal.backend().buffer().clone()
@@ -2181,11 +2219,12 @@ mod tests {
 
     #[test]
     fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
-        // 70 chars: longer than the list's title budget at this fixed 80x25
-        // TestBackend size (74-char inner width minus the 6-char number
-        // column = 68), but short enough to fit on one line at the detail
-        // pane's full width, so it renders unwrapped and unclipped.
-        let long_title = "a".repeat(70);
+        // 74 chars: longer than the list's title budget at this fixed 84x25
+        // TestBackend size (78-char inner width minus the 6-char number
+        // column and the 2-char flash-icon column = 70), but short enough to
+        // fit on one line at the detail pane's full width (76 chars), so it
+        // renders unwrapped and unclipped.
+        let long_title = "a".repeat(74);
         let mut state = AppState::new(vec![issue(1, &long_title)], vec![]);
         let pane_rendered = render_to_string(&state);
         assert!(
@@ -2206,7 +2245,7 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
         assert!(rendered.contains("c create"));
-        assert!(rendered.contains("enter/e edit"));
+        assert!(rendered.contains("e edit"));
     }
 
     #[test]
@@ -2225,8 +2264,9 @@ mod tests {
             "h hide pane",
             "/ search",
             "a state",
+            "l label",
             "space check",
-            "enter/e edit",
+            "e edit",
             "c create",
             "x close",
             "o open",
@@ -2264,7 +2304,7 @@ mod tests {
     #[test]
     fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
-        let list_line1 = "j/k move · h hide pane · / search · a state · space check · enter/e edit";
+        let list_line1 = "j/k move · h hide pane · / search · a state · l label · space check · e edit";
         let list_line2 = "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
@@ -2649,5 +2689,35 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("up/down recent"));
         assert!(rendered.contains("enter switch"));
+    }
+
+    #[test]
+    fn draw_label_picker_shows_all_labels_row_and_every_repo_label() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.enter_label_picker();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("All labels"));
+        assert!(rendered.contains("bug"));
+        assert!(rendered.contains("docs"));
+    }
+
+    #[test]
+    fn draw_label_picker_marks_active_label_with_checkmark() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        let rendered = render_to_string(&state);
+        let bug_line = rendered.lines().find(|l| l.contains("bug")).unwrap();
+        assert!(bug_line.contains('\u{2713}'));
+        let docs_line = rendered.lines().find(|l| l.contains("docs")).unwrap();
+        assert!(!docs_line.contains('\u{2713}'));
+    }
+
+    #[test]
+    fn list_shortcuts_hint_mentions_label_filter_key() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.toggle_shortcuts();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("l label"));
     }
 }
