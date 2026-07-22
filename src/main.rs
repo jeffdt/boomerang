@@ -334,7 +334,7 @@ fn capture_loop<S: IssueSource>(
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     state.finish_pending();
-                    state.set_status(gh_error_status(&e));
+                    state.set_status_error(gh_error_status(&e));
                 }
             }
         }
@@ -480,7 +480,7 @@ fn capture_full_loop<S: IssueSource>(
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     state.finish_pending();
-                    state.set_status(gh_error_status(&e));
+                    state.set_status_error(gh_error_status(&e));
                 }
             }
         }
@@ -944,14 +944,14 @@ fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadS
             let count = success.issues.len();
             state.repo_name_with_owner = success.repo_name.clone();
             state.set_loaded(success.issues, success.labels);
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "loaded {count} issues in {}",
                 format_duration(success.elapsed)
             ));
         }
         Err(e) => {
             state.finish_loading();
-            state.set_status(gh_error_status(&e));
+            state.set_status_error(gh_error_status(&e));
         }
     }
 }
@@ -1022,12 +1022,12 @@ fn finish_refresh(state: &mut AppState, result: anyhow::Result<RefreshSuccess>) 
             let count = success.issues.len();
             state.all_labels = success.labels;
             state.set_issues(success.issues);
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "refreshed {count} issues in {}",
                 format_duration(success.elapsed)
             ));
         }
-        Err(e) => state.set_status(gh_error_status(&e)),
+        Err(e) => state.set_status_error(gh_error_status(&e)),
     }
 }
 
@@ -1098,7 +1098,7 @@ fn finish_mutation(
             if let Some(number) = success.target_issue {
                 state.start_flash(number);
             }
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "{} in {}, refresh {}",
                 success_status_action(success.operation),
                 format_duration(success.action_elapsed),
@@ -1107,7 +1107,7 @@ fn finish_mutation(
         }
         Err(e) => {
             restore_mutation_draft(state, draft);
-            state.set_status(gh_error_status(&e));
+            state.set_status_error(gh_error_status(&e));
         }
     }
 }
@@ -1288,6 +1288,7 @@ fn open_in_browser(state: &mut AppState) {
 mod tests {
     use super::*;
     use crate::model::IssueState;
+    use ratatui::style::Color;
 
     fn issue(number: u32, title: &str) -> Issue {
         Issue {
@@ -1562,6 +1563,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("loaded 1 issues in 350ms")
         );
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1588,6 +1590,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("refreshed 1 issues in 200ms")
         );
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1601,6 +1604,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: network unreachable")
         );
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1662,6 +1666,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: repo unavailable")
         );
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1687,6 +1692,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("created issue in 1.2s, refresh 50ms")
         );
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1717,6 +1723,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("updated issue in 950ms, refresh 75ms")
         );
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1771,6 +1778,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("closed issue in 400ms, refresh 30ms")
         );
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1788,6 +1796,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: close failed")
         );
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1821,6 +1830,7 @@ mod tests {
             state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: network failed")
         );
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
