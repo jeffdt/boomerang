@@ -504,13 +504,20 @@ impl AppState {
         self.issues = issues;
         let target =
             select_number.and_then(|number| self.issues.iter().position(|i| i.number == number));
-        self.cursor = target
+        self.cursor = self.visible_position_of(target);
+    }
+
+    /// Maps an absolute index into `self.issues` to its position within the
+    /// current `visible_indices()`, or `0` if it isn't visible under the
+    /// active filter (e.g. it was filtered out, or `target` is `None`).
+    fn visible_position_of(&self, target: Option<usize>) -> usize {
+        target
             .and_then(|absolute_index| {
                 self.visible_indices()
                     .iter()
                     .position(|&i| i == absolute_index)
             })
-            .unwrap_or(0);
+            .unwrap_or(0)
     }
 
     pub fn cycle_state_filter(&mut self) -> StateFilter {
@@ -564,13 +571,7 @@ impl AppState {
         let target = self.search_ranked.get(self.cursor).copied();
         self.mode = Mode::List;
         self.search_query.clear();
-        self.cursor = target
-            .and_then(|absolute_index| {
-                self.visible_indices()
-                    .iter()
-                    .position(|&i| i == absolute_index)
-            })
-            .unwrap_or(0);
+        self.cursor = self.visible_position_of(target);
     }
 
     pub fn enter_little_create(&mut self) {
@@ -1043,7 +1044,8 @@ mod tests {
             state.search_push(c);
         }
         assert_eq!(
-            state.search_ranked, vec![1, 0],
+            state.search_ranked,
+            vec![1, 0],
             "closed issue ranks first for this query"
         );
         state.exit_search();
