@@ -20,9 +20,9 @@ use std::io::{self, stdout};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use ui::{
-    map_confirm_key, map_form_key, map_list_key, map_little_create_key, map_search_key,
-    map_settings_key, ConfirmInput, FormInput, ListInput, LittleCreateInput, RepoPickerInput,
-    SearchInput, SettingsInput,
+    map_confirm_key, map_form_key, map_label_picker_key, map_list_key, map_little_create_key,
+    map_search_key, map_settings_key, ConfirmInput, FormInput, LabelPickerInput, ListInput,
+    LittleCreateInput, RepoPickerInput, SearchInput, SettingsInput,
 };
 
 const HELP: &str = "\
@@ -710,6 +710,7 @@ fn event_loop<S: IssueSource>(
                     ListInput::CycleStateFilter => {
                         state.cycle_state_filter();
                     }
+                    ListInput::LabelFilter => state.enter_label_picker(),
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
@@ -848,6 +849,13 @@ fn event_loop<S: IssueSource>(
                     }
                     RepoPickerInput::None => {}
                 },
+                Mode::LabelPicker(_) => match map_label_picker_key(key) {
+                    LabelPickerInput::Down => state.label_picker_move(1),
+                    LabelPickerInput::Up => state.label_picker_move(-1),
+                    LabelPickerInput::Select => state.label_picker_select(),
+                    LabelPickerInput::Cancel => state.label_picker_cancel(),
+                    LabelPickerInput::None => {}
+                },
             }
         }
     }
@@ -930,6 +938,7 @@ fn switch_repo<S: IssueSource>(
     state.issues = Vec::new();
     state.all_labels = Vec::new();
     state.state_filter = StateFilter::Open;
+    state.label_filter = None;
     state.checked.clear();
     state.search_query.clear();
     state.repo_name_with_owner = None;
