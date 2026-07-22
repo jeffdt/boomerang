@@ -134,6 +134,17 @@ pub enum FormInput {
 }
 
 pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
+    // Some terminals (e.g. Ghostty's `shift+enter=text:\n` keybind) send Shift+Enter
+    // as a raw newline byte. In raw mode crossterm parses that byte as Ctrl+J, which is
+    // indistinguishable from an actual Ctrl+J press and which ratatui-textarea binds to
+    // delete_line_by_head. Since the cursor sits at the end of the field when a form
+    // opens, that silently erases the line instead of inserting a newline. boomerang
+    // doesn't expose any Ctrl+J shortcut of its own, so normalize it to a plain Enter.
+    let key = if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        KeyEvent::new(KeyCode::Enter, key.modifiers - KeyModifiers::CONTROL)
+    } else {
+        key
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Char('s') if ctrl => return FormInput::SubmitNow,
@@ -1100,6 +1111,26 @@ mod tests {
             map_form_key(key(KeyCode::Char(' ')), FormField::Submit),
             FormInput::Enter
         );
+    }
+
+    #[test]
+    fn form_key_mapping_treats_ctrl_j_as_enter_in_body() {
+        // Some terminals (e.g. Ghostty's `shift+enter=text:\n` keybind) send
+        // Shift+Enter as a raw newline byte, which crossterm parses as Ctrl+J
+        // in raw mode. ratatui-textarea binds Ctrl+J to delete_line_by_head,
+        // which erases the line instead of inserting a newline, so boomerang
+        // must normalize it to a plain Enter before it reaches the textarea.
+        let ctrl_j = key_with(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(
+            map_form_key(ctrl_j, FormField::Body),
+            FormInput::TextEdit(Input::from(key(KeyCode::Enter)))
+        );
+    }
+
+    #[test]
+    fn form_key_mapping_treats_ctrl_j_as_enter_in_title() {
+        let ctrl_j = key_with(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(map_form_key(ctrl_j, FormField::Title), FormInput::Enter);
     }
 
     #[test]
