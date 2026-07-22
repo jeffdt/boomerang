@@ -1,3 +1,4 @@
+use crate::model::DEFAULT_ACCENT_COLOR;
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ impl Default for Config {
             zebra_striping: true,
             shortcuts_on_demand: false,
             recent_repos: Vec::new(),
-            accent_color: "Blue".to_string(),
+            accent_color: DEFAULT_ACCENT_COLOR.to_string(),
         }
     }
 }

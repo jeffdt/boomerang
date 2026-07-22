@@ -1,5 +1,8 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow};
+use crate::model::{
+    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow,
+    NAMED_COLORS,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,6 +10,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::Input;
+use std::borrow::Cow;
 
 const POPUP_MARGIN: u16 = 2;
 
@@ -19,30 +23,16 @@ const LABEL_PALETTE: [Color; 6] = [
     Color::Red,
 ];
 
-/// Maps a `SettingsRow::AccentColor` value (one of `model::ALL_NAMED_COLORS`)
-/// to its `ratatui::style::Color`. Falls back to `Color::Blue` — the app's
-/// default — for any unrecognized or corrupt config value, the same
+/// Maps a `SettingsRow::AccentColor` value (one of `model::NAMED_COLORS`'s
+/// names) to its `ratatui::style::Color`. Falls back to `Color::Blue` — the
+/// app's default — for any unrecognized or corrupt config value, the same
 /// fallback pattern rolomux uses for its own color-name lookup.
 fn color_from_name(name: &str) -> Color {
-    match name {
-        "Black" => Color::Black,
-        "Red" => Color::Red,
-        "Green" => Color::Green,
-        "Yellow" => Color::Yellow,
-        "Blue" => Color::Blue,
-        "Magenta" => Color::Magenta,
-        "Cyan" => Color::Cyan,
-        "Gray" => Color::Gray,
-        "DarkGray" => Color::DarkGray,
-        "LightRed" => Color::LightRed,
-        "LightGreen" => Color::LightGreen,
-        "LightYellow" => Color::LightYellow,
-        "LightBlue" => Color::LightBlue,
-        "LightMagenta" => Color::LightMagenta,
-        "LightCyan" => Color::LightCyan,
-        "White" => Color::White,
-        _ => Color::Blue,
-    }
+    NAMED_COLORS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, color)| *color)
+        .unwrap_or(Color::Blue)
 }
 
 const DIM: Color = Color::DarkGray;
@@ -892,20 +882,19 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .enumerate()
         .map(|(i, row)| {
             let selected = i == state.settings_cursor;
-            let value_text: String = match row {
+            let value_text: Cow<str> = match row {
                 SettingsRow::ExitOnCopyYank => {
-                    if state.exit_on_copy_yank { "On" } else { "Off" }.to_string()
+                    Cow::Borrowed(if state.exit_on_copy_yank { "On" } else { "Off" })
                 }
                 SettingsRow::ZebraStriping => {
-                    if state.zebra_striping { "On" } else { "Off" }.to_string()
+                    Cow::Borrowed(if state.zebra_striping { "On" } else { "Off" })
                 }
-                SettingsRow::ShortcutsOnDemand => if state.shortcuts_on_demand {
+                SettingsRow::ShortcutsOnDemand => Cow::Borrowed(if state.shortcuts_on_demand {
                     "On demand (?)"
                 } else {
                     "Always"
-                }
-                .to_string(),
-                SettingsRow::AccentColor => state.accent_color.clone(),
+                }),
+                SettingsRow::AccentColor => Cow::Borrowed(state.accent_color.as_str()),
             };
             let label = row.label();
             let pad = list_width
@@ -1436,21 +1425,19 @@ mod tests {
     }
 
     #[test]
-    fn color_from_name_covers_all_named_colors_without_collapsing_to_the_fallback() {
+    fn color_from_name_covers_every_named_color_without_collapsing_to_the_fallback() {
         use std::collections::HashSet;
 
-        let resolved: HashSet<Color> = ALL_NAMED_COLORS
-            .iter()
-            .map(|name| color_from_name(name))
-            .collect();
+        let names: Vec<&str> = NAMED_COLORS.iter().map(|(name, _)| *name).collect();
+        let resolved: HashSet<Color> = names.iter().map(|name| color_from_name(name)).collect();
         assert_eq!(
             resolved.len(),
-            ALL_NAMED_COLORS.len(),
-            "expected every name in ALL_NAMED_COLORS to map to a distinct Color, got {} distinct values",
+            NAMED_COLORS.len(),
+            "expected every name in NAMED_COLORS to map to a distinct Color, got {} distinct values",
             resolved.len()
         );
 
-        for name in ALL_NAMED_COLORS {
+        for name in names {
             if name != "Blue" {
                 assert_ne!(
                     color_from_name(name),
@@ -1462,7 +1449,7 @@ mod tests {
     }
 
     use crate::gh::StateFilter;
-    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation, ALL_NAMED_COLORS};
+    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::time::Instant;

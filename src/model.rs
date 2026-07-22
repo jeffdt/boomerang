@@ -78,6 +78,13 @@ fn millis_tick() -> usize {
         .unwrap_or(0)
 }
 
+/// Shared indexing logic behind every tick-seeded picker below: spinner
+/// presets and static status icons alike just index a fixed set of options
+/// by `tick % options.len()`.
+fn pick_by_tick<T: Copy>(tick: usize, options: &[T]) -> T {
+    options[tick % options.len()]
+}
+
 /// Picks one of `SPINNER_PRESETS` at random for a newly started pending
 /// operation, so repeated actions (create, edit, close, refresh) don't
 /// always show the same glyph.
@@ -86,7 +93,7 @@ fn random_spinner_frames() -> &'static [char] {
 }
 
 fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
-    SPINNER_PRESETS[tick % SPINNER_PRESETS.len()]
+    pick_by_tick(tick, &SPINNER_PRESETS)
 }
 
 /// Candidate glyphs for a freshly set success status, e.g. "loaded 12
@@ -100,7 +107,7 @@ pub(crate) const SUCCESS_ICONS: [char; 6] = ['✓', '✔', '★', '✦', '✧', 
 pub(crate) const ERROR_ICONS: [char; 5] = ['✗', '✘', '⚠', '☒', '⊗'];
 
 fn icon_for_tick(tick: usize, icons: &'static [char]) -> char {
-    icons[tick % icons.len()]
+    pick_by_tick(tick, icons)
 }
 
 fn random_icon(icons: &'static [char]) -> char {
@@ -205,29 +212,36 @@ pub struct RepoPickerState {
     pub can_cancel: bool,
 }
 
-/// The 16 named `ratatui::style::Color` variants, in the same order
-/// `ratatui::style::Color` defines them, used to cycle the app's accent
-/// color. Never add an RGB entry here — named ANSI colors only, so the
-/// picker inherits the user's terminal theme (AGENTS.md durable design
-/// decision).
-pub(crate) const ALL_NAMED_COLORS: [&str; 16] = [
-    "Black",
-    "Red",
-    "Green",
-    "Yellow",
-    "Blue",
-    "Magenta",
-    "Cyan",
-    "Gray",
-    "DarkGray",
-    "LightRed",
-    "LightGreen",
-    "LightYellow",
-    "LightBlue",
-    "LightMagenta",
-    "LightCyan",
-    "White",
+/// Canonical table of the 16 named `ratatui::style::Color` variants, in the
+/// same order `ratatui::style::Color` defines them, pairing each name with
+/// its `Color` so the settings-row cycle (`settings_toggle`, below) and the
+/// renderer (`ui::color_from_name`) share one source of truth rather than
+/// maintaining a name list and a name-to-`Color` match independently. Never
+/// add an RGB entry here — named ANSI colors only, so the picker inherits
+/// the user's terminal theme (AGENTS.md durable design decision).
+pub(crate) const NAMED_COLORS: [(&str, Color); 16] = [
+    ("Black", Color::Black),
+    ("Red", Color::Red),
+    ("Green", Color::Green),
+    ("Yellow", Color::Yellow),
+    ("Blue", Color::Blue),
+    ("Magenta", Color::Magenta),
+    ("Cyan", Color::Cyan),
+    ("Gray", Color::Gray),
+    ("DarkGray", Color::DarkGray),
+    ("LightRed", Color::LightRed),
+    ("LightGreen", Color::LightGreen),
+    ("LightYellow", Color::LightYellow),
+    ("LightBlue", Color::LightBlue),
+    ("LightMagenta", Color::LightMagenta),
+    ("LightCyan", Color::LightCyan),
+    ("White", Color::White),
 ];
+
+/// The accent color name new `AppState`/`Config` values start with, and
+/// `ui::color_from_name`'s fallback for a value that isn't in
+/// `NAMED_COLORS` (e.g. a hand-edited, corrupt `config.toml`).
+pub(crate) const DEFAULT_ACCENT_COLOR: &str = "Blue";
 
 /// State for the label-filter picker (issue #74). `labels` holds every
 /// repo label in the same order as `AppState.all_labels` (matching the
@@ -420,7 +434,7 @@ impl AppState {
             show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
-            accent_color: "Blue".to_string(),
+            accent_color: DEFAULT_ACCENT_COLOR.to_string(),
         }
     }
 
@@ -496,12 +510,11 @@ impl AppState {
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
             SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
             SettingsRow::AccentColor => {
-                let idx = ALL_NAMED_COLORS
+                let idx = NAMED_COLORS
                     .iter()
-                    .position(|&name| name == self.accent_color)
+                    .position(|&(name, _)| name == self.accent_color)
                     .unwrap_or(0);
-                self.accent_color =
-                    ALL_NAMED_COLORS[(idx + 1) % ALL_NAMED_COLORS.len()].to_string();
+                self.accent_color = NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
             }
         }
     }
