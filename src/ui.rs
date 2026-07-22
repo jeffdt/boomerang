@@ -37,6 +37,7 @@ pub enum ListInput {
     TogglePane,
     EnterSearch,
     CycleStateFilter,
+    LabelFilter,
     BigCreate,
     Edit,
     RequestClose,
@@ -61,6 +62,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
+        KeyCode::Char('l') => ListInput::LabelFilter,
         KeyCode::Char('c') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
@@ -224,6 +226,25 @@ pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
             RepoPickerInput::Char(c)
         }
         _ => RepoPickerInput::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelPickerInput {
+    Up,
+    Down,
+    Select,
+    Cancel,
+    None,
+}
+
+pub fn map_label_picker_key(key: KeyEvent) -> LabelPickerInput {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => LabelPickerInput::Down,
+        KeyCode::Char('k') | KeyCode::Up => LabelPickerInput::Up,
+        KeyCode::Enter => LabelPickerInput::Select,
+        KeyCode::Char('q') | KeyCode::Esc => LabelPickerInput::Cancel,
+        _ => LabelPickerInput::None,
     }
 }
 
@@ -946,6 +967,23 @@ mod tests {
             map_list_key(key(KeyCode::Char('y'))),
             ListInput::CopyReference
         );
+    }
+
+    #[test]
+    fn maps_lowercase_l_to_label_filter() {
+        assert_eq!(map_list_key(key(KeyCode::Char('l'))), ListInput::LabelFilter);
+    }
+
+    #[test]
+    fn label_picker_key_mapping() {
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('j'))), LabelPickerInput::Down);
+        assert_eq!(map_label_picker_key(key(KeyCode::Down)), LabelPickerInput::Down);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('k'))), LabelPickerInput::Up);
+        assert_eq!(map_label_picker_key(key(KeyCode::Up)), LabelPickerInput::Up);
+        assert_eq!(map_label_picker_key(key(KeyCode::Enter)), LabelPickerInput::Select);
+        assert_eq!(map_label_picker_key(key(KeyCode::Esc)), LabelPickerInput::Cancel);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('q'))), LabelPickerInput::Cancel);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('z'))), LabelPickerInput::None);
     }
 
     #[test]

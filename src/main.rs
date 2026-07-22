@@ -711,6 +711,7 @@ fn event_loop<S: IssueSource>(
                         state.cycle_state_filter();
                         start_refresh(state, &mut refresh_rx, (*source).clone());
                     }
+                    ListInput::LabelFilter => {}
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
