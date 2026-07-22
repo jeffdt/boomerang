@@ -993,18 +993,16 @@ impl AppState {
         ))
     }
 
-    /// The list header split into its two parts: the state-filter prefix
-    /// (e.g. "Open issues", or "Open issues · label: bug" when a label
-    /// filter is active) and the known repo, if it has loaded. `None` for
-    /// the repo while it hasn't loaded yet (or failed to). Shared by
-    /// `ui::draw_list` and `loading::draw`, which show the same header
-    /// before and after the issue list itself has loaded.
-    pub fn issues_header_parts(&self) -> (String, Option<String>) {
-        let mut prefix = format!("{:?} issues", self.state_filter);
-        if let Some(name) = &self.label_filter {
-            prefix.push_str(&format!(" · label: {name}"));
-        }
-        (prefix, self.repo_name_with_owner.clone())
+    /// The list header split into its three parts: the state-filter prefix
+    /// (e.g. "Open issues"), the active label filter's name if any (kept
+    /// separate so `ui::draw_list` can render it in that label's own
+    /// color), and the known repo, if it has loaded (`None` while it hasn't
+    /// loaded yet, or failed to). Shared by `ui::draw_list` and
+    /// `loading::draw`, which show the same header before and after the
+    /// issue list itself has loaded.
+    pub fn issues_header_parts(&self) -> (String, Option<String>, Option<String>) {
+        let prefix = format!("{:?} issues", self.state_filter);
+        (prefix, self.label_filter.clone(), self.repo_name_with_owner.clone())
     }
 
     pub fn clear_expired_status(&mut self) {
@@ -1396,15 +1394,17 @@ mod tests {
     fn issues_header_parts_includes_active_label_filter() {
         let mut state = AppState::new(vec![], vec![]);
         state.label_filter = Some("bug".to_string());
-        let (prefix, _) = state.issues_header_parts();
-        assert_eq!(prefix, "Open issues · label: bug");
+        let (prefix, label, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+        assert_eq!(label, Some("bug".to_string()));
     }
 
     #[test]
     fn issues_header_parts_omits_label_suffix_when_not_filtering() {
         let state = AppState::new(vec![], vec![]);
-        let (prefix, _) = state.issues_header_parts();
+        let (prefix, label, _) = state.issues_header_parts();
         assert_eq!(prefix, "Open issues");
+        assert_eq!(label, None);
     }
 
     #[test]
@@ -1449,12 +1449,12 @@ mod tests {
     #[test]
     fn issues_header_parts_splits_prefix_and_repo() {
         let mut state = AppState::new(vec![], vec![]);
-        let (prefix, repo) = state.issues_header_parts();
+        let (prefix, _, repo) = state.issues_header_parts();
         assert_eq!(prefix, "Open issues");
         assert_eq!(repo, None);
 
         state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
-        let (prefix, repo) = state.issues_header_parts();
+        let (prefix, _, repo) = state.issues_header_parts();
         assert_eq!(prefix, "Open issues");
         assert_eq!(repo, Some("jeffdt/boomerang".to_string()));
     }

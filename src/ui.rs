@@ -350,8 +350,15 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let (prefix, repo) = state.issues_header_parts();
+    let (prefix, label, repo) = state.issues_header_parts();
     let mut spans = vec![Span::styled(prefix, Style::default().fg(DIM))];
+    if let Some(name) = &label {
+        spans.push(Span::styled(" · label: ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            name.clone(),
+            label_style(label_palette_color(&state.all_labels, name)),
+        ));
+    }
     if let Some(repo) = repo {
         spans.push(Span::styled(" in ", Style::default().fg(DIM)));
         spans.push(Span::styled(
@@ -1666,6 +1673,29 @@ mod tests {
         assert!(
             !prefix_style.add_modifier.contains(Modifier::ITALIC),
             "the prefix should not be italic"
+        );
+    }
+
+    #[test]
+    fn active_label_filter_in_header_uses_that_labels_palette_color() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("docs".to_string());
+        let buf = render_buffer(&state);
+
+        let (lx, ly) = find_in_buffer(&buf, "docs").expect("label name should render in header");
+        let label_style = buf[(lx, ly)].style();
+        assert_eq!(
+            label_style.fg,
+            Some(label_palette_color(&state.all_labels, "docs")),
+            "header label text should match that label's palette color"
+        );
+
+        let (px, py) = find_in_buffer(&buf, "Open issues").expect("prefix should render");
+        let prefix_style = buf[(px, py)].style();
+        assert_eq!(
+            prefix_style.fg,
+            Some(Color::DarkGray),
+            "the state-filter prefix should stay DIM, not take the label's color"
         );
     }
 
