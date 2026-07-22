@@ -32,7 +32,48 @@ pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 const FLASH_GREEN_DURATION: Duration = Duration::from_millis(2000);
 const FLASH_GRAY_DURATION: Duration = Duration::from_millis(1600);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
-const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+const ACTIVITY_SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+
+const SPINNER_BRAILLE: &[char] = &['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣽', '⣻'];
+const SPINNER_SQUARE: &[char] = &['◰', '◳', '◲', '◱'];
+const SPINNER_BOUNCE: &[char] = &['⠉', '⠒', '⣀', '⠒'];
+const SPINNER_PULSE: &[char] = &['⣀', '⣤', '⣶', '⣾', '⣿', '⣾', '⣶', '⣤'];
+const SPINNER_MOON: &[char] = &['◓', '◑', '◒', '◐'];
+const SPINNER_CLOCK: &[char] = &['◷', '◶', '◵', '◴'];
+const SPINNER_DICE: &[char] = &['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+const SPINNER_CIRCLE_FILL: &[char] = &['○', '◔', '◑', '◕', '●'];
+const SPINNER_PISTON: &[char] = &['▁', '▃', '▅', '▇', '█', '▇', '▅', '▃'];
+const SPINNER_STAR: &[char] = &['✶', '✷', '✸', '✹'];
+const SPINNER_RINGS: &[char] = &['○', '◎', '●', '◎'];
+const SPINNER_MUSIC: &[char] = &['♩', '♪', '♫', '♬'];
+
+const SPINNER_PRESETS: [&[char]; 12] = [
+    SPINNER_BRAILLE,
+    SPINNER_SQUARE,
+    SPINNER_BOUNCE,
+    SPINNER_PULSE,
+    SPINNER_MOON,
+    SPINNER_CLOCK,
+    SPINNER_DICE,
+    SPINNER_CIRCLE_FILL,
+    SPINNER_PISTON,
+    SPINNER_STAR,
+    SPINNER_RINGS,
+    SPINNER_MUSIC,
+];
+
+/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
+/// operation, so repeated actions (create, edit, close, refresh) don't
+/// always show the same glyph. Mirrors `LoadingAnimation::rotated`'s
+/// no-dependency, `SystemTime`-seeded approach below rather than pulling in
+/// a `rand` crate.
+fn random_spinner_frames() -> &'static [char] {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as usize)
+        .unwrap_or(0);
+    SPINNER_PRESETS[nanos % SPINNER_PRESETS.len()]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -47,6 +88,7 @@ pub enum PendingOperation {
 pub struct PendingState {
     pub operation: PendingOperation,
     pub started_at: Instant,
+    pub frames: &'static [char],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -808,7 +850,7 @@ impl AppState {
         let loading = self.loading.as_ref()?;
         Some(format!(
             "{} Loading {}...",
-            spinner_frame(&loading.started_at),
+            spinner_frame(&loading.started_at, &ACTIVITY_SPINNER_FRAMES),
             loading.what
         ))
     }
@@ -817,6 +859,7 @@ impl AppState {
         self.pending = Some(PendingState {
             operation,
             started_at: Instant::now(),
+            frames: random_spinner_frames(),
         });
     }
 
@@ -838,7 +881,7 @@ impl AppState {
         };
         Some(format!(
             "{} {action}...",
-            spinner_frame(&pending.started_at)
+            spinner_frame(&pending.started_at, pending.frames)
         ))
     }
 
@@ -892,11 +935,11 @@ impl AppState {
     }
 }
 
-fn spinner_frame(started_at: &Instant) -> &'static str {
+fn spinner_frame(started_at: &Instant, frames: &'static [char]) -> char {
     let frame_index = ((started_at.elapsed().as_millis() / ACTIVITY_SPINNER_INTERVAL.as_millis())
         as usize)
-        % ACTIVITY_SPINNER_FRAMES.len();
-    ACTIVITY_SPINNER_FRAMES[frame_index]
+        % frames.len();
+    frames[frame_index]
 }
 
 #[cfg(test)]
@@ -2190,5 +2233,43 @@ mod tests {
             should_quit,
             "with nothing to fall back to, cancel should tell the caller to quit"
         );
+    }
+
+    #[test]
+    fn random_spinner_frames_always_returns_a_known_preset() {
+        for _ in 0..50 {
+            let frames = random_spinner_frames();
+            assert!(
+                SPINNER_PRESETS.contains(&frames),
+                "random_spinner_frames returned a slice not in SPINNER_PRESETS"
+            );
+        }
+    }
+
+    #[test]
+    fn begin_pending_assigns_a_known_preset_to_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        let frames = state.pending.as_ref().unwrap().frames;
+        assert!(SPINNER_PRESETS.contains(&frames));
+    }
+
+    #[test]
+    fn pending_message_first_glyph_is_a_char_from_the_assigned_preset() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let frames = state.pending.as_ref().unwrap().frames;
+        let message = state.pending_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(frames.contains(&first_char));
+    }
+
+    #[test]
+    fn loading_message_glyph_still_uses_fixed_ascii_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_loading("issues");
+        let message = state.loading_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
     }
 }
