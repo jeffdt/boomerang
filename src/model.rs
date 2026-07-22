@@ -62,27 +62,49 @@ const SPINNER_PRESETS: [&[char]; 12] = [
     SPINNER_MUSIC,
 ];
 
-/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
-/// operation, so repeated actions (create, edit, close, refresh) don't
-/// always show the same glyph. Mirrors `LoadingAnimation::rotated`'s
-/// no-dependency, `SystemTime`-seeded approach below rather than pulling in
-/// a `rand` crate — deliberately using `.as_millis()` rather than
-/// `.as_nanos()`: on clocks whose real resolution is coarser than a
-/// nanosecond (e.g. microsecond-granular, where every sample's nanos are a
-/// multiple of 1000), raw nanos mod `SPINNER_PRESETS.len()` collapses onto
-/// whichever residues share a factor with 1000, reaching only a handful of
-/// the 12 presets no matter how many times it's called. Millis don't have
-/// that padding, so the modulo spreads across the full range.
-fn random_spinner_frames() -> &'static [char] {
-    let millis = SystemTime::now()
+/// Millisecond-resolution clock tick, shared by every random-glyph picker
+/// below (spinner presets and static status icons alike). Deliberately
+/// `.as_millis()` rather than `.as_nanos()`: on clocks whose real
+/// resolution is coarser than a nanosecond (e.g. microsecond-granular,
+/// where every sample's nanos are a multiple of 1000), raw nanos mod a
+/// preset count collapses onto whichever residues share a factor with
+/// 1000, reaching only a handful of presets no matter how many times it's
+/// called. Millis don't have that padding, so the modulo spreads across
+/// the full range.
+fn millis_tick() -> usize {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as usize)
-        .unwrap_or(0);
-    spinner_preset_for_tick(millis)
+        .unwrap_or(0)
+}
+
+/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
+/// operation, so repeated actions (create, edit, close, refresh) don't
+/// always show the same glyph.
+fn random_spinner_frames() -> &'static [char] {
+    spinner_preset_for_tick(millis_tick())
 }
 
 fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
     SPINNER_PRESETS[tick % SPINNER_PRESETS.len()]
+}
+
+/// Candidate glyphs for a freshly set success status, e.g. "loaded 12
+/// issues in 350ms". One is picked at random each time `set_status_success`
+/// is called; unlike the pending spinner these are static (no animation),
+/// so the pick happens once, at set time, and is baked into the message.
+pub(crate) const SUCCESS_ICONS: [char; 6] = ['✓', '✔', '★', '✦', '✧', '✵'];
+
+/// Candidate glyphs for a freshly set error status, e.g. "gh error:
+/// network unreachable". Picked the same way as `SUCCESS_ICONS`.
+pub(crate) const ERROR_ICONS: [char; 5] = ['✗', '✘', '⚠', '☒', '⊗'];
+
+fn icon_for_tick(tick: usize, icons: &'static [char]) -> char {
+    icons[tick % icons.len()]
+}
+
+fn random_icon(icons: &'static [char]) -> char {
+    icon_for_tick(millis_tick(), icons)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -868,11 +890,21 @@ impl AppState {
     }
 
     pub fn set_status_success(&mut self, message: String) {
-        self.status = Some((message, StatusKind::Success, Instant::now()));
+        let icon = random_icon(&SUCCESS_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Success,
+            Instant::now(),
+        ));
     }
 
     pub fn set_status_error(&mut self, message: String) {
-        self.status = Some((message, StatusKind::Error, Instant::now()));
+        let icon = random_icon(&ERROR_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Error,
+            Instant::now(),
+        ));
     }
 
     pub fn begin_loading(&mut self, what: &'static str) {
@@ -2583,5 +2615,54 @@ mod tests {
         let message = state.loading_message().unwrap();
         let first_char = message.chars().next().unwrap();
         assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_success_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&SUCCESS_ICONS);
+            assert!(SUCCESS_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_error_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&ERROR_ICONS);
+            assert!(ERROR_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn icon_for_tick_reaches_every_success_icon_across_a_realistic_tick_range() {
+        let seen: std::collections::HashSet<char> = (0..SUCCESS_ICONS.len())
+            .map(|tick| icon_for_tick(tick, &SUCCESS_ICONS))
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SUCCESS_ICONS.len(),
+            "expected every icon to be reachable across one full tick cycle, got {} distinct ones",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn set_status_success_prefixes_message_with_a_known_success_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("created issue in 1s"));
+        let icon = message.chars().next().unwrap();
+        assert!(SUCCESS_ICONS.contains(&icon));
+    }
+
+    #[test]
+    fn set_status_error_prefixes_message_with_a_known_error_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("gh error: boom"));
+        let icon = message.chars().next().unwrap();
+        assert!(ERROR_ICONS.contains(&icon));
     }
 }
