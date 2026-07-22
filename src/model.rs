@@ -2391,4 +2391,15 @@ mod tests {
         assert_eq!(state.label_filter, Some("bug".to_string()));
         assert_eq!(state.mode, Mode::List);
     }
+
+    #[test]
+    fn label_picker_with_no_repo_labels_only_shows_all_labels_row() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_label_picker();
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
 }
