@@ -78,7 +78,11 @@ fn random_spinner_frames() -> &'static [char] {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as usize)
         .unwrap_or(0);
-    SPINNER_PRESETS[millis % SPINNER_PRESETS.len()]
+    spinner_preset_for_tick(millis)
+}
+
+fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
+    SPINNER_PRESETS[tick % SPINNER_PRESETS.len()]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2384,23 +2388,24 @@ mod tests {
     }
 
     #[test]
-    fn random_spinner_frames_reaches_more_than_a_third_of_the_presets() {
+    fn spinner_preset_for_tick_reaches_every_preset_across_a_realistic_tick_range() {
         // Regression test: seeding the pick off raw `.as_nanos()` on a clock
-        // whose actual resolution is coarser than a nanosecond (e.g. this
-        // machine's microsecond-granular clock, where every sample's nanos
-        // are a multiple of 1000) confines the result to whichever residues
-        // share a factor with `1000 % SPINNER_PRESETS.len()` — only 3 of the
-        // 12 presets, no matter how many times or how far apart it's called.
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..60 {
-            seen.insert(random_spinner_frames() as *const [char]);
-            std::thread::sleep(Duration::from_millis(3));
-        }
-        assert!(
-            seen.len() > SPINNER_PRESETS.len() / 3,
-            "expected more than a third of the {} presets to appear across 60 spaced-out \
-             samples, got only {} distinct ones — the seed is confined to a small subset",
+        // whose actual resolution is coarser than a nanosecond (e.g. a
+        // microsecond-granular clock, where every sample's nanos are a
+        // multiple of 1000) confined the result to whichever residues share
+        // a factor with `1000 % SPINNER_PRESETS.len()` — only 3 of the 12
+        // presets, no matter how many times or how far apart it was called.
+        // Exercised here as a pure function over synthetic tick values
+        // (a plain, deterministic range) instead of real `SystemTime::now()`
+        // calls plus `thread::sleep` — same property, no reliance on real
+        // wall-clock time or its resolution, so nothing to be flaky about.
+        let seen: std::collections::HashSet<_> = (0..SPINNER_PRESETS.len())
+            .map(|tick| spinner_preset_for_tick(tick) as *const [char])
+            .collect();
+        assert_eq!(
+            seen.len(),
             SPINNER_PRESETS.len(),
+            "expected every preset to be reachable across one full tick cycle, got {} distinct ones",
             seen.len()
         );
     }
