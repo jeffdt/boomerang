@@ -179,6 +179,7 @@ pub enum Mode {
     ConfirmDiscard(Box<Mode>),
     Settings,
     RepoPicker(Box<RepoPickerState>),
+    LabelPicker(Box<LabelPickerState>),
 }
 
 /// State for the repo picker (issue #20): type `owner/repo` or a github.com
@@ -227,6 +228,22 @@ pub(crate) const ALL_NAMED_COLORS: [&str; 16] = [
     "LightCyan",
     "White",
 ];
+
+/// State for the label-filter picker (issue #74). `labels` holds every
+/// repo label in the same order as `AppState.all_labels` (matching the
+/// edit form's `all_label_names` convention). `cursor` is 0 for the "All
+/// labels" pseudo-row, or `n` for `labels[n - 1]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelPickerState {
+    pub labels: Vec<String>,
+    pub cursor: usize,
+}
+
+impl LabelPickerState {
+    fn selected_label(&self) -> Option<&str> {
+        (self.cursor > 0).then(|| self.labels[self.cursor - 1].as_str())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
@@ -360,6 +377,7 @@ pub struct AppState {
     pub issues: Vec<Issue>,
     pub all_labels: Vec<Label>,
     pub state_filter: StateFilter,
+    pub label_filter: Option<String>,
     pub mode: Mode,
     pub cursor: usize,
     pub search_query: String,
@@ -385,6 +403,7 @@ impl AppState {
             issues,
             all_labels,
             state_filter: StateFilter::Open,
+            label_filter: None,
             mode: Mode::List,
             cursor: 0,
             search_query: String::new(),
@@ -422,7 +441,15 @@ impl AppState {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
         };
-        indices.retain(|&i| Self::matches_state_filter(&self.issues[i], self.state_filter));
+        indices.retain(|&i| {
+            let issue = &self.issues[i];
+            let passes_state = Self::matches_state_filter(issue, self.state_filter);
+            let passes_label = self
+                .label_filter
+                .as_ref()
+                .is_none_or(|name| issue.labels.iter().any(|l| &l.name == name));
+            passes_state && passes_label
+        });
         indices
     }
 
@@ -570,6 +597,38 @@ impl AppState {
         } else {
             true
         }
+    }
+
+    pub fn enter_label_picker(&mut self) {
+        let labels: Vec<String> = self.all_label_names();
+        let cursor = match &self.label_filter {
+            Some(active) => labels.iter().position(|name| name == active).map_or(0, |i| i + 1),
+            None => 0,
+        };
+        self.mode = Mode::LabelPicker(Box::new(LabelPickerState { labels, cursor }));
+    }
+
+    pub fn label_picker_move(&mut self, delta: isize) {
+        if let Mode::LabelPicker(picker) = &mut self.mode {
+            let len = picker.labels.len() + 1; // +1 for the "All labels" row
+            let current = picker.cursor as isize;
+            picker.cursor = (current + delta).rem_euclid(len as isize) as usize;
+        }
+    }
+
+    pub fn label_picker_select(&mut self) {
+        let Mode::LabelPicker(picker) = &self.mode else {
+            return;
+        };
+        let selected = picker.selected_label().map(str::to_string);
+        // Reselecting the row already active as the filter (or "All labels"
+        // when there's no selection) clears it instead of leaving it a no-op.
+        self.label_filter = if selected == self.label_filter { None } else { selected };
+        self.mode = Mode::List;
+    }
+
+    pub fn label_picker_cancel(&mut self) {
+        self.mode = Mode::List;
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
@@ -746,8 +805,12 @@ impl AppState {
         }
     }
 
+    fn all_label_names(&self) -> Vec<String> {
+        self.all_labels.iter().map(|l| l.name.clone()).collect()
+    }
+
     fn new_form_state(&self, editing: Option<u32>) -> FormState {
-        let all_label_names: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let all_label_names: Vec<String> = self.all_label_names();
         let (title, body, selected_labels) = match editing.and_then(|n| self.find_issue(n)) {
             Some(issue) => (
                 issue.title.clone(),
@@ -1000,12 +1063,16 @@ impl AppState {
     }
 
     /// The list header split into its two parts: the state-filter prefix
-    /// (e.g. "Open issues") and the known repo, if it has loaded. `None` for
+    /// (e.g. "Open issues", or "Open issues · label: bug" when a label
+    /// filter is active) and the known repo, if it has loaded. `None` for
     /// the repo while it hasn't loaded yet (or failed to). Shared by
     /// `ui::draw_list` and `loading::draw`, which show the same header
     /// before and after the issue list itself has loaded.
     pub fn issues_header_parts(&self) -> (String, Option<String>) {
-        let prefix = format!("{:?} issues", self.state_filter);
+        let mut prefix = format!("{:?} issues", self.state_filter);
+        if let Some(name) = &self.label_filter {
+            prefix.push_str(&format!(" · label: {name}"));
+        }
         (prefix, self.repo_name_with_owner.clone())
     }
 
@@ -1098,6 +1165,13 @@ mod tests {
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn labeled(number: u32, title: &str, label_name: &str) -> Issue {
+        Issue {
+            labels: vec![Label { name: label_name.into(), color: "ff0000".into() }],
+            ..issue(number, title)
         }
     }
 
@@ -1312,6 +1386,14 @@ mod tests {
     }
 
     #[test]
+    fn visible_indices_filters_by_active_label() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
     fn open_filter_excludes_closed_issues() {
         let open_issue = issue(1, "Open one");
         let closed_issue = Issue {
@@ -1320,6 +1402,13 @@ mod tests {
         };
         let state = AppState::new(vec![open_issue, closed_issue], vec![]);
         assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn visible_indices_with_no_label_filter_shows_everything() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let state = AppState::new(issues, vec![]);
+        assert_eq!(state.visible_indices(), vec![0, 1]);
     }
 
     #[test]
@@ -1347,6 +1436,21 @@ mod tests {
     }
 
     #[test]
+    fn visible_indices_combines_label_filter_with_triage_state_filter() {
+        let issues = vec![
+            labeled(1, "triage candidate with bug label", "bug"),
+            issue(2, "true triage candidate, no bug label"),
+        ];
+        let mut state = AppState::new(issues, vec![]);
+        state.state_filter = StateFilter::Triage;
+        state.label_filter = Some("bug".to_string());
+        // Issue 1 has the bug label but isn't empty-labels, so Triage excludes
+        // it regardless of the label filter; issue 2 passes Triage but doesn't
+        // carry the bug label. Combined, nothing should be visible.
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
     fn triage_filter_excludes_closed_issues_even_without_labels_or_body() {
         let untouched_but_closed = Issue {
             state: IssueState::Closed,
@@ -1355,6 +1459,39 @@ mod tests {
         let mut state = AppState::new(vec![untouched_but_closed], vec![]);
         state.state_filter = StateFilter::Triage;
         assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn issues_header_parts_includes_active_label_filter() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        let (prefix, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues · label: bug");
+    }
+
+    #[test]
+    fn issues_header_parts_omits_label_suffix_when_not_filtering() {
+        let state = AppState::new(vec![], vec![]);
+        let (prefix, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+    }
+
+    #[test]
+    fn label_filter_survives_state_filter_cycling() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.cycle_state_filter();
+        state.cycle_state_filter();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+    }
+
+    #[test]
+    fn visible_indices_combines_label_filter_with_search() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.enter_search();
+        assert_eq!(state.visible_indices(), vec![0]);
     }
 
     #[test]
@@ -1370,6 +1507,12 @@ mod tests {
             state.search_push(c);
         }
         assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn new_app_state_always_starts_with_no_label_filter() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.label_filter, None);
     }
 
     #[test]
@@ -2619,6 +2762,101 @@ mod tests {
             should_quit,
             "with nothing to fall back to, cancel should tell the caller to quit"
         );
+    }
+
+    fn label_picker_state(state: &AppState) -> &LabelPickerState {
+        match &state.mode {
+            Mode::LabelPicker(picker) => picker,
+            other => panic!("expected LabelPicker mode, got {other:?}"),
+        }
+    }
+
+    fn labels_fixture() -> Vec<Label> {
+        vec![
+            Label { name: "bug".into(), color: "d73a4a".into() },
+            Label { name: "docs".into(), color: "0075ca".into() },
+        ]
+    }
+
+    #[test]
+    fn enter_label_picker_lists_all_labels_with_cursor_on_all_labels_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        let picker = label_picker_state(&state);
+        assert_eq!(picker.labels, vec!["bug".to_string(), "docs".to_string()]);
+        assert_eq!(picker.cursor, 0);
+    }
+
+    #[test]
+    fn enter_label_picker_starts_cursor_on_active_label_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("docs".to_string());
+        state.enter_label_picker();
+        // row 0 = "All labels", row 1 = "bug", row 2 = "docs"
+        assert_eq!(label_picker_state(&state).cursor, 2);
+    }
+
+    #[test]
+    fn label_picker_move_wraps_across_all_rows() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(-1);
+        // 3 total rows (All labels, bug, docs); wrapping back from 0 lands on 2
+        assert_eq!(label_picker_state(&state).cursor, 2);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+    }
+
+    #[test]
+    fn label_picker_select_on_a_label_row_sets_label_filter_and_returns_to_list() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(1); // cursor -> "bug"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn label_picker_select_on_all_labels_row_clears_label_filter() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(-1); // cursor from "bug" row up to "All labels"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_select_on_currently_active_label_toggles_it_off() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        // cursor already starts on the active "bug" row
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_cancel_leaves_label_filter_untouched() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(1);
+        state.label_picker_cancel();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn label_picker_with_no_repo_labels_only_shows_all_labels_row() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_label_picker();
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
     }
 
     #[test]
