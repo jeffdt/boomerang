@@ -2714,6 +2714,19 @@ mod tests {
     }
 
     #[test]
+    fn draw_label_picker_checkmark_follows_active_label_not_cursor() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(1); // cursor away from "bug" onto "docs"
+        let rendered = render_to_string(&state);
+        let bug_line = rendered.lines().find(|l| l.contains("bug")).unwrap();
+        assert!(bug_line.contains('\u{2713}'));
+        let docs_line = rendered.lines().find(|l| l.contains("docs")).unwrap();
+        assert!(!docs_line.contains('\u{2713}'));
+    }
+
+    #[test]
     fn list_shortcuts_hint_mentions_label_filter_key() {
         let mut state = AppState::new(vec![], vec![]);
         state.toggle_shortcuts();
