@@ -1359,8 +1359,34 @@ mod tests {
         assert!(found_corner, "expected to find a rounded border corner");
     }
 
+    #[test]
+    fn color_from_name_covers_all_named_colors_without_collapsing_to_the_fallback() {
+        use std::collections::HashSet;
+
+        let resolved: HashSet<Color> = ALL_NAMED_COLORS
+            .iter()
+            .map(|name| color_from_name(name))
+            .collect();
+        assert_eq!(
+            resolved.len(),
+            ALL_NAMED_COLORS.len(),
+            "expected every name in ALL_NAMED_COLORS to map to a distinct Color, got {} distinct values",
+            resolved.len()
+        );
+
+        for name in ALL_NAMED_COLORS {
+            if name != "Blue" {
+                assert_ne!(
+                    color_from_name(name),
+                    Color::Blue,
+                    "{name} should resolve to its own color, not silently collapse to the Blue fallback"
+                );
+            }
+        }
+    }
+
     use crate::gh::StateFilter;
-    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
+    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation, ALL_NAMED_COLORS};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::time::Instant;
