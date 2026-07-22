@@ -62,27 +62,56 @@ const SPINNER_PRESETS: [&[char]; 12] = [
     SPINNER_MUSIC,
 ];
 
-/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
-/// operation, so repeated actions (create, edit, close, refresh) don't
-/// always show the same glyph. Mirrors `LoadingAnimation::rotated`'s
-/// no-dependency, `SystemTime`-seeded approach below rather than pulling in
-/// a `rand` crate — deliberately using `.as_millis()` rather than
-/// `.as_nanos()`: on clocks whose real resolution is coarser than a
-/// nanosecond (e.g. microsecond-granular, where every sample's nanos are a
-/// multiple of 1000), raw nanos mod `SPINNER_PRESETS.len()` collapses onto
-/// whichever residues share a factor with 1000, reaching only a handful of
-/// the 12 presets no matter how many times it's called. Millis don't have
-/// that padding, so the modulo spreads across the full range.
-fn random_spinner_frames() -> &'static [char] {
-    let millis = SystemTime::now()
+/// Millisecond-resolution clock tick, shared by every random-glyph picker
+/// below (spinner presets and static status icons alike). Deliberately
+/// `.as_millis()` rather than `.as_nanos()`: on clocks whose real
+/// resolution is coarser than a nanosecond (e.g. microsecond-granular,
+/// where every sample's nanos are a multiple of 1000), raw nanos mod a
+/// preset count collapses onto whichever residues share a factor with
+/// 1000, reaching only a handful of presets no matter how many times it's
+/// called. Millis don't have that padding, so the modulo spreads across
+/// the full range.
+fn millis_tick() -> usize {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as usize)
-        .unwrap_or(0);
-    spinner_preset_for_tick(millis)
+        .unwrap_or(0)
+}
+
+/// Shared indexing logic behind every tick-seeded picker below: spinner
+/// presets and static status icons alike just index a fixed set of options
+/// by `tick % options.len()`.
+fn pick_by_tick<T: Copy>(tick: usize, options: &[T]) -> T {
+    options[tick % options.len()]
+}
+
+/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
+/// operation, so repeated actions (create, edit, close, refresh) don't
+/// always show the same glyph.
+fn random_spinner_frames() -> &'static [char] {
+    spinner_preset_for_tick(millis_tick())
 }
 
 fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
-    SPINNER_PRESETS[tick % SPINNER_PRESETS.len()]
+    pick_by_tick(tick, &SPINNER_PRESETS)
+}
+
+/// Candidate glyphs for a freshly set success status, e.g. "loaded 12
+/// issues in 350ms". One is picked at random each time `set_status_success`
+/// is called; unlike the pending spinner these are static (no animation),
+/// so the pick happens once, at set time, and is baked into the message.
+pub(crate) const SUCCESS_ICONS: [char; 6] = ['✓', '✔', '★', '✦', '✧', '✵'];
+
+/// Candidate glyphs for a freshly set error status, e.g. "gh error:
+/// network unreachable". Picked the same way as `SUCCESS_ICONS`.
+pub(crate) const ERROR_ICONS: [char; 5] = ['✗', '✘', '⚠', '☒', '⊗'];
+
+fn icon_for_tick(tick: usize, icons: &'static [char]) -> char {
+    pick_by_tick(tick, icons)
+}
+
+fn random_icon(icons: &'static [char]) -> char {
+    icon_for_tick(millis_tick(), icons)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +212,37 @@ pub struct RepoPickerState {
     pub can_cancel: bool,
 }
 
+/// Canonical table of the 16 named `ratatui::style::Color` variants, in the
+/// same order `ratatui::style::Color` defines them, pairing each name with
+/// its `Color` so the settings-row cycle (`settings_toggle`, below) and the
+/// renderer (`ui::color_from_name`) share one source of truth rather than
+/// maintaining a name list and a name-to-`Color` match independently. Never
+/// add an RGB entry here — named ANSI colors only, so the picker inherits
+/// the user's terminal theme (AGENTS.md durable design decision).
+pub(crate) const NAMED_COLORS: [(&str, Color); 16] = [
+    ("Black", Color::Black),
+    ("Red", Color::Red),
+    ("Green", Color::Green),
+    ("Yellow", Color::Yellow),
+    ("Blue", Color::Blue),
+    ("Magenta", Color::Magenta),
+    ("Cyan", Color::Cyan),
+    ("Gray", Color::Gray),
+    ("DarkGray", Color::DarkGray),
+    ("LightRed", Color::LightRed),
+    ("LightGreen", Color::LightGreen),
+    ("LightYellow", Color::LightYellow),
+    ("LightBlue", Color::LightBlue),
+    ("LightMagenta", Color::LightMagenta),
+    ("LightCyan", Color::LightCyan),
+    ("White", Color::White),
+];
+
+/// The accent color name new `AppState`/`Config` values start with, and
+/// `ui::color_from_name`'s fallback for a value that isn't in
+/// `NAMED_COLORS` (e.g. a hand-edited, corrupt `config.toml`).
+pub(crate) const DEFAULT_ACCENT_COLOR: &str = "Blue";
+
 /// State for the label-filter picker (issue #74). `labels` holds every
 /// repo label in the same order as `AppState.all_labels` (matching the
 /// edit form's `all_label_names` convention). `cursor` is 0 for the "All
@@ -204,13 +264,15 @@ pub enum SettingsRow {
     ExitOnCopyYank,
     ZebraStriping,
     ShortcutsOnDemand,
+    AccentColor,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 3] = [
+    pub const ALL: [SettingsRow; 4] = [
         SettingsRow::ExitOnCopyYank,
         SettingsRow::ZebraStriping,
         SettingsRow::ShortcutsOnDemand,
+        SettingsRow::AccentColor,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -218,6 +280,7 @@ impl SettingsRow {
             SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
             SettingsRow::ZebraStriping => "Zebra striping",
             SettingsRow::ShortcutsOnDemand => "Show shortcuts",
+            SettingsRow::AccentColor => "Accent color",
         }
     }
 }
@@ -345,6 +408,7 @@ pub struct AppState {
     pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
+    pub accent_color: String,
 }
 
 impl AppState {
@@ -370,6 +434,7 @@ impl AppState {
             show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
+            accent_color: DEFAULT_ACCENT_COLOR.to_string(),
         }
     }
 
@@ -444,6 +509,13 @@ impl AppState {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
             SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
+            SettingsRow::AccentColor => {
+                let idx = NAMED_COLORS
+                    .iter()
+                    .position(|&(name, _)| name == self.accent_color)
+                    .unwrap_or(0);
+                self.accent_color = NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
+            }
         }
     }
 
@@ -931,11 +1003,21 @@ impl AppState {
     }
 
     pub fn set_status_success(&mut self, message: String) {
-        self.status = Some((message, StatusKind::Success, Instant::now()));
+        let icon = random_icon(&SUCCESS_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Success,
+            Instant::now(),
+        ));
     }
 
     pub fn set_status_error(&mut self, message: String) {
-        self.status = Some((message, StatusKind::Error, Instant::now()));
+        let icon = random_icon(&ERROR_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Error,
+            Instant::now(),
+        ));
     }
 
     pub fn begin_loading(&mut self, what: &'static str) {
@@ -2450,7 +2532,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 2,
+            state.settings_cursor, 3,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -2503,6 +2585,34 @@ mod tests {
             !state.exit_on_copy_yank && state.zebra_striping,
             "toggling the third row must not affect the first two"
         );
+    }
+
+    #[test]
+    fn new_app_state_defaults_accent_color_to_blue() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.accent_color, "Blue");
+    }
+
+    #[test]
+    fn settings_toggle_cycles_accent_color_forward_and_wraps() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        assert_eq!(state.accent_color, "Blue");
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Magenta");
+        assert!(
+            !state.exit_on_copy_yank && state.zebra_striping && !state.shortcuts_on_demand,
+            "cycling the fourth row must not affect the other three"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_accent_color_wraps_from_white_back_to_black() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        state.accent_color = "White".to_string();
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Black");
     }
 
     #[test]
@@ -2821,5 +2931,54 @@ mod tests {
         let message = state.loading_message().unwrap();
         let first_char = message.chars().next().unwrap();
         assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_success_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&SUCCESS_ICONS);
+            assert!(SUCCESS_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_error_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&ERROR_ICONS);
+            assert!(ERROR_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn icon_for_tick_reaches_every_success_icon_across_a_realistic_tick_range() {
+        let seen: std::collections::HashSet<char> = (0..SUCCESS_ICONS.len())
+            .map(|tick| icon_for_tick(tick, &SUCCESS_ICONS))
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SUCCESS_ICONS.len(),
+            "expected every icon to be reachable across one full tick cycle, got {} distinct ones",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn set_status_success_prefixes_message_with_a_known_success_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("created issue in 1s"));
+        let icon = message.chars().next().unwrap();
+        assert!(SUCCESS_ICONS.contains(&icon));
+    }
+
+    #[test]
+    fn set_status_error_prefixes_message_with_a_known_error_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("gh error: boom"));
+        let icon = message.chars().next().unwrap();
+        assert!(ERROR_ICONS.contains(&icon));
     }
 }

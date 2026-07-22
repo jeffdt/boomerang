@@ -215,6 +215,7 @@ fn main() -> anyhow::Result<()> {
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
     state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
+    state.accent_color = loaded_config.accent_color.clone();
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
 }
@@ -827,6 +828,7 @@ fn event_loop<S: IssueSource>(
                         cfg.exit_on_copy_yank = state.exit_on_copy_yank;
                         cfg.zebra_striping = state.zebra_striping;
                         cfg.shortcuts_on_demand = state.shortcuts_on_demand;
+                        cfg.accent_color = state.accent_color.clone();
                         let _ = cfg.save_to(config_path);
                     }
                     SettingsInput::Exit => state.exit_settings(),
@@ -1312,8 +1314,29 @@ fn open_in_browser(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::IssueState;
+    use crate::model::{IssueState, ERROR_ICONS, SUCCESS_ICONS};
     use ratatui::style::Color;
+
+    fn assert_status_ends_with(state: &AppState, icons: &[char], suffix: &str) {
+        let message = state
+            .status
+            .as_ref()
+            .expect("status should be set")
+            .0
+            .clone();
+        assert!(
+            message.ends_with(suffix),
+            "expected status to end with {suffix:?}, got {message:?}"
+        );
+        let icon = message
+            .chars()
+            .next()
+            .expect("status message should have a leading icon");
+        assert!(
+            icons.contains(&icon),
+            "expected leading icon {icon:?} to be one of {icons:?}"
+        );
+    }
 
     fn issue(number: u32, title: &str) -> Issue {
         Issue {
@@ -1600,10 +1623,7 @@ mod tests {
         assert_eq!(state.issues, vec![loaded]);
         assert_eq!(state.all_labels, vec![label]);
         assert!(!state.is_loading());
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("loaded 1 issues in 350ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "loaded 1 issues in 350ms");
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1627,10 +1647,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![refreshed]);
         assert_eq!(state.all_labels, vec![label]);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("refreshed 1 issues in 200ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "refreshed 1 issues in 200ms");
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1641,10 +1658,7 @@ mod tests {
         finish_refresh(&mut state, Err(anyhow::anyhow!("network unreachable")));
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![issue(1, "Existing issue")]);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("gh error: network unreachable")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network unreachable");
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1703,10 +1717,7 @@ mod tests {
         let mut state = AppState::loading();
         finish_initial_load(&mut state, Err(anyhow::anyhow!("repo unavailable")));
         assert!(!state.is_loading());
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("gh error: repo unavailable")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: repo unavailable");
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1729,10 +1740,7 @@ mod tests {
         assert_eq!(state.issues, vec![created]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("created issue in 1.2s, refresh 50ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "created issue in 1.2s, refresh 50ms");
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1760,10 +1768,7 @@ mod tests {
         assert_eq!(state.issues, vec![updated]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("updated issue in 950ms, refresh 75ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "updated issue in 950ms, refresh 75ms");
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1815,10 +1820,7 @@ mod tests {
         assert_eq!(state.issues, vec![remaining]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("closed issue in 400ms, refresh 30ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "closed issue in 400ms, refresh 30ms");
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1833,10 +1835,7 @@ mod tests {
         );
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("gh error: close failed")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: close failed");
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1867,10 +1866,7 @@ mod tests {
             Err(anyhow::anyhow!("network failed")),
         );
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
-            Some("gh error: network failed")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network failed");
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 

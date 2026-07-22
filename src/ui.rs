@@ -1,5 +1,8 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow};
+use crate::model::{
+    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow,
+    NAMED_COLORS,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,6 +10,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::Input;
+use std::borrow::Cow;
 
 const POPUP_MARGIN: u16 = 2;
 
@@ -19,7 +23,18 @@ const LABEL_PALETTE: [Color; 6] = [
     Color::Red,
 ];
 
-const ACCENT: Color = Color::Cyan;
+/// Maps a `SettingsRow::AccentColor` value (one of `model::NAMED_COLORS`'s
+/// names) to its `ratatui::style::Color`. Falls back to `Color::Blue` — the
+/// app's default — for any unrecognized or corrupt config value, the same
+/// fallback pattern rolomux uses for its own color-name lookup.
+fn color_from_name(name: &str) -> Color {
+    NAMED_COLORS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, color)| *color)
+        .unwrap_or(Color::Blue)
+}
+
 const DIM: Color = Color::DarkGray;
 const SEL_BG: Color = Color::DarkGray;
 
@@ -288,7 +303,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     }
 
     let area = inset(frame.area(), POPUP_MARGIN);
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let title_text = outer_title_text(state);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -312,7 +327,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     match &state.mode {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
-        Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
+        Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous, state),
         Mode::Settings => draw_settings(frame, inner, state),
         Mode::RepoPicker(picker) => draw_repo_picker(frame, inner, picker, state),
         Mode::LabelPicker(picker) => draw_label_picker(frame, inner, picker, state),
@@ -363,7 +378,9 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         spans.push(Span::styled(" in ", Style::default().fg(DIM)));
         spans.push(Span::styled(
             repo,
-            Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(color_from_name(&state.accent_color))
+                .add_modifier(Modifier::ITALIC),
         ));
     }
     if !state.checked.is_empty() {
@@ -476,7 +493,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(issue) = state.selected_issue() else {
         return;
     };
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -686,7 +703,7 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         .constraints([Constraint::Length(3), Constraint::Length(1)])
         .split(area);
 
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let title_text = match state.repo_name_with_owner.as_deref() {
         Some(repo) => format!("New issue in {repo}"),
         None => "New issue".to_string(),
@@ -829,14 +846,14 @@ fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppSta
         Paragraph::new(text).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT))
+                .border_style(Style::default().fg(color_from_name(&state.accent_color)))
                 .title("Confirm"),
         ),
         area,
     );
 }
 
-fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
+fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode, state: &AppState) {
     let text = match previous {
         Mode::Form(form) => match form.editing {
             Some(number) => format!("Discard unsaved changes to #{number}? (y/n)"),
@@ -849,7 +866,7 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
         Paragraph::new(text).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT))
+                .border_style(Style::default().fg(color_from_name(&state.accent_color)))
                 .title("Confirm"),
         ),
         area,
@@ -872,28 +889,19 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .enumerate()
         .map(|(i, row)| {
             let selected = i == state.settings_cursor;
-            let value_text = match row {
+            let value_text: Cow<str> = match row {
                 SettingsRow::ExitOnCopyYank => {
-                    if state.exit_on_copy_yank {
-                        "On"
-                    } else {
-                        "Off"
-                    }
+                    Cow::Borrowed(if state.exit_on_copy_yank { "On" } else { "Off" })
                 }
                 SettingsRow::ZebraStriping => {
-                    if state.zebra_striping {
-                        "On"
-                    } else {
-                        "Off"
-                    }
+                    Cow::Borrowed(if state.zebra_striping { "On" } else { "Off" })
                 }
-                SettingsRow::ShortcutsOnDemand => {
-                    if state.shortcuts_on_demand {
-                        "On demand (?)"
-                    } else {
-                        "Always"
-                    }
-                }
+                SettingsRow::ShortcutsOnDemand => Cow::Borrowed(if state.shortcuts_on_demand {
+                    "On demand (?)"
+                } else {
+                    "Always"
+                }),
+                SettingsRow::AccentColor => Cow::Borrowed(state.accent_color.as_str()),
             };
             let label = row.label();
             let pad = list_width
@@ -1396,6 +1404,57 @@ mod tests {
         assert!(rendered.contains("enter/space toggle"));
     }
 
+    #[test]
+    fn draw_settings_shows_accent_color_row_defaulting_to_blue() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Accent color"));
+        assert!(rendered.contains("Blue"));
+    }
+
+    #[test]
+    fn borders_use_a_cycled_non_default_accent_color() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.accent_color = "Magenta".to_string();
+        let buf = render_buffer(&state);
+        let mut found_corner = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "╭" {
+                    found_corner = true;
+                    assert_eq!(cell.style().fg, Some(Color::Magenta));
+                }
+            }
+        }
+        assert!(found_corner, "expected to find a rounded border corner");
+    }
+
+    #[test]
+    fn color_from_name_covers_every_named_color_without_collapsing_to_the_fallback() {
+        use std::collections::HashSet;
+
+        let names: Vec<&str> = NAMED_COLORS.iter().map(|(name, _)| *name).collect();
+        let resolved: HashSet<Color> = names.iter().map(|name| color_from_name(name)).collect();
+        assert_eq!(
+            resolved.len(),
+            NAMED_COLORS.len(),
+            "expected every name in NAMED_COLORS to map to a distinct Color, got {} distinct values",
+            resolved.len()
+        );
+
+        for name in names {
+            if name != "Blue" {
+                assert_ne!(
+                    color_from_name(name),
+                    Color::Blue,
+                    "{name} should resolve to its own color, not silently collapse to the Blue fallback"
+                );
+            }
+        }
+    }
+
     use crate::gh::StateFilter;
     use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
     use ratatui::backend::TestBackend;
@@ -1659,8 +1718,8 @@ mod tests {
         );
         assert_eq!(
             repo_style.fg,
-            Some(Color::Cyan),
-            "repo name should use the ACCENT color"
+            Some(Color::Blue),
+            "repo name should use the accent color (default Blue)"
         );
 
         let (px, py) = find_in_buffer(&buf, "Open issues in").expect("prefix should render");
@@ -2469,8 +2528,8 @@ mod tests {
                     found_corner = true;
                     assert_eq!(
                         cell.style().fg,
-                        Some(Color::Cyan),
-                        "border corner at ({x}, {y}) should use the ACCENT color"
+                        Some(Color::Blue),
+                        "border corner at ({x}, {y}) should use the accent color (default Blue)"
                     );
                 }
             }
@@ -2665,7 +2724,7 @@ mod tests {
         for cx in 0..=x {
             let cell = &buf[(cx, y)];
             if cell.symbol() == "╭" || cell.symbol() == "─" {
-                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                assert_eq!(cell.style().fg, Some(Color::Blue));
                 found = true;
             }
         }
@@ -2742,7 +2801,7 @@ mod tests {
         for cx in 0..=x {
             let cell = &buf[(cx, y)];
             if cell.symbol() == "┌" || cell.symbol() == "─" {
-                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                assert_eq!(cell.style().fg, Some(Color::Blue));
                 found = true;
             }
         }
