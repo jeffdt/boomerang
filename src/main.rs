@@ -1559,7 +1559,7 @@ mod tests {
         assert_eq!(state.all_labels, vec![label]);
         assert!(!state.is_loading());
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("loaded 1 issues in 350ms")
         );
     }
@@ -1585,7 +1585,7 @@ mod tests {
         assert_eq!(state.issues, vec![refreshed]);
         assert_eq!(state.all_labels, vec![label]);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("refreshed 1 issues in 200ms")
         );
     }
@@ -1598,7 +1598,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![issue(1, "Existing issue")]);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: network unreachable")
         );
     }
@@ -1659,7 +1659,7 @@ mod tests {
         finish_initial_load(&mut state, Err(anyhow::anyhow!("repo unavailable")));
         assert!(!state.is_loading());
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: repo unavailable")
         );
     }
@@ -1684,7 +1684,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("created issue in 1.2s, refresh 50ms")
         );
     }
@@ -1714,7 +1714,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("updated issue in 950ms, refresh 75ms")
         );
     }
@@ -1768,7 +1768,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("closed issue in 400ms, refresh 30ms")
         );
     }
@@ -1785,7 +1785,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: close failed")
         );
     }
@@ -1818,7 +1818,7 @@ mod tests {
         );
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));
         assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
+            state.status.as_ref().map(|(msg, _, _)| msg.as_str()),
             Some("gh error: network failed")
         );
     }

@@ -290,6 +290,13 @@ pub struct FormSubmission {
     pub remove_labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatusKind {
+    Info,
+    Success,
+    Error,
+}
+
 pub struct AppState {
     pub issues: Vec<Issue>,
     pub all_labels: Vec<Label>,
@@ -298,7 +305,7 @@ pub struct AppState {
     pub cursor: usize,
     pub search_query: String,
     pub search_ranked: Vec<usize>,
-    pub status: Option<(String, Instant)>,
+    pub status: Option<(String, StatusKind, Instant)>,
     pub flash: Option<(u32, Instant)>,
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
@@ -827,7 +834,15 @@ impl AppState {
     }
 
     pub fn set_status(&mut self, message: String) {
-        self.status = Some((message, Instant::now()));
+        self.status = Some((message, StatusKind::Info, Instant::now()));
+    }
+
+    pub fn set_status_success(&mut self, message: String) {
+        self.status = Some((message, StatusKind::Success, Instant::now()));
+    }
+
+    pub fn set_status_error(&mut self, message: String) {
+        self.status = Some((message, StatusKind::Error, Instant::now()));
     }
 
     pub fn begin_loading(&mut self, what: &'static str) {
@@ -896,10 +911,36 @@ impl AppState {
     }
 
     pub fn clear_expired_status(&mut self) {
-        if let Some((_, set_at)) = &self.status {
-            if set_at.elapsed() >= STATUS_TOAST_DURATION {
+        if let Some((_, kind, set_at)) = &self.status {
+            let lifetime = match kind {
+                StatusKind::Success => FLASH_GREEN_DURATION + FLASH_GRAY_DURATION,
+                StatusKind::Info | StatusKind::Error => STATUS_TOAST_DURATION,
+            };
+            if set_at.elapsed() >= lifetime {
                 self.status = None;
             }
+        }
+    }
+
+    /// The color the pending/status text should render in right now: yellow
+    /// while an operation is in flight (always wins over any stale status
+    /// color), green fading to dark gray for a few seconds after a success
+    /// (the same timing `flash_indicator` uses for the row flash), flat red
+    /// for an error, or `None` for a plain info message.
+    pub fn status_color(&self) -> Option<Color> {
+        if self.pending.is_some() {
+            return Some(Color::Yellow);
+        }
+        match &self.status {
+            Some((_, StatusKind::Success, set_at)) => {
+                if set_at.elapsed() < FLASH_GREEN_DURATION {
+                    Some(Color::Green)
+                } else {
+                    Some(Color::DarkGray)
+                }
+            }
+            Some((_, StatusKind::Error, _)) => Some(Color::Red),
+            Some((_, StatusKind::Info, _)) | None => None,
         }
     }
 
@@ -1796,12 +1837,100 @@ mod tests {
     fn stale_status_is_cleared_by_expiry_check() {
         let mut state = AppState::new(vec![], vec![]);
         let set_at = Instant::now() - STATUS_TOAST_DURATION - Duration::from_millis(1);
-        state.status = Some(("copied: #1".to_string(), set_at));
+        state.status = Some(("copied: #1".to_string(), StatusKind::Info, set_at));
         state.clear_expired_status();
         assert!(
             state.status.is_none(),
             "a status older than STATUS_TOAST_DURATION should be cleared"
         );
+    }
+
+    #[test]
+    fn set_status_defaults_to_info_kind_with_no_color() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status("copied: #1".to_string());
+        assert_eq!(state.status_color(), None);
+    }
+
+    #[test]
+    fn set_status_success_is_green_immediately() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        assert_eq!(state.status_color(), Some(Color::Green));
+    }
+
+    #[test]
+    fn set_status_success_fades_to_gray_after_green_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state
+            .status
+            .take()
+            .map(|(msg, kind, set_at)| (msg, kind, set_at - FLASH_GREEN_DURATION));
+        assert_eq!(state.status_color(), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn set_status_error_is_red() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        assert_eq!(state.status_color(), Some(Color::Red));
+    }
+
+    #[test]
+    fn pending_overrides_a_stale_success_color_with_yellow() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.begin_pending(PendingOperation::RefreshList);
+        assert_eq!(state.status_color(), Some(Color::Yellow));
+    }
+
+    #[test]
+    fn success_status_survives_longer_than_the_old_toast_duration_before_expiring() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(
+            state.status.is_some(),
+            "a Success status shouldn't expire at the old 2s Info/Error duration"
+        );
+    }
+
+    #[test]
+    fn success_status_expires_after_the_full_fade_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - FLASH_GREEN_DURATION - FLASH_GRAY_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
+    }
+
+    #[test]
+    fn error_status_still_expires_at_the_original_toast_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
     }
 
     #[test]

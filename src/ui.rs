@@ -537,7 +537,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()))
         .unwrap_or_default();
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }
@@ -650,7 +650,7 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
     // same pattern draw_shortcuts_hint already uses for the main list.
     let footer_message = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()));
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()));
     let footer_line = match footer_message {
         Some(msg) => Line::from(msg),
         None => styled_hint("enter create · esc cancel"),
