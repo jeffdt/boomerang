@@ -105,6 +105,7 @@ pub enum Mode {
     ConfirmDiscard(Box<Mode>),
     Settings,
     RepoPicker(Box<RepoPickerState>),
+    LabelPicker(Box<LabelPickerState>),
 }
 
 /// State for the repo picker (issue #20): type `owner/repo` or a github.com
@@ -128,6 +129,16 @@ pub struct RepoPickerState {
     /// a real repo context exists (e.g. mid-switch, before the fetch lands,
     /// or if it fails while the issue list itself loaded fine).
     pub can_cancel: bool,
+}
+
+/// State for the label-filter picker (issue #74). `labels` holds every
+/// repo label in the same order as `AppState.all_labels` (matching the
+/// edit form's `all_label_names` convention). `cursor` is 0 for the "All
+/// labels" pseudo-row, or `n` for `labels[n - 1]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelPickerState {
+    pub labels: Vec<String>,
+    pub cursor: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,6 +460,44 @@ impl AppState {
         } else {
             true
         }
+    }
+
+    pub fn enter_label_picker(&mut self) {
+        let labels: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let cursor = match &self.label_filter {
+            Some(active) => labels.iter().position(|name| name == active).map_or(0, |i| i + 1),
+            None => 0,
+        };
+        self.mode = Mode::LabelPicker(Box::new(LabelPickerState { labels, cursor }));
+    }
+
+    pub fn label_picker_move(&mut self, delta: isize) {
+        if let Mode::LabelPicker(picker) = &mut self.mode {
+            let len = picker.labels.len() + 1; // +1 for the "All labels" row
+            let current = picker.cursor as isize;
+            picker.cursor = (current + delta).rem_euclid(len as isize) as usize;
+        }
+    }
+
+    pub fn label_picker_select(&mut self) {
+        let Mode::LabelPicker(picker) = &self.mode else {
+            return;
+        };
+        self.label_filter = if picker.cursor == 0 {
+            None
+        } else {
+            let name = picker.labels[picker.cursor - 1].clone();
+            if self.label_filter.as_deref() == Some(name.as_str()) {
+                None
+            } else {
+                Some(name)
+            }
+        };
+        self.mode = Mode::List;
+    }
+
+    pub fn label_picker_cancel(&mut self) {
+        self.mode = Mode::List;
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
@@ -2257,5 +2306,89 @@ mod tests {
             should_quit,
             "with nothing to fall back to, cancel should tell the caller to quit"
         );
+    }
+
+    fn label_picker_state(state: &AppState) -> &LabelPickerState {
+        match &state.mode {
+            Mode::LabelPicker(picker) => picker,
+            other => panic!("expected LabelPicker mode, got {other:?}"),
+        }
+    }
+
+    fn labels_fixture() -> Vec<Label> {
+        vec![
+            Label { name: "bug".into(), color: "d73a4a".into() },
+            Label { name: "docs".into(), color: "0075ca".into() },
+        ]
+    }
+
+    #[test]
+    fn enter_label_picker_lists_all_labels_with_cursor_on_all_labels_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        let picker = label_picker_state(&state);
+        assert_eq!(picker.labels, vec!["bug".to_string(), "docs".to_string()]);
+        assert_eq!(picker.cursor, 0);
+    }
+
+    #[test]
+    fn enter_label_picker_starts_cursor_on_active_label_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("docs".to_string());
+        state.enter_label_picker();
+        // row 0 = "All labels", row 1 = "bug", row 2 = "docs"
+        assert_eq!(label_picker_state(&state).cursor, 2);
+    }
+
+    #[test]
+    fn label_picker_move_wraps_across_all_rows() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(-1);
+        // 3 total rows (All labels, bug, docs); wrapping back from 0 lands on 2
+        assert_eq!(label_picker_state(&state).cursor, 2);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+    }
+
+    #[test]
+    fn label_picker_select_on_a_label_row_sets_label_filter_and_returns_to_list() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(1); // cursor -> "bug"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn label_picker_select_on_all_labels_row_clears_label_filter() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(-1); // cursor from "bug" row up to "All labels"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_select_on_currently_active_label_toggles_it_off() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        // cursor already starts on the active "bug" row
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_cancel_leaves_label_filter_untouched() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(1);
+        state.label_picker_cancel();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
     }
 }
