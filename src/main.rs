@@ -849,6 +849,9 @@ fn event_loop<S: IssueSource>(
                     }
                     RepoPickerInput::None => {}
                 },
+                // Stub until Task 5 wires the real key handling; keeps the
+                // exhaustive match on Mode compiling in between Tasks 2-4.
+                Mode::LabelPicker(_) => {}
             }
         }
     }
