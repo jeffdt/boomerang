@@ -848,7 +848,8 @@ impl AppState {
     }
 
     /// The list header split into its two parts: the state-filter prefix
-    /// (e.g. "Open issues") and the known repo, if it has loaded. `None` for
+    /// (e.g. "Open issues", or "Open issues · label: bug" when a label
+    /// filter is active) and the known repo, if it has loaded. `None` for
     /// the repo while it hasn't loaded yet (or failed to). Shared by
     /// `ui::draw_list` and `loading::draw`, which show the same header
     /// before and after the issue list itself has loaded.
