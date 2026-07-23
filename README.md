@@ -140,19 +140,6 @@ Logs go to `~/.cache/boomerang/boomerang.log` by default, or to `BOOMERANG_LOG_P
 Logs include sanitized `gh` argv, elapsed milliseconds, exit status, stdout byte count, and stderr.
 Issue titles and bodies passed to `gh` are redacted.
 
-## Animations
-
-The loading screen rotates between three animations (Matrix rain, color ripple, rainbow) at random each launch.
-Pin one with `BOOMERANG_LOADING_ANIMATION=matrix`, `ripple`, or `rainbow` if you'd rather always see the same one.
-
-If you want to watch the loaders for longer periods, you can launch them in preview mode:
-
-```sh
-boomerang --preview-loading matrix 10s
-boomerang --preview-loading ripple 1500ms
-boomerang --preview-loading rainbow 20s
-```
-
 ## Design philosophy
 
 boomerang is designed to be reached for constantly and thought about rarely.
