@@ -130,49 +130,9 @@ pub struct PendingState {
     pub frames: &'static [char],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoadingAnimation {
-    MatrixRain,
-    ColorRipple,
-    RainbowRipple,
-}
-
-impl LoadingAnimation {
-    const ALL: [LoadingAnimation; 3] = [
-        LoadingAnimation::MatrixRain,
-        LoadingAnimation::ColorRipple,
-        LoadingAnimation::RainbowRipple,
-    ];
-
-    pub fn for_launch() -> Self {
-        std::env::var("BOOMERANG_LOADING_ANIMATION")
-            .ok()
-            .and_then(|value| Self::parse(&value))
-            .unwrap_or_else(Self::rotated)
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "matrix" | "matrix-rain" | "rain" => Some(Self::MatrixRain),
-            "ripple" | "color-ripple" | "bullseye" => Some(Self::ColorRipple),
-            "rainbow" | "rainbow-ripple" | "rings" => Some(Self::RainbowRipple),
-            _ => None,
-        }
-    }
-
-    fn rotated() -> Self {
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as usize)
-            .unwrap_or(0);
-        Self::ALL[millis % Self::ALL.len()]
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct LoadingState {
     pub started_at: Instant,
-    pub animation: LoadingAnimation,
     pub what: &'static str,
 }
 
@@ -1023,7 +983,6 @@ impl AppState {
     pub fn begin_loading(&mut self, what: &'static str) {
         self.loading = Some(LoadingState {
             started_at: Instant::now(),
-            animation: LoadingAnimation::for_launch(),
             what,
         });
     }
@@ -2433,13 +2392,9 @@ mod tests {
     }
 
     #[test]
-    fn loading_state_reports_message_and_selected_animation() {
+    fn loading_state_reports_message() {
         let state = AppState::loading();
         assert!(state.is_loading());
-        assert!(state
-            .loading
-            .as_ref()
-            .is_some_and(|loading| { LoadingAnimation::ALL.contains(&loading.animation) }));
         assert!(state
             .loading_message()
             .expect("loading message")
@@ -2469,25 +2424,6 @@ mod tests {
         assert_eq!(state.all_labels, vec![label]);
         assert!(!state.is_loading());
         assert_eq!(state.loading_message(), None);
-    }
-
-    #[test]
-    fn loading_animation_parse_accepts_experiment_names() {
-        assert_eq!(
-            LoadingAnimation::parse("matrix-rain"),
-            Some(LoadingAnimation::MatrixRain)
-        );
-        assert_eq!(
-            LoadingAnimation::parse("bullseye"),
-            Some(LoadingAnimation::ColorRipple)
-        );
-        assert_eq!(
-            LoadingAnimation::parse("rainbow-ripple"),
-            Some(LoadingAnimation::RainbowRipple)
-        );
-        assert_eq!(LoadingAnimation::parse("orbit"), None);
-        assert_eq!(LoadingAnimation::parse("pipes"), None);
-        assert_eq!(LoadingAnimation::parse("unknown"), None);
     }
 
     #[test]

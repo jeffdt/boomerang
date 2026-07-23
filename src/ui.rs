@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     use crate::gh::StateFilter;
-    use crate::model::{Issue, IssueState, Label, LoadingAnimation, PendingOperation};
+    use crate::model::{Issue, IssueState, Label, PendingOperation};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use std::time::Instant;
@@ -1814,8 +1814,7 @@ mod tests {
 
     #[test]
     fn loading_state_renders_header_hint_and_animation_area() {
-        let mut state = AppState::loading();
-        state.loading.as_mut().unwrap().animation = LoadingAnimation::MatrixRain;
+        let state = AppState::loading();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Loading issues..."));
         assert!(rendered.contains("q quit"));
@@ -1826,14 +1825,15 @@ mod tests {
     }
 
     #[test]
-    fn color_ripple_loading_animation_renders_bullseye_content() {
+    fn loading_animation_renders_pulse_spinner_glyph() {
         let mut state = AppState::loading();
         let loading = state.loading.as_mut().expect("loading state");
-        loading.animation = LoadingAnimation::ColorRipple;
         loading.started_at = Instant::now();
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("●"));
-        assert!(!rendered.contains("No issues found"));
+        assert!(
+            rendered.chars().any(|c| "▁▃▄▅▆▇█".contains(c)),
+            "loading animation should render a pulse-bar spinner glyph, got: {rendered:?}"
+        );
     }
 
     #[test]
