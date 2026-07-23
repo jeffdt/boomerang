@@ -40,6 +40,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
 
 const PULSE_FRAMES: [&str; 12] = ["▁", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃"];
 const PULSE_FRAME_INTERVAL_MS: u128 = 80;
+const PULSE_BAR_COUNT: usize = 7;
+const PULSE_BAR_INTERVAL_STEP_MS: u128 = 15;
 
 fn draw_animation(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(loading) = state.loading.as_ref() else {
@@ -52,8 +54,15 @@ fn draw_animation(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_pulse_spinner(frame: &mut Frame, area: Rect, elapsed: Duration) {
-    let glyph = PULSE_FRAMES[pulse_frame_index(elapsed)];
-    let line = Line::from(Span::styled(glyph, Style::default().fg(Color::Cyan)));
+    let mut spans = Vec::with_capacity(PULSE_BAR_COUNT * 2 - 1);
+    for bar in 0..PULSE_BAR_COUNT {
+        if bar > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let glyph = PULSE_FRAMES[pulse_frame_index(elapsed, bar)];
+        spans.push(Span::styled(glyph, Style::default().fg(Color::Cyan)));
+    }
+    let line = Line::from(spans);
     let centered_row = Rect {
         x: area.x,
         y: area.y + area.height / 2,
@@ -66,8 +75,12 @@ fn draw_pulse_spinner(frame: &mut Frame, area: Rect, elapsed: Duration) {
     );
 }
 
-fn pulse_frame_index(elapsed: Duration) -> usize {
-    ((elapsed.as_millis() / PULSE_FRAME_INTERVAL_MS) as usize) % PULSE_FRAMES.len()
+fn pulse_bar_interval_ms(bar: usize) -> u128 {
+    PULSE_FRAME_INTERVAL_MS + bar as u128 * PULSE_BAR_INTERVAL_STEP_MS
+}
+
+fn pulse_frame_index(elapsed: Duration, bar: usize) -> usize {
+    ((elapsed.as_millis() / pulse_bar_interval_ms(bar)) as usize) % PULSE_FRAMES.len()
 }
 
 #[cfg(test)]
@@ -78,9 +91,10 @@ mod tests {
     fn pulse_frame_index_advances_one_frame_per_interval() {
         let indices: Vec<usize> = (0..PULSE_FRAMES.len())
             .map(|i| {
-                pulse_frame_index(Duration::from_millis(
-                    i as u64 * PULSE_FRAME_INTERVAL_MS as u64,
-                ))
+                pulse_frame_index(
+                    Duration::from_millis(i as u64 * PULSE_FRAME_INTERVAL_MS as u64),
+                    0,
+                )
             })
             .collect();
         assert_eq!(indices, (0..PULSE_FRAMES.len()).collect::<Vec<_>>());
@@ -90,15 +104,44 @@ mod tests {
     fn pulse_frame_index_wraps_after_a_full_cycle() {
         let cycle_ms = PULSE_FRAME_INTERVAL_MS as u64 * PULSE_FRAMES.len() as u64;
         assert_eq!(
-            pulse_frame_index(Duration::from_millis(cycle_ms)),
-            pulse_frame_index(Duration::ZERO)
+            pulse_frame_index(Duration::from_millis(cycle_ms), 0),
+            pulse_frame_index(Duration::ZERO, 0)
         );
     }
 
     #[test]
     fn pulse_frame_index_holds_steady_within_an_interval() {
-        let start = pulse_frame_index(Duration::from_millis(10));
-        let later = pulse_frame_index(Duration::from_millis(PULSE_FRAME_INTERVAL_MS as u64 - 1));
+        let start = pulse_frame_index(Duration::from_millis(10), 0);
+        let later = pulse_frame_index(
+            Duration::from_millis(PULSE_FRAME_INTERVAL_MS as u64 - 1),
+            0,
+        );
         assert_eq!(start, later);
+    }
+
+    #[test]
+    fn pulse_bars_run_at_distinct_frequencies() {
+        let intervals: Vec<u128> = (0..PULSE_BAR_COUNT).map(pulse_bar_interval_ms).collect();
+        let mut sorted = intervals.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            PULSE_BAR_COUNT,
+            "every bar should have a unique frequency, got: {intervals:?}"
+        );
+    }
+
+    #[test]
+    fn pulse_bars_desync_over_time() {
+        let elapsed = Duration::from_millis(500);
+        let indices: Vec<usize> = (0..PULSE_BAR_COUNT)
+            .map(|bar| pulse_frame_index(elapsed, bar))
+            .collect();
+        let all_same = indices.iter().all(|&i| i == indices[0]);
+        assert!(
+            !all_same,
+            "bars with different frequencies should show different frames after 500ms, got: {indices:?}"
+        );
     }
 }
