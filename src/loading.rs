@@ -15,11 +15,14 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Length(1),
         ])
         .split(area);
-    let (prefix, repo) = state.issues_header_parts();
-    let mut header = match repo {
-        Some(repo) => format!("{prefix} in {repo}"),
-        None => prefix,
-    };
+    let (prefix, label, repo) = state.issues_header_parts();
+    let mut header = prefix;
+    if let Some(name) = label {
+        header.push_str(&format!(" · label: {name}"));
+    }
+    if let Some(repo) = repo {
+        header.push_str(&format!(" in {repo}"));
+    }
     if let Some(loading) = state.loading_message() {
         header.push_str("  ");
         header.push_str(&loading);

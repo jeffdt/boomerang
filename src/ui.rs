@@ -1,5 +1,8 @@
 use crate::loading;
-use crate::model::{AppState, FormField, Label, Mode, RepoPickerState, SettingsRow};
+use crate::model::{
+    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow,
+    NAMED_COLORS,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,6 +10,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 use ratatui_textarea::Input;
+use std::borrow::Cow;
 
 const POPUP_MARGIN: u16 = 2;
 
@@ -19,7 +23,18 @@ const LABEL_PALETTE: [Color; 6] = [
     Color::Red,
 ];
 
-const ACCENT: Color = Color::Cyan;
+/// Maps a `SettingsRow::AccentColor` value (one of `model::NAMED_COLORS`'s
+/// names) to its `ratatui::style::Color`. Falls back to `Color::Blue` — the
+/// app's default — for any unrecognized or corrupt config value, the same
+/// fallback pattern rolomux uses for its own color-name lookup.
+fn color_from_name(name: &str) -> Color {
+    NAMED_COLORS
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, color)| *color)
+        .unwrap_or(Color::Blue)
+}
+
 const DIM: Color = Color::DarkGray;
 const SEL_BG: Color = Color::DarkGray;
 
@@ -37,6 +52,7 @@ pub enum ListInput {
     TogglePane,
     EnterSearch,
     CycleStateFilter,
+    LabelFilter,
     BigCreate,
     Edit,
     RequestClose,
@@ -61,6 +77,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Enter | KeyCode::Char('e') => ListInput::Edit,
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
+        KeyCode::Char('l') => ListInput::LabelFilter,
         KeyCode::Char('c') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
@@ -134,6 +151,17 @@ pub enum FormInput {
 }
 
 pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
+    // Some terminals (e.g. Ghostty's `shift+enter=text:\n` keybind) send Shift+Enter
+    // as a raw newline byte. In raw mode crossterm parses that byte as Ctrl+J, which is
+    // indistinguishable from an actual Ctrl+J press and which ratatui-textarea binds to
+    // delete_line_by_head. Since the cursor sits at the end of the field when a form
+    // opens, that silently erases the line instead of inserting a newline. boomerang
+    // doesn't expose any Ctrl+J shortcut of its own, so normalize it to a plain Enter.
+    let key = if key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        KeyEvent::new(KeyCode::Enter, key.modifiers - KeyModifiers::CONTROL)
+    } else {
+        key
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Char('s') if ctrl => return FormInput::SubmitNow,
@@ -216,6 +244,25 @@ pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelPickerInput {
+    Up,
+    Down,
+    Select,
+    Cancel,
+    None,
+}
+
+pub fn map_label_picker_key(key: KeyEvent) -> LabelPickerInput {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => LabelPickerInput::Down,
+        KeyCode::Char('k') | KeyCode::Up => LabelPickerInput::Up,
+        KeyCode::Enter => LabelPickerInput::Select,
+        KeyCode::Char('q') | KeyCode::Esc => LabelPickerInput::Cancel,
+        _ => LabelPickerInput::None,
+    }
+}
+
 /// Shrink `area` by `margin` cells on every side, reducing the margin toward
 /// zero rather than panicking if the area is too small to inset cleanly.
 fn inset(area: Rect, margin: u16) -> Rect {
@@ -229,6 +276,26 @@ fn inset(area: Rect, margin: u16) -> Rect {
     }
 }
 
+/// Title for the outer popup frame. Static `"boomerang"` for every mode
+/// except the create/edit form, where it names the target repo (and, when
+/// editing, the issue number) so the form is never ambiguous about what
+/// it's about to submit to.
+fn outer_title_text(state: &AppState) -> String {
+    match &state.mode {
+        Mode::Form(form) => match form.editing {
+            Some(number) => match state.repo_name_with_owner.as_deref() {
+                Some(repo) => format!("Editing issue #{number} in {repo}"),
+                None => format!("Editing issue #{number}"),
+            },
+            None => match state.repo_name_with_owner.as_deref() {
+                Some(repo) => format!("New issue in {repo}"),
+                None => "New issue".to_string(),
+            },
+        },
+        _ => "boomerang".to_string(),
+    }
+}
+
 pub fn draw(frame: &mut Frame, state: &AppState) {
     if let Mode::LittleCreate(buf) = &state.mode {
         draw_little_create(frame, buf, state);
@@ -236,7 +303,8 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     }
 
     let area = inset(frame.area(), POPUP_MARGIN);
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
+    let title_text = outer_title_text(state);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -244,7 +312,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         .title(Line::from(vec![
             Span::styled("─", border_style),
             Span::styled(
-                "‹ boomerang ›",
+                format!("‹ {title_text} ›"),
                 border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
             ),
         ]));
@@ -259,9 +327,10 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     match &state.mode {
         Mode::Form(form) => draw_form(frame, inner, form, state),
         Mode::ConfirmClose(number) => draw_confirm_close(frame, inner, *number, state),
-        Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous),
+        Mode::ConfirmDiscard(previous) => draw_confirm_discard(frame, inner, previous, state),
         Mode::Settings => draw_settings(frame, inner, state),
         Mode::RepoPicker(picker) => draw_repo_picker(frame, inner, picker, state),
+        Mode::LabelPicker(picker) => draw_label_picker(frame, inner, picker, state),
         _ => {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -296,25 +365,36 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let (prefix, repo) = state.issues_header_parts();
+    let (prefix, label, repo) = state.issues_header_parts();
     let mut spans = vec![Span::styled(prefix, Style::default().fg(DIM))];
+    if let Some(name) = &label {
+        spans.push(Span::styled(" · label: ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            name.clone(),
+            label_style(label_palette_color(&state.all_labels, name)),
+        ));
+    }
     if let Some(repo) = repo {
         spans.push(Span::styled(" in ", Style::default().fg(DIM)));
         spans.push(Span::styled(
             repo,
-            Style::default().fg(ACCENT).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(color_from_name(&state.accent_color))
+                .add_modifier(Modifier::ITALIC),
         ));
     }
-    let mut trailer = String::new();
     if !state.checked.is_empty() {
-        trailer.push_str(&format!(" · {} checked", state.checked.len()));
+        spans.push(Span::styled(
+            format!(" · {} checked", state.checked.len()),
+            Style::default().fg(DIM),
+        ));
     }
     if let Some(pending) = state.pending_message() {
-        trailer.push_str("  ");
-        trailer.push_str(&pending);
-    }
-    if !trailer.is_empty() {
-        spans.push(Span::styled(trailer, Style::default().fg(DIM)));
+        let color = state.status_color().unwrap_or(DIM);
+        spans.push(Span::styled(
+            format!("  {pending}"),
+            Style::default().fg(color),
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
     let list_area = chunks[2];
@@ -413,7 +493,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
     let Some(issue) = state.selected_issue() else {
         return;
     };
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -503,9 +583,10 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             Mode::RepoPicker(_) => vec![styled_hint(
                 "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
             )],
+            Mode::LabelPicker(_) => vec![styled_hint("j/k move · enter select · esc cancel")],
             _ if state.shortcuts_visible() => vec![
                 styled_hint(
-                    "j/k move · h hide pane · / search · a state · space check · enter/e edit",
+                    "j/k move · h hide pane · / search · a state · l label · space check · e edit",
                 ),
                 styled_hint(
                     "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
@@ -526,9 +607,16 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
 fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
     let text = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()))
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()))
         .unwrap_or_default();
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
+    let style = match state.status_color() {
+        Some(color) => Style::default().fg(color),
+        None => Style::default(),
+    };
+    frame.render_widget(
+        Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 /// Style a `"key desc · key desc"` hint line so each segment's leading key
@@ -615,7 +703,7 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         .constraints([Constraint::Length(3), Constraint::Length(1)])
         .split(area);
 
-    let border_style = Style::default().fg(ACCENT);
+    let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let title_text = match state.repo_name_with_owner.as_deref() {
         Some(repo) => format!("New issue in {repo}"),
         None => "New issue".to_string(),
@@ -639,9 +727,15 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
     // same pattern draw_shortcuts_hint already uses for the main list.
     let footer_message = state
         .pending_message()
-        .or_else(|| state.status.as_ref().map(|(msg, _)| msg.clone()));
+        .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()));
     let footer_line = match footer_message {
-        Some(msg) => Line::from(msg),
+        Some(msg) => {
+            let style = match state.status_color() {
+                Some(color) => Style::default().fg(color),
+                None => Style::default(),
+            };
+            Line::styled(msg, style)
+        }
         None => styled_hint("enter create · esc cancel"),
     };
     frame.render_widget(
@@ -752,14 +846,14 @@ fn draw_confirm_close(frame: &mut Frame, area: Rect, number: u32, state: &AppSta
         Paragraph::new(text).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT))
+                .border_style(Style::default().fg(color_from_name(&state.accent_color)))
                 .title("Confirm"),
         ),
         area,
     );
 }
 
-fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
+fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode, state: &AppState) {
     let text = match previous {
         Mode::Form(form) => match form.editing {
             Some(number) => format!("Discard unsaved changes to #{number}? (y/n)"),
@@ -772,7 +866,7 @@ fn draw_confirm_discard(frame: &mut Frame, area: Rect, previous: &Mode) {
         Paragraph::new(text).wrap(Wrap { trim: false }).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT))
+                .border_style(Style::default().fg(color_from_name(&state.accent_color)))
                 .title("Confirm"),
         ),
         area,
@@ -795,28 +889,19 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .enumerate()
         .map(|(i, row)| {
             let selected = i == state.settings_cursor;
-            let value_text = match row {
+            let value_text: Cow<str> = match row {
                 SettingsRow::ExitOnCopyYank => {
-                    if state.exit_on_copy_yank {
-                        "On"
-                    } else {
-                        "Off"
-                    }
+                    Cow::Borrowed(if state.exit_on_copy_yank { "On" } else { "Off" })
                 }
                 SettingsRow::ZebraStriping => {
-                    if state.zebra_striping {
-                        "On"
-                    } else {
-                        "Off"
-                    }
+                    Cow::Borrowed(if state.zebra_striping { "On" } else { "Off" })
                 }
-                SettingsRow::ShortcutsOnDemand => {
-                    if state.shortcuts_on_demand {
-                        "On demand (?)"
-                    } else {
-                        "Always"
-                    }
-                }
+                SettingsRow::ShortcutsOnDemand => Cow::Borrowed(if state.shortcuts_on_demand {
+                    "On demand (?)"
+                } else {
+                    "Always"
+                }),
+                SettingsRow::AccentColor => Cow::Borrowed(state.accent_color.as_str()),
             };
             let label = row.label();
             let pad = list_width
@@ -895,6 +980,42 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
     frame.render_widget(error_line.wrap(Wrap { trim: false }), chunks[3]);
 }
 
+fn draw_label_picker(frame: &mut Frame, area: Rect, picker: &LabelPickerState, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let active_row = match &state.label_filter {
+        Some(name) => picker.labels.iter().position(|l| l == name).map(|i| i + 1),
+        None => None,
+    };
+    for row in 0..=picker.labels.len() {
+        let marker = if Some(row) == active_row { "\u{2713} " } else { "  " };
+        let mut spans = vec![Span::raw(marker)];
+        if row == 0 {
+            spans.push(Span::raw("All labels"));
+        } else {
+            let name = &picker.labels[row - 1];
+            spans.push(Span::styled(
+                name.as_str(),
+                label_style(label_palette_color(&state.all_labels, name)),
+            ));
+        }
+        let style = if row == picker.cursor {
+            Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        items.push(ListItem::new(Line::from(spans)).style(style));
+    }
+    let block = Block::default().borders(Borders::ALL).title("Filter by label");
+    frame.render_widget(List::new(items).block(block), chunks[0]);
+
+    draw_shortcuts_hint(frame, chunks[1], state);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,6 +1056,23 @@ mod tests {
             map_list_key(key(KeyCode::Char('y'))),
             ListInput::CopyReference
         );
+    }
+
+    #[test]
+    fn maps_lowercase_l_to_label_filter() {
+        assert_eq!(map_list_key(key(KeyCode::Char('l'))), ListInput::LabelFilter);
+    }
+
+    #[test]
+    fn label_picker_key_mapping() {
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('j'))), LabelPickerInput::Down);
+        assert_eq!(map_label_picker_key(key(KeyCode::Down)), LabelPickerInput::Down);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('k'))), LabelPickerInput::Up);
+        assert_eq!(map_label_picker_key(key(KeyCode::Up)), LabelPickerInput::Up);
+        assert_eq!(map_label_picker_key(key(KeyCode::Enter)), LabelPickerInput::Select);
+        assert_eq!(map_label_picker_key(key(KeyCode::Esc)), LabelPickerInput::Cancel);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('q'))), LabelPickerInput::Cancel);
+        assert_eq!(map_label_picker_key(key(KeyCode::Char('z'))), LabelPickerInput::None);
     }
 
     #[test]
@@ -1103,6 +1241,26 @@ mod tests {
     }
 
     #[test]
+    fn form_key_mapping_treats_ctrl_j_as_enter_in_body() {
+        // Some terminals (e.g. Ghostty's `shift+enter=text:\n` keybind) send
+        // Shift+Enter as a raw newline byte, which crossterm parses as Ctrl+J
+        // in raw mode. ratatui-textarea binds Ctrl+J to delete_line_by_head,
+        // which erases the line instead of inserting a newline, so boomerang
+        // must normalize it to a plain Enter before it reaches the textarea.
+        let ctrl_j = key_with(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(
+            map_form_key(ctrl_j, FormField::Body),
+            FormInput::TextEdit(Input::from(key(KeyCode::Enter)))
+        );
+    }
+
+    #[test]
+    fn form_key_mapping_treats_ctrl_j_as_enter_in_title() {
+        let ctrl_j = key_with(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(map_form_key(ctrl_j, FormField::Title), FormInput::Enter);
+    }
+
+    #[test]
     fn confirm_key_mapping() {
         assert_eq!(map_confirm_key(key(KeyCode::Char('y'))), ConfirmInput::Yes);
         assert_eq!(map_confirm_key(key(KeyCode::Char('n'))), ConfirmInput::No);
@@ -1246,6 +1404,57 @@ mod tests {
         assert!(rendered.contains("enter/space toggle"));
     }
 
+    #[test]
+    fn draw_settings_shows_accent_color_row_defaulting_to_blue() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Accent color"));
+        assert!(rendered.contains("Blue"));
+    }
+
+    #[test]
+    fn borders_use_a_cycled_non_default_accent_color() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.accent_color = "Magenta".to_string();
+        let buf = render_buffer(&state);
+        let mut found_corner = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "╭" {
+                    found_corner = true;
+                    assert_eq!(cell.style().fg, Some(Color::Magenta));
+                }
+            }
+        }
+        assert!(found_corner, "expected to find a rounded border corner");
+    }
+
+    #[test]
+    fn color_from_name_covers_every_named_color_without_collapsing_to_the_fallback() {
+        use std::collections::HashSet;
+
+        let names: Vec<&str> = NAMED_COLORS.iter().map(|(name, _)| *name).collect();
+        let resolved: HashSet<Color> = names.iter().map(|name| color_from_name(name)).collect();
+        assert_eq!(
+            resolved.len(),
+            NAMED_COLORS.len(),
+            "expected every name in NAMED_COLORS to map to a distinct Color, got {} distinct values",
+            resolved.len()
+        );
+
+        for name in names {
+            if name != "Blue" {
+                assert_ne!(
+                    color_from_name(name),
+                    Color::Blue,
+                    "{name} should resolve to its own color, not silently collapse to the Blue fallback"
+                );
+            }
+        }
+    }
+
     use crate::gh::StateFilter;
     use crate::model::{Issue, IssueState, Label, PendingOperation};
     use ratatui::backend::TestBackend;
@@ -1265,7 +1474,7 @@ mod tests {
     }
 
     fn render_buffer(state: &AppState) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(80, 25);
+        let backend = TestBackend::new(84, 25);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, state)).unwrap();
         terminal.backend().buffer().clone()
@@ -1284,17 +1493,75 @@ mod tests {
     }
 
     fn find_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+        find_all_in_buffer(buf, needle).into_iter().next()
+    }
+
+    fn find_all_in_buffer(buf: &ratatui::buffer::Buffer, needle: &str) -> Vec<(u16, u16)> {
+        let mut matches = Vec::new();
         for y in 0..buf.area.height {
             let mut row = String::new();
             for x in 0..buf.area.width {
                 row.push_str(buf[(x, y)].symbol());
             }
-            if let Some(byte_idx) = row.find(needle) {
-                let x = row[..byte_idx].chars().count() as u16;
-                return Some((x, y));
+            let mut start = 0;
+            while let Some(byte_idx) = row[start..].find(needle) {
+                let abs_byte_idx = start + byte_idx;
+                let x = row[..abs_byte_idx].chars().count() as u16;
+                matches.push((x, y));
+                start = abs_byte_idx + needle.len();
             }
         }
-        None
+        matches
+    }
+
+    #[test]
+    fn pending_spinner_renders_yellow_in_header_and_toast() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let buf = render_buffer(&state);
+        let matches = find_all_in_buffer(&buf, "Creating issue...");
+        assert_eq!(matches.len(), 2, "expected header + toast occurrences");
+        for (x, y) in matches {
+            assert_eq!(buf[(x, y)].style().fg, Some(Color::Yellow));
+        }
+    }
+
+    #[test]
+    fn success_toast_text_renders_green_then_fades_to_gray() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("status toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Green));
+
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (msg, kind, set_at - std::time::Duration::from_millis(2000))
+        });
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("status toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn error_toast_text_renders_red() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "gh error: boom").expect("error toast should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn little_create_pending_footer_renders_yellow() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.begin_pending(PendingOperation::CreateIssue);
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "Creating issue...").expect("little-create footer should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Yellow));
     }
 
     #[test]
@@ -1451,8 +1718,8 @@ mod tests {
         );
         assert_eq!(
             repo_style.fg,
-            Some(Color::Cyan),
-            "repo name should use the ACCENT color"
+            Some(Color::Blue),
+            "repo name should use the accent color (default Blue)"
         );
 
         let (px, py) = find_in_buffer(&buf, "Open issues in").expect("prefix should render");
@@ -1465,6 +1732,29 @@ mod tests {
         assert!(
             !prefix_style.add_modifier.contains(Modifier::ITALIC),
             "the prefix should not be italic"
+        );
+    }
+
+    #[test]
+    fn active_label_filter_in_header_uses_that_labels_palette_color() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("docs".to_string());
+        let buf = render_buffer(&state);
+
+        let (lx, ly) = find_in_buffer(&buf, "docs").expect("label name should render in header");
+        let label_style = buf[(lx, ly)].style();
+        assert_eq!(
+            label_style.fg,
+            Some(label_palette_color(&state.all_labels, "docs")),
+            "header label text should match that label's palette color"
+        );
+
+        let (px, py) = find_in_buffer(&buf, "Open issues").expect("prefix should render");
+        let prefix_style = buf[(px, py)].style();
+        assert_eq!(
+            prefix_style.fg,
+            Some(Color::DarkGray),
+            "the state-filter prefix should stay DIM, not take the label's color"
         );
     }
 
@@ -1795,7 +2085,7 @@ mod tests {
     }
 
     #[test]
-    fn border_title_is_always_boomerang_regardless_of_repo_name() {
+    fn list_border_title_is_boomerang_regardless_of_repo_name() {
         let mut with_repo = AppState::new(vec![issue(1, "a")], vec![]);
         with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let rendered_with_repo = render_to_string(&with_repo);
@@ -2112,11 +2402,12 @@ mod tests {
 
     #[test]
     fn detail_pane_shows_untruncated_title_even_when_list_would_truncate_it() {
-        // 70 chars: longer than the list's title budget at this fixed 80x25
-        // TestBackend size (74-char inner width minus the 6-char number
-        // column = 68), but short enough to fit on one line at the detail
-        // pane's full width, so it renders unwrapped and unclipped.
-        let long_title = "a".repeat(70);
+        // 74 chars: longer than the list's title budget at this fixed 84x25
+        // TestBackend size (78-char inner width minus the 6-char number
+        // column and the 2-char flash-icon column = 70), but short enough to
+        // fit on one line at the detail pane's full width (76 chars), so it
+        // renders unwrapped and unclipped.
+        let long_title = "a".repeat(74);
         let mut state = AppState::new(vec![issue(1, &long_title)], vec![]);
         let pane_rendered = render_to_string(&state);
         assert!(
@@ -2137,7 +2428,7 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
         assert!(rendered.contains("c create"));
-        assert!(rendered.contains("enter/e edit"));
+        assert!(rendered.contains("e edit"));
     }
 
     #[test]
@@ -2156,8 +2447,9 @@ mod tests {
             "h hide pane",
             "/ search",
             "a state",
+            "l label",
             "space check",
-            "enter/e edit",
+            "e edit",
             "c create",
             "x close",
             "o open",
@@ -2195,7 +2487,7 @@ mod tests {
     #[test]
     fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
-        let list_line1 = "j/k move · h hide pane · / search · a state · space check · enter/e edit";
+        let list_line1 = "j/k move · h hide pane · / search · a state · l label · space check · e edit";
         let list_line2 = "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
@@ -2236,8 +2528,8 @@ mod tests {
                     found_corner = true;
                     assert_eq!(
                         cell.style().fg,
-                        Some(Color::Cyan),
-                        "border corner at ({x}, {y}) should use the ACCENT color"
+                        Some(Color::Blue),
+                        "border corner at ({x}, {y}) should use the accent color (default Blue)"
                     );
                 }
             }
@@ -2363,6 +2655,66 @@ mod tests {
     }
 
     #[test]
+    fn big_create_form_shows_new_issue_title_with_repo_when_known() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue in jeffdt/boomerang"),
+            "title should include the known repo, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn big_create_form_falls_back_to_plain_title_when_repo_unknown() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("New issue"),
+            "title should fall back to a plain label, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("New issue in"),
+            "title should not claim a repo it doesn't have, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn edit_form_shows_editing_issue_title_with_repo_when_known() {
+        let mut state = AppState::new(
+            vec![issue(76, "Full create form does not tell you what repo")],
+            vec![],
+        );
+        state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        state.enter_edit();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Editing issue #76 in jeffdt/boomerang"),
+            "title should include the issue number and known repo, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn edit_form_falls_back_to_issue_number_only_when_repo_unknown() {
+        let mut state = AppState::new(
+            vec![issue(76, "Full create form does not tell you what repo")],
+            vec![],
+        );
+        state.enter_edit();
+        let rendered = render_to_string(&state);
+        assert!(
+            rendered.contains("Editing issue #76"),
+            "title should include the issue number, got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("Editing issue #76 in"),
+            "title should not claim a repo it doesn't have, got: {rendered:?}"
+        );
+    }
+
+    #[test]
     fn little_create_border_is_rounded_and_accent_colored() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
@@ -2372,7 +2724,7 @@ mod tests {
         for cx in 0..=x {
             let cell = &buf[(cx, y)];
             if cell.symbol() == "╭" || cell.symbol() == "─" {
-                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                assert_eq!(cell.style().fg, Some(Color::Blue));
                 found = true;
             }
         }
@@ -2449,7 +2801,7 @@ mod tests {
         for cx in 0..=x {
             let cell = &buf[(cx, y)];
             if cell.symbol() == "┌" || cell.symbol() == "─" {
-                assert_eq!(cell.style().fg, Some(Color::Cyan));
+                assert_eq!(cell.style().fg, Some(Color::Blue));
                 found = true;
             }
         }
@@ -2580,5 +2932,48 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("up/down recent"));
         assert!(rendered.contains("enter switch"));
+    }
+
+    #[test]
+    fn draw_label_picker_shows_all_labels_row_and_every_repo_label() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.enter_label_picker();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("All labels"));
+        assert!(rendered.contains("bug"));
+        assert!(rendered.contains("docs"));
+    }
+
+    #[test]
+    fn draw_label_picker_marks_active_label_with_checkmark() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        let rendered = render_to_string(&state);
+        let bug_line = rendered.lines().find(|l| l.contains("bug")).unwrap();
+        assert!(bug_line.contains('\u{2713}'));
+        let docs_line = rendered.lines().find(|l| l.contains("docs")).unwrap();
+        assert!(!docs_line.contains('\u{2713}'));
+    }
+
+    #[test]
+    fn draw_label_picker_checkmark_follows_active_label_not_cursor() {
+        let mut state = AppState::new(vec![], labels(&["bug", "docs"]));
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(1); // cursor away from "bug" onto "docs"
+        let rendered = render_to_string(&state);
+        let bug_line = rendered.lines().find(|l| l.contains("bug")).unwrap();
+        assert!(bug_line.contains('\u{2713}'));
+        let docs_line = rendered.lines().find(|l| l.contains("docs")).unwrap();
+        assert!(!docs_line.contains('\u{2713}'));
+    }
+
+    #[test]
+    fn list_shortcuts_hint_mentions_label_filter_key() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.toggle_shortcuts();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("l label"));
     }
 }

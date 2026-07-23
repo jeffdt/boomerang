@@ -58,7 +58,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 
 - **Minimal setup.** Auto-detects the repo from the current directory via `gh`'s own git-remote detection, no config or `--repo` flag needed.
 - **Instant open.** Just kidding, it takes a second to fetch issues and labels. But you get a sweet loading animation while it runs to keep you distracted.
-- **One network call.** Fetches all open issues (including body and labels) in a single `gh issue list` call, so the description pane never needs a follow-up round trip.
+- **No round trip for descriptions.** Fetches open and closed issues (including body and labels) via two parallel `gh issue list` calls up front, so the description pane never needs a follow-up round trip — and cycling the state filter never refetches, only the manual refresh key does.
 - **Non-blocking edits.** Create and edit submissions run in the background with an in-place pending indicator, then refresh the list when `gh` returns.
 - **Built on `gh`.** All GitHub interaction shells out to the `gh` CLI, which must be installed and authenticated (`gh auth login`).
 
@@ -69,7 +69,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `j`/`k` (or `↓`/`↑`) | Move the cursor |
 | `h` | Hide/show the description pane (shown by default) |
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
-| `a` | Cycle state filter: open → closed → all |
+| `a` | Cycle state filter: open → triage → closed → all |
 | `Space` | Check/uncheck the selected issue for a multi-copy |
 | `c` | Create: title + body + label picker |
 | `Enter` / `e` | Edit the selected issue's title/body/labels |

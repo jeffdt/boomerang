@@ -43,7 +43,7 @@ pub fn list_args(state: StateFilter) -> Vec<String> {
         "--json".into(),
         "number,title,body,labels,state,url,createdAt".into(),
         "--limit".into(),
-        "200".into(),
+        "500".into(),
     ]
 }
 
@@ -58,15 +58,22 @@ pub fn labels_args() -> Vec<String> {
     ]
 }
 
-pub fn repo_name_args() -> Vec<String> {
-    vec![
-        "repo".into(),
-        "view".into(),
+/// Unlike every other subcommand this crate shells out to, `gh repo view`
+/// doesn't accept a `-R`/`--repo` flag; it takes the repo as a positional
+/// argument instead. So callers targeting an explicit repo must pass it
+/// here and skip `GhCliSource::run`'s automatic `-R` prefixing.
+pub fn repo_name_args(repo: Option<&str>) -> Vec<String> {
+    let mut args = vec!["repo".into(), "view".into()];
+    if let Some(repo) = repo {
+        args.push(repo.to_string());
+    }
+    args.extend([
         "--json".into(),
         "nameWithOwner".into(),
         "--jq".into(),
         ".nameWithOwner".into(),
-    ]
+    ]);
+    args
 }
 
 #[derive(Deserialize)]
@@ -247,19 +254,22 @@ impl GhCliSource {
             full_args.push(repo);
         }
         full_args.extend_from_slice(args);
+        self.exec(&full_args)
+    }
 
+    fn exec(&self, full_args: &[String]) -> Result<String> {
         let started = Instant::now();
-        let output = match Command::new("gh").args(&full_args).output() {
+        let output = match Command::new("gh").args(full_args).output() {
             Ok(output) => output,
             Err(e) => {
-                diagnostics::log_gh_spawn_error(&full_args, started.elapsed(), &e);
+                diagnostics::log_gh_spawn_error(full_args, started.elapsed(), &e);
                 if e.kind() == std::io::ErrorKind::NotFound {
                     bail!("`gh` CLI not found on PATH. Install it from https://cli.github.com and run `gh auth login`.");
                 }
                 return Err(e.into());
             }
         };
-        diagnostics::log_gh_result(&full_args, started.elapsed(), &output);
+        diagnostics::log_gh_result(full_args, started.elapsed(), &output);
         if !output.status.success() {
             bail!(
                 "gh {} failed: {}",
@@ -281,7 +291,8 @@ impl IssueSource for GhCliSource {
     }
 
     fn repo_name(&self) -> Result<String> {
-        Ok(parse_repo_name(&self.run(&repo_name_args())?))
+        let args = repo_name_args(self.current_repo().as_deref());
+        Ok(parse_repo_name(&self.exec(&args)?))
     }
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32> {
@@ -421,6 +432,16 @@ mod tests {
     }
 
     #[test]
+    fn list_args_requests_a_500_item_limit() {
+        let args = list_args(StateFilter::Open);
+        let limit_index = args
+            .iter()
+            .position(|a| a == "--limit")
+            .expect("list_args must pass --limit");
+        assert_eq!(args[limit_index + 1], "500");
+    }
+
+    #[test]
     fn state_filter_cycles_open_triage_closed_all() {
         assert_eq!(StateFilter::Open.cycle(), StateFilter::Triage);
         assert_eq!(StateFilter::Triage.cycle(), StateFilter::Closed);
@@ -502,12 +523,31 @@ mod tests {
 
     #[test]
     fn repo_name_args_requests_name_with_owner() {
-        let args = repo_name_args();
+        let args = repo_name_args(None);
         assert_eq!(
             args,
             strs(&[
                 "repo",
                 "view",
+                "--json",
+                "nameWithOwner",
+                "--jq",
+                ".nameWithOwner"
+            ])
+        );
+    }
+
+    #[test]
+    fn repo_name_args_puts_explicit_repo_positionally_not_as_a_flag() {
+        // `gh repo view` has no `-R`/`--repo` flag, unlike every other
+        // subcommand this crate calls; the repo must be a positional arg.
+        let args = repo_name_args(Some("jeffdt/boomerang"));
+        assert_eq!(
+            args,
+            strs(&[
+                "repo",
+                "view",
+                "jeffdt/boomerang",
                 "--json",
                 "nameWithOwner",
                 "--jq",

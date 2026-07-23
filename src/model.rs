@@ -26,13 +26,93 @@ use crate::search;
 use ratatui::style::{Color, Style};
 use ratatui_textarea::{CursorMove, TextArea, WrapMode};
 use std::collections::{BTreeSet, HashSet};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 const FLASH_GREEN_DURATION: Duration = Duration::from_millis(2000);
 const FLASH_GRAY_DURATION: Duration = Duration::from_millis(1600);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
-const ACTIVITY_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+const ACTIVITY_SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+
+const SPINNER_BRAILLE: &[char] = &['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣽', '⣻'];
+const SPINNER_SQUARE: &[char] = &['◰', '◳', '◲', '◱'];
+const SPINNER_BOUNCE: &[char] = &['⠉', '⠒', '⣀', '⠒'];
+const SPINNER_PULSE: &[char] = &['⣀', '⣤', '⣶', '⣾', '⣿', '⣾', '⣶', '⣤'];
+const SPINNER_MOON: &[char] = &['◓', '◑', '◒', '◐'];
+const SPINNER_CLOCK: &[char] = &['◷', '◶', '◵', '◴'];
+const SPINNER_DICE: &[char] = &['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+const SPINNER_CIRCLE_FILL: &[char] = &['○', '◔', '◑', '◕', '●'];
+const SPINNER_PISTON: &[char] = &['▁', '▃', '▅', '▇', '█', '▇', '▅', '▃'];
+const SPINNER_STAR: &[char] = &['✶', '✷', '✸', '✹'];
+const SPINNER_RINGS: &[char] = &['○', '◎', '●', '◎'];
+const SPINNER_MUSIC: &[char] = &['♩', '♪', '♫', '♬'];
+
+const SPINNER_PRESETS: [&[char]; 12] = [
+    SPINNER_BRAILLE,
+    SPINNER_SQUARE,
+    SPINNER_BOUNCE,
+    SPINNER_PULSE,
+    SPINNER_MOON,
+    SPINNER_CLOCK,
+    SPINNER_DICE,
+    SPINNER_CIRCLE_FILL,
+    SPINNER_PISTON,
+    SPINNER_STAR,
+    SPINNER_RINGS,
+    SPINNER_MUSIC,
+];
+
+/// Millisecond-resolution clock tick, shared by every random-glyph picker
+/// below (spinner presets and static status icons alike). Deliberately
+/// `.as_millis()` rather than `.as_nanos()`: on clocks whose real
+/// resolution is coarser than a nanosecond (e.g. microsecond-granular,
+/// where every sample's nanos are a multiple of 1000), raw nanos mod a
+/// preset count collapses onto whichever residues share a factor with
+/// 1000, reaching only a handful of presets no matter how many times it's
+/// called. Millis don't have that padding, so the modulo spreads across
+/// the full range.
+fn millis_tick() -> usize {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as usize)
+        .unwrap_or(0)
+}
+
+/// Shared indexing logic behind every tick-seeded picker below: spinner
+/// presets and static status icons alike just index a fixed set of options
+/// by `tick % options.len()`.
+fn pick_by_tick<T: Copy>(tick: usize, options: &[T]) -> T {
+    options[tick % options.len()]
+}
+
+/// Picks one of `SPINNER_PRESETS` at random for a newly started pending
+/// operation, so repeated actions (create, edit, close, refresh) don't
+/// always show the same glyph.
+fn random_spinner_frames() -> &'static [char] {
+    spinner_preset_for_tick(millis_tick())
+}
+
+fn spinner_preset_for_tick(tick: usize) -> &'static [char] {
+    pick_by_tick(tick, &SPINNER_PRESETS)
+}
+
+/// Candidate glyphs for a freshly set success status, e.g. "loaded 12
+/// issues in 350ms". One is picked at random each time `set_status_success`
+/// is called; unlike the pending spinner these are static (no animation),
+/// so the pick happens once, at set time, and is baked into the message.
+pub(crate) const SUCCESS_ICONS: [char; 6] = ['✓', '✔', '★', '✦', '✧', '✵'];
+
+/// Candidate glyphs for a freshly set error status, e.g. "gh error:
+/// network unreachable". Picked the same way as `SUCCESS_ICONS`.
+pub(crate) const ERROR_ICONS: [char; 5] = ['✗', '✘', '⚠', '☒', '⊗'];
+
+fn icon_for_tick(tick: usize, icons: &'static [char]) -> char {
+    pick_by_tick(tick, icons)
+}
+
+fn random_icon(icons: &'static [char]) -> char {
+    icon_for_tick(millis_tick(), icons)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -47,6 +127,7 @@ pub enum PendingOperation {
 pub struct PendingState {
     pub operation: PendingOperation,
     pub started_at: Instant,
+    pub frames: &'static [char],
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +146,7 @@ pub enum Mode {
     ConfirmDiscard(Box<Mode>),
     Settings,
     RepoPicker(Box<RepoPickerState>),
+    LabelPicker(Box<LabelPickerState>),
 }
 
 /// State for the repo picker (issue #20): type `owner/repo` or a github.com
@@ -90,18 +172,67 @@ pub struct RepoPickerState {
     pub can_cancel: bool,
 }
 
+/// Canonical table of the 16 named `ratatui::style::Color` variants, in the
+/// same order `ratatui::style::Color` defines them, pairing each name with
+/// its `Color` so the settings-row cycle (`settings_toggle`, below) and the
+/// renderer (`ui::color_from_name`) share one source of truth rather than
+/// maintaining a name list and a name-to-`Color` match independently. Never
+/// add an RGB entry here — named ANSI colors only, so the picker inherits
+/// the user's terminal theme (AGENTS.md durable design decision).
+pub(crate) const NAMED_COLORS: [(&str, Color); 16] = [
+    ("Black", Color::Black),
+    ("Red", Color::Red),
+    ("Green", Color::Green),
+    ("Yellow", Color::Yellow),
+    ("Blue", Color::Blue),
+    ("Magenta", Color::Magenta),
+    ("Cyan", Color::Cyan),
+    ("Gray", Color::Gray),
+    ("DarkGray", Color::DarkGray),
+    ("LightRed", Color::LightRed),
+    ("LightGreen", Color::LightGreen),
+    ("LightYellow", Color::LightYellow),
+    ("LightBlue", Color::LightBlue),
+    ("LightMagenta", Color::LightMagenta),
+    ("LightCyan", Color::LightCyan),
+    ("White", Color::White),
+];
+
+/// The accent color name new `AppState`/`Config` values start with, and
+/// `ui::color_from_name`'s fallback for a value that isn't in
+/// `NAMED_COLORS` (e.g. a hand-edited, corrupt `config.toml`).
+pub(crate) const DEFAULT_ACCENT_COLOR: &str = "Blue";
+
+/// State for the label-filter picker (issue #74). `labels` holds every
+/// repo label in the same order as `AppState.all_labels` (matching the
+/// edit form's `all_label_names` convention). `cursor` is 0 for the "All
+/// labels" pseudo-row, or `n` for `labels[n - 1]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelPickerState {
+    pub labels: Vec<String>,
+    pub cursor: usize,
+}
+
+impl LabelPickerState {
+    fn selected_label(&self) -> Option<&str> {
+        (self.cursor > 0).then(|| self.labels[self.cursor - 1].as_str())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     ExitOnCopyYank,
     ZebraStriping,
     ShortcutsOnDemand,
+    AccentColor,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 3] = [
+    pub const ALL: [SettingsRow; 4] = [
         SettingsRow::ExitOnCopyYank,
         SettingsRow::ZebraStriping,
         SettingsRow::ShortcutsOnDemand,
+        SettingsRow::AccentColor,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -109,6 +240,7 @@ impl SettingsRow {
             SettingsRow::ExitOnCopyYank => "Exit popup after copy/yank",
             SettingsRow::ZebraStriping => "Zebra striping",
             SettingsRow::ShortcutsOnDemand => "Show shortcuts",
+            SettingsRow::AccentColor => "Accent color",
         }
     }
 }
@@ -208,15 +340,23 @@ pub struct FormSubmission {
     pub remove_labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatusKind {
+    Info,
+    Success,
+    Error,
+}
+
 pub struct AppState {
     pub issues: Vec<Issue>,
     pub all_labels: Vec<Label>,
     pub state_filter: StateFilter,
+    pub label_filter: Option<String>,
     pub mode: Mode,
     pub cursor: usize,
     pub search_query: String,
     pub search_ranked: Vec<usize>,
-    pub status: Option<(String, Instant)>,
+    pub status: Option<(String, StatusKind, Instant)>,
     pub flash: Option<(u32, Instant)>,
     pub loading: Option<LoadingState>,
     pub pending: Option<PendingState>,
@@ -228,6 +368,7 @@ pub struct AppState {
     pub show_shortcuts_now: bool,
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
+    pub accent_color: String,
 }
 
 impl AppState {
@@ -236,6 +377,7 @@ impl AppState {
             issues,
             all_labels,
             state_filter: StateFilter::Open,
+            label_filter: None,
             mode: Mode::List,
             cursor: 0,
             search_query: String::new(),
@@ -252,6 +394,7 @@ impl AppState {
             show_shortcuts_now: false,
             settings_cursor: 0,
             checked: BTreeSet::new(),
+            accent_color: DEFAULT_ACCENT_COLOR.to_string(),
         }
     }
 
@@ -272,13 +415,29 @@ impl AppState {
             Mode::Search => self.search_ranked.clone(),
             _ => (0..self.issues.len()).collect(),
         };
-        if self.state_filter == StateFilter::Triage {
-            indices.retain(|&i| {
-                let issue = &self.issues[i];
-                issue.labels.is_empty() && issue.body.trim().is_empty()
-            });
-        }
+        indices.retain(|&i| {
+            let issue = &self.issues[i];
+            let passes_state = Self::matches_state_filter(issue, self.state_filter);
+            let passes_label = self
+                .label_filter
+                .as_ref()
+                .is_none_or(|name| issue.labels.iter().any(|l| &l.name == name));
+            passes_state && passes_label
+        });
         indices
+    }
+
+    fn matches_state_filter(issue: &Issue, filter: StateFilter) -> bool {
+        match filter {
+            StateFilter::Open => issue.state == IssueState::Open,
+            StateFilter::Closed => issue.state == IssueState::Closed,
+            StateFilter::All => true,
+            StateFilter::Triage => {
+                issue.state == IssueState::Open
+                    && issue.labels.is_empty()
+                    && issue.body.trim().is_empty()
+            }
+        }
     }
 
     pub fn selected_issue(&self) -> Option<&Issue> {
@@ -310,6 +469,13 @@ impl AppState {
             SettingsRow::ExitOnCopyYank => self.exit_on_copy_yank = !self.exit_on_copy_yank,
             SettingsRow::ZebraStriping => self.zebra_striping = !self.zebra_striping,
             SettingsRow::ShortcutsOnDemand => self.shortcuts_on_demand = !self.shortcuts_on_demand,
+            SettingsRow::AccentColor => {
+                let idx = NAMED_COLORS
+                    .iter()
+                    .position(|&(name, _)| name == self.accent_color)
+                    .unwrap_or(0);
+                self.accent_color = NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
+            }
         }
     }
 
@@ -406,6 +572,38 @@ impl AppState {
         }
     }
 
+    pub fn enter_label_picker(&mut self) {
+        let labels: Vec<String> = self.all_label_names();
+        let cursor = match &self.label_filter {
+            Some(active) => labels.iter().position(|name| name == active).map_or(0, |i| i + 1),
+            None => 0,
+        };
+        self.mode = Mode::LabelPicker(Box::new(LabelPickerState { labels, cursor }));
+    }
+
+    pub fn label_picker_move(&mut self, delta: isize) {
+        if let Mode::LabelPicker(picker) = &mut self.mode {
+            let len = picker.labels.len() + 1; // +1 for the "All labels" row
+            let current = picker.cursor as isize;
+            picker.cursor = (current + delta).rem_euclid(len as isize) as usize;
+        }
+    }
+
+    pub fn label_picker_select(&mut self) {
+        let Mode::LabelPicker(picker) = &self.mode else {
+            return;
+        };
+        let selected = picker.selected_label().map(str::to_string);
+        // Reselecting the row already active as the filter (or "All labels"
+        // when there's no selection) clears it instead of leaving it a no-op.
+        self.label_filter = if selected == self.label_filter { None } else { selected };
+        self.mode = Mode::List;
+    }
+
+    pub fn label_picker_cancel(&mut self) {
+        self.mode = Mode::List;
+    }
+
     pub fn move_cursor(&mut self, delta: isize) {
         let len = self.visible_indices().len();
         if len == 0 {
@@ -454,9 +652,22 @@ impl AppState {
     /// in the new list instead of resetting to the top.
     pub fn set_issues_selecting(&mut self, issues: Vec<Issue>, select_number: Option<u32>) {
         self.issues = issues;
-        self.cursor = select_number
-            .and_then(|number| self.issues.iter().position(|i| i.number == number))
-            .unwrap_or(0);
+        let target =
+            select_number.and_then(|number| self.issues.iter().position(|i| i.number == number));
+        self.cursor = self.visible_position_of(target);
+    }
+
+    /// Maps an absolute index into `self.issues` to its position within the
+    /// current `visible_indices()`, or `0` if it isn't visible under the
+    /// active filter (e.g. it was filtered out, or `target` is `None`).
+    fn visible_position_of(&self, target: Option<usize>) -> usize {
+        target
+            .and_then(|absolute_index| {
+                self.visible_indices()
+                    .iter()
+                    .position(|&i| i == absolute_index)
+            })
+            .unwrap_or(0)
     }
 
     pub fn cycle_state_filter(&mut self) -> StateFilter {
@@ -507,11 +718,10 @@ impl AppState {
     }
 
     pub fn exit_search(&mut self) {
-        if let Some(&idx) = self.search_ranked.get(self.cursor) {
-            self.cursor = idx;
-        }
+        let target = self.search_ranked.get(self.cursor).copied();
         self.mode = Mode::List;
         self.search_query.clear();
+        self.cursor = self.visible_position_of(target);
     }
 
     pub fn enter_little_create(&mut self) {
@@ -568,8 +778,12 @@ impl AppState {
         }
     }
 
+    fn all_label_names(&self) -> Vec<String> {
+        self.all_labels.iter().map(|l| l.name.clone()).collect()
+    }
+
     fn new_form_state(&self, editing: Option<u32>) -> FormState {
-        let all_label_names: Vec<String> = self.all_labels.iter().map(|l| l.name.clone()).collect();
+        let all_label_names: Vec<String> = self.all_label_names();
         let (title, body, selected_labels) = match editing.and_then(|n| self.find_issue(n)) {
             Some(issue) => (
                 issue.title.clone(),
@@ -745,7 +959,25 @@ impl AppState {
     }
 
     pub fn set_status(&mut self, message: String) {
-        self.status = Some((message, Instant::now()));
+        self.status = Some((message, StatusKind::Info, Instant::now()));
+    }
+
+    pub fn set_status_success(&mut self, message: String) {
+        let icon = random_icon(&SUCCESS_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Success,
+            Instant::now(),
+        ));
+    }
+
+    pub fn set_status_error(&mut self, message: String) {
+        let icon = random_icon(&ERROR_ICONS);
+        self.status = Some((
+            format!("{icon} {message}"),
+            StatusKind::Error,
+            Instant::now(),
+        ));
     }
 
     pub fn begin_loading(&mut self, what: &'static str) {
@@ -767,7 +999,7 @@ impl AppState {
         let loading = self.loading.as_ref()?;
         Some(format!(
             "{} Loading {}...",
-            spinner_frame(&loading.started_at),
+            spinner_frame(&loading.started_at, &ACTIVITY_SPINNER_FRAMES),
             loading.what
         ))
     }
@@ -776,6 +1008,7 @@ impl AppState {
         self.pending = Some(PendingState {
             operation,
             started_at: Instant::now(),
+            frames: random_spinner_frames(),
         });
     }
 
@@ -797,25 +1030,47 @@ impl AppState {
         };
         Some(format!(
             "{} {action}...",
-            spinner_frame(&pending.started_at)
+            spinner_frame(&pending.started_at, pending.frames)
         ))
     }
 
-    /// The list header split into its two parts: the state-filter prefix
-    /// (e.g. "Open issues") and the known repo, if it has loaded. `None` for
-    /// the repo while it hasn't loaded yet (or failed to). Shared by
-    /// `ui::draw_list` and `loading::draw`, which show the same header
-    /// before and after the issue list itself has loaded.
-    pub fn issues_header_parts(&self) -> (String, Option<String>) {
+    /// The list header split into its three parts: the state-filter prefix
+    /// (e.g. "Open issues"), the active label filter's name if any (kept
+    /// separate so `ui::draw_list` can render it in that label's own
+    /// color), and the known repo, if it has loaded (`None` while it hasn't
+    /// loaded yet, or failed to). Shared by `ui::draw_list` and
+    /// `loading::draw`, which show the same header before and after the
+    /// issue list itself has loaded.
+    pub fn issues_header_parts(&self) -> (String, Option<String>, Option<String>) {
         let prefix = format!("{:?} issues", self.state_filter);
-        (prefix, self.repo_name_with_owner.clone())
+        (prefix, self.label_filter.clone(), self.repo_name_with_owner.clone())
     }
 
     pub fn clear_expired_status(&mut self) {
-        if let Some((_, set_at)) = &self.status {
-            if set_at.elapsed() >= STATUS_TOAST_DURATION {
+        if let Some((_, kind, set_at)) = &self.status {
+            let lifetime = match kind {
+                StatusKind::Success => FLASH_GREEN_DURATION + FLASH_GRAY_DURATION,
+                StatusKind::Info | StatusKind::Error => STATUS_TOAST_DURATION,
+            };
+            if set_at.elapsed() >= lifetime {
                 self.status = None;
             }
+        }
+    }
+
+    /// The color the pending/status text should render in right now: yellow
+    /// while an operation is in flight (always wins over any stale status
+    /// color), green fading to dark gray for a few seconds after a success
+    /// (the same timing `flash_indicator` uses for the row flash), flat red
+    /// for an error, or `None` for a plain info message.
+    pub fn status_color(&self) -> Option<Color> {
+        if self.pending.is_some() {
+            return Some(Color::Yellow);
+        }
+        match &self.status {
+            Some((_, StatusKind::Success, set_at)) => Some(green_then_gray(set_at.elapsed())),
+            Some((_, StatusKind::Error, _)) => Some(Color::Red),
+            Some((_, StatusKind::Info, _)) | None => None,
         }
     }
 
@@ -830,10 +1085,8 @@ impl AppState {
         match self.flash {
             Some((flash_number, started_at)) if flash_number == number => {
                 let elapsed = started_at.elapsed();
-                if elapsed < FLASH_GREEN_DURATION {
-                    Some(Color::Green)
-                } else if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
-                    Some(Color::DarkGray)
+                if elapsed < FLASH_GREEN_DURATION + FLASH_GRAY_DURATION {
+                    Some(green_then_gray(elapsed))
                 } else {
                     None
                 }
@@ -851,11 +1104,21 @@ impl AppState {
     }
 }
 
-fn spinner_frame(started_at: &Instant) -> &'static str {
+/// Green for `FLASH_GREEN_DURATION`, then dark gray — the fade shared by the
+/// row flash (`flash_indicator`) and the status toast (`status_color`).
+fn green_then_gray(elapsed: Duration) -> Color {
+    if elapsed < FLASH_GREEN_DURATION {
+        Color::Green
+    } else {
+        Color::DarkGray
+    }
+}
+
+fn spinner_frame(started_at: &Instant, frames: &'static [char]) -> char {
     let frame_index = ((started_at.elapsed().as_millis() / ACTIVITY_SPINNER_INTERVAL.as_millis())
         as usize)
-        % ACTIVITY_SPINNER_FRAMES.len();
-    ACTIVITY_SPINNER_FRAMES[frame_index]
+        % frames.len();
+    frames[frame_index]
 }
 
 #[cfg(test)]
@@ -872,6 +1135,13 @@ mod tests {
             state: IssueState::Open,
             url: format!("https://example.com/{number}"),
             created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn labeled(number: u32, title: &str, label_name: &str) -> Issue {
+        Issue {
+            labels: vec![Label { name: label_name.into(), color: "ff0000".into() }],
+            ..issue(number, title)
         }
     }
 
@@ -962,6 +1232,73 @@ mod tests {
     }
 
     #[test]
+    fn exit_search_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: `self.issues` holds both open and closed issues, so
+        // an absolute index into it is no longer the same thing as a position
+        // within List mode's `visible_indices()` once a filter narrows things
+        // down. The closed issue ranks first in search results, but under the
+        // Open filter it must not be selectable back in List mode.
+        // Both titles score identically against "login", so the tie-break
+        // (candidate string ascending, see search::rank) decides the order:
+        // "Fix login bug" < "Fix login redirect", putting the closed issue
+        // first.
+        let open_issue = issue(1, "Fix login redirect");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login bug")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(
+            state.search_ranked,
+            vec![1, 0],
+            "closed issue ranks first for this query"
+        );
+        state.exit_search();
+        assert_eq!(state.mode, Mode::List);
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(1),
+            "cursor must land on the open issue's row, not blank and not the closed issue"
+        );
+    }
+
+    #[test]
+    fn set_issues_selecting_maps_absolute_index_to_visible_position_under_a_filter() {
+        // Regression test: closed issues are not a prefix of the merged list,
+        // so `select_number`'s absolute index in `self.issues` must be
+        // re-mapped to its position within Closed's `visible_indices()`.
+        let issues = vec![
+            issue(1, "open one"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(2, "closed one")
+            },
+            issue(3, "open two"),
+            Issue {
+                state: IssueState::Closed,
+                ..issue(4, "closed two")
+            },
+        ];
+        let mut state = AppState::new(vec![], vec![]);
+        state.state_filter = StateFilter::Closed;
+        state.set_issues_selecting(issues, Some(4));
+        assert_eq!(
+            state.visible_indices(),
+            vec![1, 3],
+            "closed issues sit at absolute indices 1 and 3"
+        );
+        assert_eq!(
+            state.selected_issue().map(|i| i.number),
+            Some(4),
+            "cursor must resolve to issue 4's visible position (1), not its absolute index (3)"
+        );
+    }
+
+    #[test]
     fn search_delete_word_removes_last_word() {
         let mut state = AppState::new(vec![issue(1, "fix login error")], vec![]);
         state.enter_search();
@@ -1019,14 +1356,146 @@ mod tests {
     }
 
     #[test]
+    fn visible_indices_filters_by_active_label() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn open_filter_excludes_closed_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn visible_indices_with_no_label_filter_shows_everything() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let state = AppState::new(issues, vec![]);
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn closed_filter_excludes_open_issues() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::Closed;
+        assert_eq!(state.visible_indices(), vec![1]);
+    }
+
+    #[test]
+    fn all_filter_shows_every_issue_regardless_of_state() {
+        let open_issue = issue(1, "Open one");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Closed one")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.state_filter = StateFilter::All;
+        assert_eq!(state.visible_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn visible_indices_combines_label_filter_with_triage_state_filter() {
+        let issues = vec![
+            labeled(1, "triage candidate with bug label", "bug"),
+            issue(2, "true triage candidate, no bug label"),
+        ];
+        let mut state = AppState::new(issues, vec![]);
+        state.state_filter = StateFilter::Triage;
+        state.label_filter = Some("bug".to_string());
+        // Issue 1 has the bug label but isn't empty-labels, so Triage excludes
+        // it regardless of the label filter; issue 2 passes Triage but doesn't
+        // carry the bug label. Combined, nothing should be visible.
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn triage_filter_excludes_closed_issues_even_without_labels_or_body() {
+        let untouched_but_closed = Issue {
+            state: IssueState::Closed,
+            ..issue(1, "quick capture stub")
+        };
+        let mut state = AppState::new(vec![untouched_but_closed], vec![]);
+        state.state_filter = StateFilter::Triage;
+        assert_eq!(state.visible_indices(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn issues_header_parts_includes_active_label_filter() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        let (prefix, label, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+        assert_eq!(label, Some("bug".to_string()));
+    }
+
+    #[test]
+    fn issues_header_parts_omits_label_suffix_when_not_filtering() {
+        let state = AppState::new(vec![], vec![]);
+        let (prefix, label, _) = state.issues_header_parts();
+        assert_eq!(prefix, "Open issues");
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn label_filter_survives_state_filter_cycling() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.cycle_state_filter();
+        state.cycle_state_filter();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+    }
+
+    #[test]
+    fn visible_indices_combines_label_filter_with_search() {
+        let issues = vec![labeled(1, "has bug", "bug"), issue(2, "no labels")];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.enter_search();
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn search_respects_active_state_filter() {
+        let open_issue = issue(1, "Fix login bug");
+        let closed_issue = Issue {
+            state: IssueState::Closed,
+            ..issue(2, "Fix login redirect")
+        };
+        let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
+        state.enter_search();
+        for c in "login".chars() {
+            state.search_push(c);
+        }
+        assert_eq!(state.visible_indices(), vec![0]);
+    }
+
+    #[test]
+    fn new_app_state_always_starts_with_no_label_filter() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
     fn issues_header_parts_splits_prefix_and_repo() {
         let mut state = AppState::new(vec![], vec![]);
-        let (prefix, repo) = state.issues_header_parts();
+        let (prefix, _, repo) = state.issues_header_parts();
         assert_eq!(prefix, "Open issues");
         assert_eq!(repo, None);
 
         state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
-        let (prefix, repo) = state.issues_header_parts();
+        let (prefix, _, repo) = state.issues_header_parts();
         assert_eq!(prefix, "Open issues");
         assert_eq!(repo, Some("jeffdt/boomerang".to_string()));
     }
@@ -1712,12 +2181,100 @@ mod tests {
     fn stale_status_is_cleared_by_expiry_check() {
         let mut state = AppState::new(vec![], vec![]);
         let set_at = Instant::now() - STATUS_TOAST_DURATION - Duration::from_millis(1);
-        state.status = Some(("copied: #1".to_string(), set_at));
+        state.status = Some(("copied: #1".to_string(), StatusKind::Info, set_at));
         state.clear_expired_status();
         assert!(
             state.status.is_none(),
             "a status older than STATUS_TOAST_DURATION should be cleared"
         );
+    }
+
+    #[test]
+    fn set_status_defaults_to_info_kind_with_no_color() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status("copied: #1".to_string());
+        assert_eq!(state.status_color(), None);
+    }
+
+    #[test]
+    fn set_status_success_is_green_immediately() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        assert_eq!(state.status_color(), Some(Color::Green));
+    }
+
+    #[test]
+    fn set_status_success_fades_to_gray_after_green_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state
+            .status
+            .take()
+            .map(|(msg, kind, set_at)| (msg, kind, set_at - FLASH_GREEN_DURATION));
+        assert_eq!(state.status_color(), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn set_status_error_is_red() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        assert_eq!(state.status_color(), Some(Color::Red));
+    }
+
+    #[test]
+    fn pending_overrides_a_stale_success_color_with_yellow() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.begin_pending(PendingOperation::RefreshList);
+        assert_eq!(state.status_color(), Some(Color::Yellow));
+    }
+
+    #[test]
+    fn success_status_survives_longer_than_the_old_toast_duration_before_expiring() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(
+            state.status.is_some(),
+            "a Success status shouldn't expire at the old 2s Info/Error duration"
+        );
+    }
+
+    #[test]
+    fn success_status_expires_after_the_full_fade_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - FLASH_GREEN_DURATION - FLASH_GRAY_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
+    }
+
+    #[test]
+    fn error_status_still_expires_at_the_original_toast_duration() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        state.status = state.status.take().map(|(msg, kind, set_at)| {
+            (
+                msg,
+                kind,
+                set_at - STATUS_TOAST_DURATION - Duration::from_millis(1),
+            )
+        });
+        state.clear_expired_status();
+        assert!(state.status.is_none());
     }
 
     #[test]
@@ -1911,7 +2468,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 2,
+            state.settings_cursor, 3,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -1964,6 +2521,34 @@ mod tests {
             !state.exit_on_copy_yank && state.zebra_striping,
             "toggling the third row must not affect the first two"
         );
+    }
+
+    #[test]
+    fn new_app_state_defaults_accent_color_to_blue() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.accent_color, "Blue");
+    }
+
+    #[test]
+    fn settings_toggle_cycles_accent_color_forward_and_wraps() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        assert_eq!(state.accent_color, "Blue");
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Magenta");
+        assert!(
+            !state.exit_on_copy_yank && state.zebra_striping && !state.shortcuts_on_demand,
+            "cycling the fourth row must not affect the other three"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_accent_color_wraps_from_white_back_to_black() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(3);
+        state.accent_color = "White".to_string();
+        state.settings_toggle();
+        assert_eq!(state.accent_color, "Black");
     }
 
     #[test]
@@ -2126,5 +2711,210 @@ mod tests {
             should_quit,
             "with nothing to fall back to, cancel should tell the caller to quit"
         );
+    }
+
+    fn label_picker_state(state: &AppState) -> &LabelPickerState {
+        match &state.mode {
+            Mode::LabelPicker(picker) => picker,
+            other => panic!("expected LabelPicker mode, got {other:?}"),
+        }
+    }
+
+    fn labels_fixture() -> Vec<Label> {
+        vec![
+            Label { name: "bug".into(), color: "d73a4a".into() },
+            Label { name: "docs".into(), color: "0075ca".into() },
+        ]
+    }
+
+    #[test]
+    fn enter_label_picker_lists_all_labels_with_cursor_on_all_labels_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        let picker = label_picker_state(&state);
+        assert_eq!(picker.labels, vec!["bug".to_string(), "docs".to_string()]);
+        assert_eq!(picker.cursor, 0);
+    }
+
+    #[test]
+    fn enter_label_picker_starts_cursor_on_active_label_row() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("docs".to_string());
+        state.enter_label_picker();
+        // row 0 = "All labels", row 1 = "bug", row 2 = "docs"
+        assert_eq!(label_picker_state(&state).cursor, 2);
+    }
+
+    #[test]
+    fn label_picker_move_wraps_across_all_rows() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(-1);
+        // 3 total rows (All labels, bug, docs); wrapping back from 0 lands on 2
+        assert_eq!(label_picker_state(&state).cursor, 2);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+    }
+
+    #[test]
+    fn label_picker_select_on_a_label_row_sets_label_filter_and_returns_to_list() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.enter_label_picker();
+        state.label_picker_move(1); // cursor -> "bug"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn label_picker_select_on_all_labels_row_clears_label_filter() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(-1); // cursor from "bug" row up to "All labels"
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_select_on_currently_active_label_toggles_it_off() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        // cursor already starts on the active "bug" row
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn label_picker_cancel_leaves_label_filter_untouched() {
+        let mut state = AppState::new(vec![], labels_fixture());
+        state.label_filter = Some("bug".to_string());
+        state.enter_label_picker();
+        state.label_picker_move(1);
+        state.label_picker_cancel();
+        assert_eq!(state.label_filter, Some("bug".to_string()));
+        assert_eq!(state.mode, Mode::List);
+    }
+
+    #[test]
+    fn label_picker_with_no_repo_labels_only_shows_all_labels_row() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_label_picker();
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_move(1);
+        assert_eq!(label_picker_state(&state).cursor, 0);
+        state.label_picker_select();
+        assert_eq!(state.label_filter, None);
+    }
+
+    #[test]
+    fn random_spinner_frames_always_returns_a_known_preset() {
+        for _ in 0..50 {
+            let frames = random_spinner_frames();
+            assert!(
+                SPINNER_PRESETS.contains(&frames),
+                "random_spinner_frames returned a slice not in SPINNER_PRESETS"
+            );
+        }
+    }
+
+    #[test]
+    fn spinner_preset_for_tick_reaches_every_preset_across_a_realistic_tick_range() {
+        // Regression test: seeding the pick off raw `.as_nanos()` on a clock
+        // whose actual resolution is coarser than a nanosecond (e.g. a
+        // microsecond-granular clock, where every sample's nanos are a
+        // multiple of 1000) confined the result to whichever residues share
+        // a factor with `1000 % SPINNER_PRESETS.len()` — only 3 of the 12
+        // presets, no matter how many times or how far apart it was called.
+        // Exercised here as a pure function over synthetic tick values
+        // (a plain, deterministic range) instead of real `SystemTime::now()`
+        // calls plus `thread::sleep` — same property, no reliance on real
+        // wall-clock time or its resolution, so nothing to be flaky about.
+        let seen: std::collections::HashSet<_> = (0..SPINNER_PRESETS.len())
+            .map(|tick| spinner_preset_for_tick(tick) as *const [char])
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SPINNER_PRESETS.len(),
+            "expected every preset to be reachable across one full tick cycle, got {} distinct ones",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn begin_pending_assigns_a_known_preset_to_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::RefreshList);
+        let frames = state.pending.as_ref().unwrap().frames;
+        assert!(SPINNER_PRESETS.contains(&frames));
+    }
+
+    #[test]
+    fn pending_message_first_glyph_is_a_char_from_the_assigned_preset() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_pending(PendingOperation::CreateIssue);
+        let frames = state.pending.as_ref().unwrap().frames;
+        let message = state.pending_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(frames.contains(&first_char));
+    }
+
+    #[test]
+    fn loading_message_glyph_still_uses_fixed_ascii_frames() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_loading("issues");
+        let message = state.loading_message().unwrap();
+        let first_char = message.chars().next().unwrap();
+        assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_success_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&SUCCESS_ICONS);
+            assert!(SUCCESS_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn random_icon_always_returns_a_known_error_icon() {
+        for _ in 0..50 {
+            let icon = random_icon(&ERROR_ICONS);
+            assert!(ERROR_ICONS.contains(&icon));
+        }
+    }
+
+    #[test]
+    fn icon_for_tick_reaches_every_success_icon_across_a_realistic_tick_range() {
+        let seen: std::collections::HashSet<char> = (0..SUCCESS_ICONS.len())
+            .map(|tick| icon_for_tick(tick, &SUCCESS_ICONS))
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SUCCESS_ICONS.len(),
+            "expected every icon to be reachable across one full tick cycle, got {} distinct ones",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn set_status_success_prefixes_message_with_a_known_success_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("created issue in 1s"));
+        let icon = message.chars().next().unwrap();
+        assert!(SUCCESS_ICONS.contains(&icon));
+    }
+
+    #[test]
+    fn set_status_error_prefixes_message_with_a_known_error_icon() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status_error("gh error: boom".to_string());
+        let message = state.status.as_ref().unwrap().0.clone();
+        assert!(message.ends_with("gh error: boom"));
+        let icon = message.chars().next().unwrap();
+        assert!(ERROR_ICONS.contains(&icon));
     }
 }

@@ -20,9 +20,9 @@ use std::io::{self, stdout};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use ui::{
-    map_confirm_key, map_form_key, map_list_key, map_little_create_key, map_search_key,
-    map_settings_key, ConfirmInput, FormInput, ListInput, LittleCreateInput, RepoPickerInput,
-    SearchInput, SettingsInput,
+    map_confirm_key, map_form_key, map_label_picker_key, map_list_key, map_little_create_key,
+    map_search_key, map_settings_key, ConfirmInput, FormInput, LabelPickerInput, ListInput,
+    LittleCreateInput, RepoPickerInput, SearchInput, SettingsInput,
 };
 
 const HELP: &str = "\
@@ -193,6 +193,7 @@ fn main() -> anyhow::Result<()> {
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
     state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
+    state.accent_color = loaded_config.accent_color.clone();
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
 }
@@ -304,7 +305,7 @@ fn capture_loop<S: IssueSource>(
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     state.finish_pending();
-                    state.set_status(gh_error_status(&e));
+                    state.set_status_error(gh_error_status(&e));
                 }
             }
         }
@@ -450,7 +451,7 @@ fn capture_full_loop<S: IssueSource>(
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     state.finish_pending();
-                    state.set_status(gh_error_status(&e));
+                    state.set_status_error(gh_error_status(&e));
                 }
             }
         }
@@ -679,8 +680,8 @@ fn event_loop<S: IssueSource>(
                     ListInput::EnterSearch => state.enter_search(),
                     ListInput::CycleStateFilter => {
                         state.cycle_state_filter();
-                        start_refresh(state, &mut refresh_rx, (*source).clone());
                     }
+                    ListInput::LabelFilter => state.enter_label_picker(),
                     ListInput::BigCreate => state.enter_big_create(),
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
@@ -797,6 +798,7 @@ fn event_loop<S: IssueSource>(
                         cfg.exit_on_copy_yank = state.exit_on_copy_yank;
                         cfg.zebra_striping = state.zebra_striping;
                         cfg.shortcuts_on_demand = state.shortcuts_on_demand;
+                        cfg.accent_color = state.accent_color.clone();
                         let _ = cfg.save_to(config_path);
                     }
                     SettingsInput::Exit => state.exit_settings(),
@@ -819,9 +821,46 @@ fn event_loop<S: IssueSource>(
                     }
                     RepoPickerInput::None => {}
                 },
+                Mode::LabelPicker(_) => match map_label_picker_key(key) {
+                    LabelPickerInput::Down => state.label_picker_move(1),
+                    LabelPickerInput::Up => state.label_picker_move(-1),
+                    LabelPickerInput::Select => state.label_picker_select(),
+                    LabelPickerInput::Cancel => state.label_picker_cancel(),
+                    LabelPickerInput::None => {}
+                },
             }
         }
     }
+}
+
+fn merge_issue_lists(open: Vec<Issue>, closed: Vec<Issue>) -> Vec<Issue> {
+    let mut issues = open;
+    issues.extend(closed);
+    issues
+}
+
+fn join_issue_list_handle(
+    handle: std::thread::JoinHandle<anyhow::Result<Vec<Issue>>>,
+    bucket: &str,
+) -> anyhow::Result<Vec<Issue>> {
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("{bucket} issue list thread panicked"))
+        .and_then(|result| result)
+}
+
+/// Fetches open and closed issues in parallel and merges them into one list.
+/// Blocks until both fetches complete, so callers that also need other data
+/// (labels, repo name) should spawn those threads first and call this after,
+/// to keep everything running concurrently.
+fn fetch_open_and_closed<S: IssueSource>(source: S) -> anyhow::Result<Vec<Issue>> {
+    let open_source = source.clone();
+    let closed_source = source;
+    let open_handle = std::thread::spawn(move || open_source.list(StateFilter::Open));
+    let closed_handle = std::thread::spawn(move || closed_source.list(StateFilter::Closed));
+    let open_result = join_issue_list_handle(open_handle, "open");
+    let closed_result = join_issue_list_handle(closed_handle, "closed");
+    open_result.and_then(|open| closed_result.map(|closed| merge_issue_lists(open, closed)))
 }
 
 fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
@@ -831,14 +870,10 @@ fn spawn_initial_load<S: IssueSource>(source: S) -> InitialLoadReceiver {
         let issues_source = source.clone();
         let labels_source = source.clone();
         let repo_name_source = source;
-        let issues_handle = std::thread::spawn(move || issues_source.list(StateFilter::Open));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
         let repo_name_handle = std::thread::spawn(move || repo_name_source.repo_name());
-        let issues_result = issues_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
-            .and_then(|result| result)
-            .map_err(diagnose_initial_load_error);
+        let issues_result =
+            fetch_open_and_closed(issues_source).map_err(diagnose_initial_load_error);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(InitialLoadSuccess {
@@ -875,6 +910,7 @@ fn switch_repo<S: IssueSource>(
     state.issues = Vec::new();
     state.all_labels = Vec::new();
     state.state_filter = StateFilter::Open;
+    state.label_filter = None;
     state.checked.clear();
     state.search_query.clear();
     state.repo_name_with_owner = None;
@@ -914,14 +950,14 @@ fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadS
             let count = success.issues.len();
             state.repo_name_with_owner = success.repo_name.clone();
             state.set_loaded(success.issues, success.labels);
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "loaded {count} issues in {}",
                 format_duration(success.elapsed)
             ));
         }
         Err(e) => {
             state.finish_loading();
-            state.set_status(gh_error_status(&e));
+            state.set_status_error(gh_error_status(&e));
         }
     }
 }
@@ -935,18 +971,14 @@ struct RefreshSuccess {
 
 type RefreshReceiver = Receiver<anyhow::Result<RefreshSuccess>>;
 
-fn spawn_refresh<S: IssueSource>(source: S, state_filter: StateFilter) -> RefreshReceiver {
+fn spawn_refresh<S: IssueSource>(source: S) -> RefreshReceiver {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let started = Instant::now();
         let issues_source = source.clone();
         let labels_source = source;
-        let issues_handle = std::thread::spawn(move || issues_source.list(state_filter));
         let labels_handle = std::thread::spawn(move || labels_source.labels());
-        let issues_result = issues_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("issue list thread panicked"))
-            .and_then(|result| result);
+        let issues_result = fetch_open_and_closed(issues_source);
         let result = match issues_result {
             Ok(issues) => match labels_handle.join() {
                 Ok(labels_result) => Ok(RefreshSuccess {
@@ -981,7 +1013,7 @@ fn start_refresh<S: IssueSource>(
     if state.is_pending() {
         return;
     }
-    *refresh_rx = Some(spawn_refresh(source, state.state_filter));
+    *refresh_rx = Some(spawn_refresh(source));
     state.begin_pending(PendingOperation::RefreshList);
 }
 
@@ -992,12 +1024,12 @@ fn finish_refresh(state: &mut AppState, result: anyhow::Result<RefreshSuccess>) 
             let count = success.issues.len();
             state.all_labels = success.labels;
             state.set_issues(success.issues);
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "refreshed {count} issues in {}",
                 format_duration(success.elapsed)
             ));
         }
-        Err(e) => state.set_status(gh_error_status(&e)),
+        Err(e) => state.set_status_error(gh_error_status(&e)),
     }
 }
 
@@ -1024,16 +1056,12 @@ fn start_mutation<S: IssueSource>(
     }
     let operation = request.operation();
     show_pending_draft(state, &draft);
-    *mutation_rx = Some(spawn_mutation(source, request, state.state_filter));
+    *mutation_rx = Some(spawn_mutation(source, request));
     *mutation_draft = Some(draft);
     state.begin_pending(operation);
 }
 
-fn spawn_mutation<S: IssueSource>(
-    source: S,
-    request: MutationRequest,
-    state_filter: StateFilter,
-) -> MutationReceiver {
+fn spawn_mutation<S: IssueSource>(source: S, request: MutationRequest) -> MutationReceiver {
     let operation = request.operation();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1041,8 +1069,7 @@ fn spawn_mutation<S: IssueSource>(
         let result = request.run(&source).and_then(|target_issue| {
             let action_elapsed = action_started.elapsed();
             let refresh_started = Instant::now();
-            let issues = source.list(state_filter)?;
-            Ok(MutationSuccess {
+            fetch_open_and_closed(source.clone()).map(|issues| MutationSuccess {
                 operation,
                 issues,
                 action_elapsed,
@@ -1068,7 +1095,7 @@ fn finish_mutation(
             if let Some(number) = success.target_issue {
                 state.start_flash(number);
             }
-            state.set_status(format!(
+            state.set_status_success(format!(
                 "{} in {}, refresh {}",
                 success_status_action(success.operation),
                 format_duration(success.action_elapsed),
@@ -1077,7 +1104,7 @@ fn finish_mutation(
         }
         Err(e) => {
             restore_mutation_draft(state, draft);
-            state.set_status(gh_error_status(&e));
+            state.set_status_error(gh_error_status(&e));
         }
     }
 }
@@ -1257,7 +1284,29 @@ fn open_in_browser(state: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::IssueState;
+    use crate::model::{IssueState, ERROR_ICONS, SUCCESS_ICONS};
+    use ratatui::style::Color;
+
+    fn assert_status_ends_with(state: &AppState, icons: &[char], suffix: &str) {
+        let message = state
+            .status
+            .as_ref()
+            .expect("status should be set")
+            .0
+            .clone();
+        assert!(
+            message.ends_with(suffix),
+            "expected status to end with {suffix:?}, got {message:?}"
+        );
+        let icon = message
+            .chars()
+            .next()
+            .expect("status message should have a leading icon");
+        assert!(
+            icons.contains(&icon),
+            "expected leading icon {icon:?} to be one of {icons:?}"
+        );
+    }
 
     fn issue(number: u32, title: &str) -> Issue {
         Issue {
@@ -1504,6 +1553,22 @@ mod tests {
     }
 
     #[test]
+    fn merge_issue_lists_concatenates_open_then_closed() {
+        let open = vec![issue(1, "Open one")];
+        let closed = vec![issue(2, "Closed one")];
+        assert_eq!(
+            merge_issue_lists(open.clone(), closed.clone()),
+            vec![issue(1, "Open one"), issue(2, "Closed one")]
+        );
+    }
+
+    #[test]
+    fn merge_issue_lists_handles_an_empty_bucket() {
+        let open = vec![issue(1, "Only open")];
+        assert_eq!(merge_issue_lists(open.clone(), vec![]), open);
+    }
+
+    #[test]
     fn finish_initial_load_populates_state_and_reports_timing() {
         let loaded = issue(7, "Loaded issue");
         let label = Label {
@@ -1523,10 +1588,8 @@ mod tests {
         assert_eq!(state.issues, vec![loaded]);
         assert_eq!(state.all_labels, vec![label]);
         assert!(!state.is_loading());
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("loaded 1 issues in 350ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "loaded 1 issues in 350ms");
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1549,10 +1612,8 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![refreshed]);
         assert_eq!(state.all_labels, vec![label]);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("refreshed 1 issues in 200ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "refreshed 1 issues in 200ms");
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1562,10 +1623,8 @@ mod tests {
         finish_refresh(&mut state, Err(anyhow::anyhow!("network unreachable")));
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![issue(1, "Existing issue")]);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("gh error: network unreachable")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network unreachable");
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1623,10 +1682,8 @@ mod tests {
         let mut state = AppState::loading();
         finish_initial_load(&mut state, Err(anyhow::anyhow!("repo unavailable")));
         assert!(!state.is_loading());
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("gh error: repo unavailable")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: repo unavailable");
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1648,10 +1705,8 @@ mod tests {
         assert_eq!(state.issues, vec![created]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("created issue in 1.2s, refresh 50ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "created issue in 1.2s, refresh 50ms");
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1678,10 +1733,8 @@ mod tests {
         assert_eq!(state.issues, vec![updated]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("updated issue in 950ms, refresh 75ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "updated issue in 950ms, refresh 75ms");
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1732,10 +1785,8 @@ mod tests {
         assert_eq!(state.issues, vec![remaining]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("closed issue in 400ms, refresh 30ms")
-        );
+        assert_status_ends_with(&state, &SUCCESS_ICONS, "closed issue in 400ms, refresh 30ms");
+        assert_eq!(state.status_color(), Some(Color::Green));
     }
 
     #[test]
@@ -1749,10 +1800,8 @@ mod tests {
         );
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("gh error: close failed")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: close failed");
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
@@ -1782,10 +1831,8 @@ mod tests {
             Err(anyhow::anyhow!("network failed")),
         );
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));
-        assert_eq!(
-            state.status.as_ref().map(|(msg, _)| msg.as_str()),
-            Some("gh error: network failed")
-        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network failed");
+        assert_eq!(state.status_color(), Some(Color::Red));
     }
 
     #[test]
