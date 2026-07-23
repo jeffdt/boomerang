@@ -134,6 +134,10 @@ pub struct PendingState {
 pub struct LoadingState {
     pub started_at: Instant,
     pub what: &'static str,
+    /// Seeds the per-bar phase/speed/direction of the loading spinner (see
+    /// `loading::bar_motion`), picked once per loading session so repeated
+    /// loads don't always animate identically.
+    pub seed: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -984,6 +988,7 @@ impl AppState {
         self.loading = Some(LoadingState {
             started_at: Instant::now(),
             what,
+            seed: millis_tick() as u64,
         });
     }
 
