@@ -557,22 +557,15 @@ fn draw_pane(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let idle = !state.is_loading() && !state.is_pending();
-    if idle {
-        if let Mode::Search = &state.mode {
-            let text = format!("/{}", state.search_query);
-            frame.render_widget(
-                Paragraph::new(text)
-                    .style(Style::default().fg(DIM))
-                    .wrap(Wrap { trim: false }),
-                area,
-            );
-            return;
-        }
-    }
     // The pending spinner text itself renders in draw_toast; repeating it
     // here would show it twice stacked in the footer.
     let lines: Vec<Line> = if !idle {
         vec![styled_hint("q quit")]
+    } else if let Mode::Search = &state.mode {
+        vec![Line::from(Span::styled(
+            format!("/{}", state.search_query),
+            Style::default().fg(DIM),
+        ))]
     } else {
         match &state.mode {
             Mode::Form(_) => vec![
@@ -598,9 +591,19 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             ))],
         }
     };
+    // Bottom-align: a single-line hint (pending/search/collapsed) should
+    // still hug the last row of its area rather than top-align and leave
+    // the bottom row blank, since this widget is the screen's bottom-most
+    // footer row wherever it's used.
+    let rendered_height = (lines.len() as u16).min(area.height);
+    let bottom_area = Rect {
+        y: area.y + area.height.saturating_sub(rendered_height),
+        height: rendered_height,
+        ..area
+    };
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        area,
+        bottom_area,
     );
 }
 
@@ -2327,6 +2330,50 @@ mod tests {
         assert!(
             toast_y < shortcuts_y,
             "expected toast row ({toast_y}) above shortcuts hint row ({shortcuts_y})"
+        );
+    }
+
+    #[test]
+    fn pending_shortcuts_hint_hugs_bottom_row_in_list_view() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.begin_pending(PendingOperation::CloseIssue);
+        let buf = render_buffer(&state);
+        let (_, hint_y) = find_in_buffer(&buf, "q quit").expect("shortcuts hint should render");
+        // chunks[2] (hint area) is 2 rows tall and starts at y=20, so last row is 21
+        let expected_last_row = 21;
+        assert_eq!(
+            hint_y, expected_last_row,
+            "expected single-line pending hint to render on the last row of its area ({expected_last_row}), got {hint_y}"
+        );
+    }
+
+    #[test]
+    fn search_mode_hint_hugs_bottom_row_in_list_view() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.enter_search();
+        state.search_push('x');
+        let buf = render_buffer(&state);
+        let (_, hint_y) = find_in_buffer(&buf, "/x").expect("search query hint should render");
+        // chunks[2] (hint area) is 2 rows tall and starts at y=20, so last row is 21
+        let expected_last_row = 21;
+        assert_eq!(
+            hint_y, expected_last_row,
+            "expected single-line search hint to render on the last row of its area ({expected_last_row}), got {hint_y}"
+        );
+    }
+
+    #[test]
+    fn on_demand_collapsed_hint_hugs_bottom_row_in_list_view() {
+        let mut state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
+        state.shortcuts_on_demand = true;
+        let buf = render_buffer(&state);
+        let (_, hint_y) =
+            find_in_buffer(&buf, "? shortcuts").expect("collapsed hint should render");
+        // chunks[2] (hint area) is 2 rows tall and starts at y=20, so last row is 21
+        let expected_last_row = 21;
+        assert_eq!(
+            hint_y, expected_last_row,
+            "expected collapsed hint to render on the last row of its area ({expected_last_row}), got {hint_y}"
         );
     }
 
