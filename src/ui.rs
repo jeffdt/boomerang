@@ -336,8 +336,8 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(1),
-                    Constraint::Length(2),
                     Constraint::Length(1),
+                    Constraint::Length(2),
                 ])
                 .split(inner);
             if state.pane_open {
@@ -350,8 +350,8 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             } else {
                 draw_list(frame, chunks[0], state);
             }
-            draw_shortcuts_hint(frame, chunks[1], state);
-            draw_toast(frame, chunks[2], state);
+            draw_toast(frame, chunks[1], state);
+            draw_shortcuts_hint(frame, chunks[2], state);
         }
     }
 }
@@ -749,8 +749,8 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(2),
             Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(area);
     let chunks = Layout::default()
@@ -824,8 +824,8 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         chunks[3],
     );
 
-    draw_shortcuts_hint(frame, outer_chunks[1], state);
-    draw_toast(frame, outer_chunks[2], state);
+    draw_toast(frame, outer_chunks[1], state);
+    draw_shortcuts_hint(frame, outer_chunks[2], state);
 }
 
 fn field_style(focused: bool) -> Style {
@@ -918,8 +918,8 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .collect();
     frame.render_widget(List::new(items), chunks[0]);
 
-    draw_shortcuts_hint(frame, chunks[1], state);
-    draw_toast(frame, chunks[2], state);
+    draw_toast(frame, chunks[1], state);
+    draw_shortcuts_hint(frame, chunks[2], state);
 }
 
 fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, state: &AppState) {
@@ -2280,6 +2280,53 @@ mod tests {
         assert!(
             !shortcuts_line.contains("Closing issue..."),
             "shortcuts hint row should not repeat the spinner text"
+        );
+    }
+
+    #[test]
+    fn toast_row_renders_above_shortcuts_hint_in_list_view() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_success("created issue in 1s".to_string());
+        let buf = render_buffer(&state);
+        let (_, toast_y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("toast should render");
+        let (_, shortcuts_y) =
+            find_in_buffer(&buf, "q quit").expect("shortcuts hint should render");
+        assert!(
+            toast_y < shortcuts_y,
+            "expected toast row ({toast_y}) above shortcuts hint row ({shortcuts_y})"
+        );
+    }
+
+    #[test]
+    fn toast_row_renders_above_shortcuts_hint_in_form_view() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.set_status_success("created issue in 1s".to_string());
+        let buf = render_buffer(&state);
+        let (_, toast_y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("toast should render");
+        let (_, shortcuts_y) =
+            find_in_buffer(&buf, "ctrl+s submit").expect("shortcuts hint should render");
+        assert!(
+            toast_y < shortcuts_y,
+            "expected toast row ({toast_y}) above shortcuts hint row ({shortcuts_y})"
+        );
+    }
+
+    #[test]
+    fn toast_row_renders_above_shortcuts_hint_in_settings_view() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.enter_settings();
+        state.set_status_success("created issue in 1s".to_string());
+        let buf = render_buffer(&state);
+        let (_, toast_y) =
+            find_in_buffer(&buf, "created issue in 1s").expect("toast should render");
+        let (_, shortcuts_y) =
+            find_in_buffer(&buf, "esc back").expect("shortcuts hint should render");
+        assert!(
+            toast_y < shortcuts_y,
+            "expected toast row ({toast_y}) above shortcuts hint row ({shortcuts_y})"
         );
     }
 
