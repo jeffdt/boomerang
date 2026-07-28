@@ -207,6 +207,11 @@ pub(crate) const NAMED_COLORS: [(&str, Color); 16] = [
 /// `NAMED_COLORS` (e.g. a hand-edited, corrupt `config.toml`).
 pub(crate) const DEFAULT_ACCENT_COLOR: &str = "Blue";
 
+/// The repo name's own accent color in the list header, deliberately
+/// distinct from `DEFAULT_ACCENT_COLOR` so the repo you're browsing stands
+/// out from the rest of the app's chrome (issue #95).
+pub(crate) const DEFAULT_REPO_ACCENT_COLOR: &str = "Green";
+
 /// State for the label-filter picker (issue #74). `labels` holds every
 /// repo label in the same order as `AppState.all_labels` (matching the
 /// edit form's `all_label_names` convention). `cursor` is 0 for the "All
@@ -229,14 +234,16 @@ pub enum SettingsRow {
     ZebraStriping,
     ShortcutsOnDemand,
     AccentColor,
+    RepoColor,
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 4] = [
+    pub const ALL: [SettingsRow; 5] = [
         SettingsRow::ExitOnCopyYank,
         SettingsRow::ZebraStriping,
         SettingsRow::ShortcutsOnDemand,
         SettingsRow::AccentColor,
+        SettingsRow::RepoColor,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -245,6 +252,7 @@ impl SettingsRow {
             SettingsRow::ZebraStriping => "Zebra striping",
             SettingsRow::ShortcutsOnDemand => "Show shortcuts",
             SettingsRow::AccentColor => "Accent color",
+            SettingsRow::RepoColor => "Repo color",
         }
     }
 }
@@ -373,6 +381,7 @@ pub struct AppState {
     pub settings_cursor: usize,
     pub checked: BTreeSet<u32>,
     pub accent_color: String,
+    pub repo_accent_color: String,
 }
 
 impl AppState {
@@ -399,6 +408,7 @@ impl AppState {
             settings_cursor: 0,
             checked: BTreeSet::new(),
             accent_color: DEFAULT_ACCENT_COLOR.to_string(),
+            repo_accent_color: DEFAULT_REPO_ACCENT_COLOR.to_string(),
         }
     }
 
@@ -479,6 +489,14 @@ impl AppState {
                     .position(|&(name, _)| name == self.accent_color)
                     .unwrap_or(0);
                 self.accent_color = NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
+            }
+            SettingsRow::RepoColor => {
+                let idx = NAMED_COLORS
+                    .iter()
+                    .position(|&(name, _)| name == self.repo_accent_color)
+                    .unwrap_or(0);
+                self.repo_accent_color =
+                    NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
             }
         }
     }
@@ -2473,7 +2491,7 @@ mod tests {
         assert_eq!(state.settings_cursor, 0);
         state.settings_move_cursor(-1);
         assert_eq!(
-            state.settings_cursor, 3,
+            state.settings_cursor, 4,
             "moving up from the top row should wrap to the bottom row"
         );
         state.settings_move_cursor(1);
@@ -2554,6 +2572,37 @@ mod tests {
         state.accent_color = "White".to_string();
         state.settings_toggle();
         assert_eq!(state.accent_color, "Black");
+    }
+
+    #[test]
+    fn new_app_state_defaults_repo_accent_color_to_green() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.repo_accent_color, "Green");
+    }
+
+    #[test]
+    fn settings_toggle_cycles_repo_color_forward_and_wraps() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(4);
+        assert_eq!(state.repo_accent_color, "Green");
+        state.settings_toggle();
+        assert_eq!(state.repo_accent_color, "Yellow");
+        assert!(
+            !state.exit_on_copy_yank
+                && state.zebra_striping
+                && !state.shortcuts_on_demand
+                && state.accent_color == "Blue",
+            "cycling the fifth row must not affect the other four"
+        );
+    }
+
+    #[test]
+    fn settings_toggle_repo_color_wraps_from_white_back_to_black() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.settings_move_cursor(4);
+        state.repo_accent_color = "White".to_string();
+        state.settings_toggle();
+        assert_eq!(state.repo_accent_color, "Black");
     }
 
     #[test]
