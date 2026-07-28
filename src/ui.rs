@@ -1418,6 +1418,15 @@ mod tests {
     }
 
     #[test]
+    fn draw_settings_shows_repo_color_row_defaulting_to_green() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_settings();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("Repo color"));
+        assert!(rendered.contains("Green"));
+    }
+
+    #[test]
     fn borders_use_a_cycled_non_default_accent_color() {
         let mut state = AppState::new(vec![issue(1, "a")], vec![]);
         state.accent_color = "Magenta".to_string();
