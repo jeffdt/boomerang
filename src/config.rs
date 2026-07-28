@@ -1,4 +1,4 @@
-use crate::model::DEFAULT_ACCENT_COLOR;
+use crate::model::{DEFAULT_ACCENT_COLOR, DEFAULT_REPO_ACCENT_COLOR};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ pub struct Config {
     pub shortcuts_on_demand: bool,
     pub recent_repos: Vec<String>,
     pub accent_color: String,
+    pub repo_accent_color: String,
 }
 
 impl Default for Config {
@@ -24,6 +25,7 @@ impl Default for Config {
             shortcuts_on_demand: false,
             recent_repos: Vec::new(),
             accent_color: DEFAULT_ACCENT_COLOR.to_string(),
+            repo_accent_color: DEFAULT_REPO_ACCENT_COLOR.to_string(),
         }
     }
 }
@@ -88,6 +90,7 @@ mod tests {
         assert!(!config.shortcuts_on_demand);
         assert!(config.recent_repos.is_empty());
         assert_eq!(config.accent_color, "Blue");
+        assert_eq!(config.repo_accent_color, "Green");
     }
 
     #[test]
@@ -116,6 +119,7 @@ mod tests {
             shortcuts_on_demand: true,
             recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             accent_color: "Magenta".to_string(),
+            repo_accent_color: "Cyan".to_string(),
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
