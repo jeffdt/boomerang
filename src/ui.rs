@@ -366,21 +366,23 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
         ])
         .split(area);
     let (prefix, label, repo) = state.issues_header_parts();
-    let mut spans = vec![Span::styled(prefix, Style::default().fg(DIM))];
+    let mut spans = Vec::new();
+    if let Some(repo) = repo {
+        spans.push(Span::styled("Repo: ", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            repo,
+            Style::default()
+                .fg(color_from_name(&state.repo_accent_color))
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" · ", Style::default().fg(DIM)));
+    }
+    spans.push(Span::styled(prefix, Style::default().fg(DIM)));
     if let Some(name) = &label {
         spans.push(Span::styled(" · label: ", Style::default().fg(DIM)));
         spans.push(Span::styled(
             name.clone(),
             label_style(label_palette_color(&state.all_labels, name)),
-        ));
-    }
-    if let Some(repo) = repo {
-        spans.push(Span::styled(" in ", Style::default().fg(DIM)));
-        spans.push(Span::styled(
-            repo,
-            Style::default()
-                .fg(color_from_name(&state.accent_color))
-                .add_modifier(Modifier::ITALIC),
         ));
     }
     if !state.checked.is_empty() {
@@ -1718,7 +1720,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_name_in_list_header_is_italic_and_accent_colored() {
+    fn repo_name_in_list_header_is_bold_and_repo_accent_colored() {
         let mut state = AppState::new(vec![], vec![]);
         state.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let buf = render_buffer(&state);
@@ -1726,25 +1728,25 @@ mod tests {
         let (rx, ry) = find_in_buffer(&buf, "jeffdt/boomerang").expect("repo name should render");
         let repo_style = buf[(rx, ry)].style();
         assert!(
-            repo_style.add_modifier.contains(Modifier::ITALIC),
-            "repo name should be italic"
+            repo_style.add_modifier.contains(Modifier::BOLD),
+            "repo name should be bold"
         );
         assert_eq!(
             repo_style.fg,
-            Some(Color::Blue),
-            "repo name should use the accent color (default Blue)"
+            Some(Color::Green),
+            "repo name should use the repo accent color (default Green)"
         );
 
-        let (px, py) = find_in_buffer(&buf, "Open issues in").expect("prefix should render");
+        let (px, py) = find_in_buffer(&buf, "Open issues").expect("prefix should render");
         let prefix_style = buf[(px, py)].style();
         assert_eq!(
             prefix_style.fg,
             Some(Color::DarkGray),
-            "the 'Open issues in' prefix should stay DIM"
+            "the 'Open issues' prefix should stay DIM"
         );
         assert!(
-            !prefix_style.add_modifier.contains(Modifier::ITALIC),
-            "the prefix should not be italic"
+            !prefix_style.add_modifier.contains(Modifier::BOLD),
+            "the prefix should not pick up the repo name's bold styling"
         );
     }
 
@@ -1787,16 +1789,16 @@ mod tests {
     }
 
     #[test]
-    fn list_header_leads_with_state_filter_and_trails_with_repo() {
+    fn list_header_leads_with_repo_and_trails_with_state_filter() {
         let mut with_repo = AppState::new(vec![], vec![]);
         with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let rendered = render_to_string(&with_repo);
-        assert!(rendered.contains("Open issues in jeffdt/boomerang"));
+        assert!(rendered.contains("Repo: jeffdt/boomerang · Open issues"));
 
         let without_repo = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&without_repo);
         assert!(rendered.contains("Open issues"));
-        assert!(!rendered.contains("Open issues in"));
+        assert!(!rendered.contains("Repo:"));
     }
 
     #[test]
@@ -1806,15 +1808,15 @@ mod tests {
 
         state.cycle_state_filter(); // Open -> Triage
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Triage issues in jeffdt/boomerang"));
+        assert!(rendered.contains("Repo: jeffdt/boomerang · Triage issues"));
 
         state.cycle_state_filter(); // Triage -> Closed
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Closed issues in jeffdt/boomerang"));
+        assert!(rendered.contains("Repo: jeffdt/boomerang · Closed issues"));
 
         state.cycle_state_filter(); // Closed -> All
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("All issues in jeffdt/boomerang"));
+        assert!(rendered.contains("Repo: jeffdt/boomerang · All issues"));
     }
 
     #[test]
