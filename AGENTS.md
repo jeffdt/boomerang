@@ -81,17 +81,19 @@ in the same session: bump, tag, wait for CI, update the tap. Don't leave
 `main` ahead of the latest release.
 
 The version bump rides in the PR that ships the change. Once it has merged,
-cut the tag and update the tap. `scripts/release.sh` automates the
-mechanical steps (mirrors rolomux's script of the same name); it expects the
-tap checked out at `~/code/homebrew-tap` (set `BOOMERANG_TAP_DIR` if it
-lives elsewhere):
+cut the tag and update the tap. `.claude/skills/cutting-a-release/release.sh`
+automates the mechanical steps (shared across jeffdt's TUI apps via the
+tui-utils subtree); it expects the tap checked out at `~/code/homebrew-tap`
+(set `BOOMERANG_TAP_DIR` if it lives elsewhere):
 
-1. On the feature branch, before opening the PR: `scripts/release.sh bump
-   <patch|minor|major>`. Bumps `Cargo.toml`, refreshes `Cargo.lock`, commits.
-   That commit rides in the PR.
+1. On the feature branch, before opening the PR:
+   `.claude/skills/cutting-a-release/release.sh bump <patch|minor|major>`.
+   Bumps `Cargo.toml`, refreshes `Cargo.lock`, commits. That commit rides in
+   the PR.
 2. After the PR merges: `git checkout main && git pull`, then
-   `scripts/release.sh cut`. Tags and pushes `vX.Y.Z`, waits for
-   `release.yml` (builds and attaches **`boomerang-aarch64-apple-darwin`**),
+   `.claude/skills/cutting-a-release/release.sh cut`. Tags and pushes
+   `vX.Y.Z`, waits for `release.yml` (builds and attaches
+   **`boomerang-aarch64-apple-darwin`**),
    downloads and hashes the asset, updates and validates
    `jeffdt/homebrew-tap`'s `Formula/boomerang.rb`, pushes the tap, and runs
    `brew update && brew upgrade jeffdt/tap/boomerang` locally.

@@ -6,6 +6,7 @@ specs/
 .claude/worktrees
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/.claude
 AGENTS.local.md
 CLAUDE.local.md
 
