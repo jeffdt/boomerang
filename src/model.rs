@@ -495,8 +495,7 @@ impl AppState {
                     .iter()
                     .position(|&(name, _)| name == self.repo_accent_color)
                     .unwrap_or(0);
-                self.repo_accent_color =
-                    NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
+                self.repo_accent_color = NAMED_COLORS[(idx + 1) % NAMED_COLORS.len()].0.to_string();
             }
         }
     }

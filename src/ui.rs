@@ -23,10 +23,10 @@ const LABEL_PALETTE: [Color; 6] = [
     Color::Red,
 ];
 
-/// Maps a `SettingsRow::AccentColor` value (one of `model::NAMED_COLORS`'s
-/// names) to its `ratatui::style::Color`. Falls back to `Color::Blue` — the
-/// app's default — for any unrecognized or corrupt config value, the same
-/// fallback pattern rolomux uses for its own color-name lookup.
+/// Maps a named color (one of `model::NAMED_COLORS`'s names) to its
+/// `ratatui::style::Color`. Used by both `accent_color` and `repo_accent_color`.
+/// Falls back to `Color::Blue` for any unrecognized or corrupt config value,
+/// the same fallback pattern rolomux uses for its own color-name lookup.
 fn color_from_name(name: &str) -> Color {
     NAMED_COLORS
         .iter()
