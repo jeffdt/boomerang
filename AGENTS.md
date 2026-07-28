@@ -81,17 +81,18 @@ in the same session: bump, tag, wait for CI, update the tap. Don't leave
 `main` ahead of the latest release.
 
 The version bump rides in the PR that ships the change. Once it has merged,
-cut the tag and update the tap. `.claude/skills/cutting-a-release/release.sh`
-automates the mechanical steps (shared across jeffdt's TUI apps via the
-tui-utils subtree); it expects the tap checked out at `~/code/homebrew-tap`
-(set `BOOMERANG_TAP_DIR` if it lives elsewhere):
+cut the tag and update the tap.
+`$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh` (from the
+`tui-utils` Claude Code plugin, shared across jeffdt's TUI apps) automates
+the mechanical steps; it expects the tap checked out at
+`~/code/homebrew-tap` (set `BOOMERANG_TAP_DIR` if it lives elsewhere):
 
 1. On the feature branch, before opening the PR:
-   `.claude/skills/cutting-a-release/release.sh bump <patch|minor|major>`.
-   Bumps `Cargo.toml`, refreshes `Cargo.lock`, commits. That commit rides in
-   the PR.
+   `$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh bump
+   <patch|minor|major>`. Bumps `Cargo.toml`, refreshes `Cargo.lock`,
+   commits. That commit rides in the PR.
 2. After the PR merges: `git checkout main && git pull`, then
-   `.claude/skills/cutting-a-release/release.sh cut`. Tags and pushes
+   `$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh cut`. Tags and pushes
    `vX.Y.Z`, waits for `release.yml` (builds and attaches
    **`boomerang-aarch64-apple-darwin`**),
    downloads and hashes the asset, updates and validates
