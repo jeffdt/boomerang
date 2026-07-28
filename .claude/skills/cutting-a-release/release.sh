@@ -1,25 +1,45 @@
 #!/usr/bin/env bash
-# Release helper mirroring AGENTS.md's "Cutting a release" workflow.
+# Shared release helper for jeffdt's TUI apps. See this skill's SKILL.md for
+# the full workflow this automates.
 #
-#   scripts/release.sh bump <patch|minor|major>
+#   release.sh bump <patch|minor|major>
 #       Run on the feature branch, before merging its PR. Bumps Cargo.toml,
-#       refreshes Cargo.lock, commits. The bump then rides in the PR as
-#       AGENTS.md requires.
+#       refreshes Cargo.lock, commits. That commit rides in the PR as usual.
 #
-#   scripts/release.sh cut
+#   release.sh cut
 #       Run after that PR has merged into main. Reads the version already
 #       committed there (no bump-type decision left to make), tags, waits
-#       for release.yml, hashes the asset, updates jeffdt/homebrew-tap,
-#       and upgrades the local install.
+#       for release.yml, hashes the asset, updates jeffdt/homebrew-tap, and
+#       upgrades the local install.
 #
-# Set BOOMERANG_TAP_DIR if the tap isn't checked out at ~/code/homebrew-tap.
+# Per-app naming (asset name, Homebrew formula name) defaults to the
+# Cargo.toml package name. Override either with a [package.metadata.tui-utils]
+# table in the app's own Cargo.toml, needed when the package name doesn't
+# match what ships (e.g. teleport's package is "tp-core" but its formula and
+# tap-dir env var are "tp"):
+#
+#   [package.metadata.tui-utils]
+#   asset_name = "tp-core"     # release asset / binary invoked at the end
+#   formula_name = "tp"        # Homebrew formula name + tap-dir env prefix
+#
+# The tap dir itself defaults to ~/code/homebrew-tap; override by setting
+# <FORMULA_NAME_UPPER>_TAP_DIR (e.g. ROLOMUX_TAP_DIR, TP_TAP_DIR).
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 CARGO_TOML="$REPO_ROOT/Cargo.toml"
-TAP_DIR="${BOOMERANG_TAP_DIR:-$HOME/code/homebrew-tap}"
-ASSET="boomerang-aarch64-apple-darwin"
+
+METADATA="$(cd "$REPO_ROOT" && cargo metadata --no-deps --format-version 1)"
+PKG_NAME="$(jq -r '.packages[0].name' <<< "$METADATA")"
+ASSET_BASE="$(jq -r --arg default "$PKG_NAME" '.packages[0].metadata."tui-utils".asset_name // $default' <<< "$METADATA")"
+FORMULA_NAME="$(jq -r --arg default "$PKG_NAME" '.packages[0].metadata."tui-utils".formula_name // $default' <<< "$METADATA")"
+ASSET="${ASSET_BASE}-aarch64-apple-darwin"
+BINARY_NAME="$ASSET_BASE"
+
+FORMULA_NAME_UPPER="$(echo "$FORMULA_NAME" | tr '[:lower:]-' '[:upper:]_')"
+TAP_DIR_VAR="${FORMULA_NAME_UPPER}_TAP_DIR"
+TAP_DIR="${!TAP_DIR_VAR:-$HOME/code/homebrew-tap}"
 
 current_version() {
     grep -m1 '^version = ' "$CARGO_TOML" | sed -E 's/version = "(.*)"/\1/'
@@ -103,13 +123,13 @@ cmd_cut() {
     echo "    sha256: $sha"
 
     if [[ ! -d "$TAP_DIR" ]]; then
-        echo "error: tap not found at $TAP_DIR (set BOOMERANG_TAP_DIR)" >&2
+        echo "error: tap not found at $TAP_DIR (set $TAP_DIR_VAR)" >&2
         exit 1
     fi
 
-    echo "==> Updating $TAP_DIR/Formula/boomerang.rb"
+    echo "==> Updating $TAP_DIR/Formula/$FORMULA_NAME.rb"
     (cd "$TAP_DIR" && git pull --ff-only)
-    local formula="$TAP_DIR/Formula/boomerang.rb"
+    local formula="$TAP_DIR/Formula/$FORMULA_NAME.rb"
     sed -i '' -E "s#download/v[0-9]+\.[0-9]+\.[0-9]+/$ASSET#download/$tag/$ASSET#" "$formula"
     sed -i '' -E "s/sha256 \"[a-f0-9]+\"/sha256 \"$sha\"/" "$formula"
 
@@ -119,14 +139,14 @@ cmd_cut() {
     (cd "$TAP_DIR" && brew audit --except=installed --tap=jeffdt/tap)
 
     echo "==> Pushing tap"
-    (cd "$TAP_DIR" && git add Formula/boomerang.rb && git commit -m "Bump boomerang to $version" && git push)
+    (cd "$TAP_DIR" && git add "Formula/$FORMULA_NAME.rb" && git commit -m "Bump $FORMULA_NAME to $version" && git push)
 
     echo "==> Upgrading local install"
     brew update
-    brew upgrade jeffdt/tap/boomerang
-    boomerang --version
+    brew upgrade "jeffdt/tap/$FORMULA_NAME"
+    "$BINARY_NAME" --version
 
-    echo "==> Done. boomerang $version is live."
+    echo "==> Done. $FORMULA_NAME $version is live."
 }
 
 case "${1:-}" in

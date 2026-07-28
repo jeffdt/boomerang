@@ -2,13 +2,11 @@
 name: mockup
 description: >-
   Use when building a terminal/ANSI mockup for a design discussion, before
-  locking in a visual or rendering change (AGENTS.md's "mock up
-  visual/rendering changes before writing the spec" step). Triggers include
-  "mock this up", "show me a mockup", "render this as ANSI", "let's compare
-  a couple of layouts". Do NOT use for the separate live-binary-preview
-  workflow (launching the real compiled binary via `mux spawn --cmd
-  target/release/<binary>`), since that already runs real code and has no
-  quality-consistency problem to fix.
+  locking in a visual or rendering change. Triggers include "mock this up",
+  "show me a mockup", "render this as ANSI", "let's compare a couple of
+  layouts". Do NOT use for the separate live-binary-preview workflow
+  (launching the real compiled binary, see the `live-preview` skill), since
+  that already runs real code and has no quality-consistency problem to fix.
 ---
 
 # Terminal mockup
@@ -16,6 +14,24 @@ description: >-
 Standardizes how fake (not-real-binary) ANSI terminal mockups get built for
 design discussions, so they no longer vary in quality by construction
 method, window naming, or dimension accuracy.
+
+## 0. Determine this app's mockup shape
+
+Two shapes exist across these TUI apps, and they use different dimensions:
+
+- **Fixed-width popup card** (e.g. rolomux, boomerang): the real binary
+  launches into a tmux popup of a known fixed width. Mockups are an 84-col
+  card with a 2-cell blank margin (80-col drawn content).
+- **Fills the terminal** (e.g. backlog): the real binary has no fixed
+  width, it fills whatever terminal/pane it's given. Mockups use a
+  representative size, 100 columns x 30 rows, instead of a popup card.
+
+Determine which shape this app uses before mocking anything up: check how
+the real binary is launched (the `live-preview` skill's `mux spawn`
+invocation, the app's README "Usage" section, or how `main.rs` sizes its
+viewport). If genuinely ambiguous, ask rather than assume. Once known, reuse
+that shape's dimensions for every mockup in this repo — don't re-derive it
+per task.
 
 ## 1. Start: task ID and topic
 
@@ -57,28 +73,33 @@ ANSI_FG = {
     'DarkGray': 90, 'LightRed': 91, 'LightGreen': 92, 'LightYellow': 93,
     'LightBlue': 94, 'LightMagenta': 95, 'LightCyan': 96, 'White': 97,
 }
+ANSI_BG = {name: code + 10 for name, code in ANSI_FG.items()}
 RESET = "\x1b[0m"
 
 def fg(name: str) -> str:
     return f"\x1b[{ANSI_FG[name]}m"
+
+def bg(name: str) -> str:
+    return f"\x1b[{ANSI_BG[name]}m"
 
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 def visible_width(s: str) -> int:
     return len(ANSI_RE.sub('', s))
 
-def row(content: str, width: int, left='│', right='│') -> str:
+def row(content: str, width: int, left='', right='') -> str:
     pad = width - visible_width(content) - visible_width(left) - visible_width(right)
     return f"{left}{content}{' ' * max(pad, 0)}{right}"
 ```
 
-`visible_width` always measures the ANSI-stripped string, so the right
-border lands in the same column on every row regardless of how many color
-codes are embedded earlier in that row. `wcwidth` is unnecessary as long as
-the project's UI is plain ASCII box-drawing with no wide characters.
+`visible_width` always measures the ANSI-stripped string, so padding (and
+any border characters) land in the same column on every row regardless of
+how many color codes are embedded earlier in that row. `wcwidth` is
+unnecessary as long as the project's UI is plain ASCII box-drawing with no
+wide characters.
 
-Example full mockup (an 84-col card with a 2-cell margin, one colored
-header row):
+Fixed-width popup example (an 84-col card with a 2-cell margin, one colored
+header row, bordered with `left='│', right='│'`):
 
 ```python
 WIDTH = 84
@@ -90,10 +111,33 @@ def main():
     print(blank_margin)
     print(" " * MARGIN + "┌" + "─" * (CARD_WIDTH - 2) + "┐" + " " * MARGIN)
     title = f"{fg('Cyan')} PINNED{RESET}"
-    print(" " * MARGIN + row(title, CARD_WIDTH) + " " * MARGIN)
-    print(" " * MARGIN + row("  1  my-session", CARD_WIDTH) + " " * MARGIN)
+    print(" " * MARGIN + row(title, CARD_WIDTH, '│', '│') + " " * MARGIN)
+    print(" " * MARGIN + row("  1  my-session", CARD_WIDTH, '│', '│') + " " * MARGIN)
     print(" " * MARGIN + "└" + "─" * (CARD_WIDTH - 2) + "┘" + " " * MARGIN)
     print(blank_margin)
+
+if __name__ == "__main__":
+    main()
+```
+
+Fills-terminal example (a 100-col search results list, one row highlighted,
+no card border):
+
+```python
+WIDTH = 100
+
+def main():
+    print(row(f"{fg('White')} search: hollow knight{RESET}", WIDTH))
+    print(row("", WIDTH))
+    rows = [
+        ("Hollow Knight", "steam", True),
+        ("Hollow Knight: Silksong", "steam", False),
+        ("Knight Squad", "epic", False),
+    ]
+    for name, platform, selected in rows:
+        line = f" {fg('Cyan')}{name}{RESET}  {fg('Blue')}{platform}{RESET}"
+        line_bg = bg('DarkGray') if selected else ''
+        print(f"{line_bg}{row(line, WIDTH)}{RESET}")
 
 if __name__ == "__main__":
     main()
@@ -109,11 +153,12 @@ crossterm would emit to a real terminal: the same rendering path the
 shipped binary uses, so alignment and color output are correct by
 construction, not by care.
 
-Use `Viewport::Fixed` explicitly. Without it, `CrosstermBackend::size()`
-queries the real attached terminal's size via `crossterm::terminal::size()`,
-which is wrong (or outright errors, since the agent's Bash tool has no
-controlling tty) when rendering headlessly. A fixed viewport sidesteps this
-entirely.
+Use `Viewport::Fixed` explicitly, sized to whichever shape this app uses (84
+x whatever height for a fixed-width popup, 100x30 for fills-terminal).
+Without it, `CrosstermBackend::size()` queries the real attached terminal's
+size via `crossterm::terminal::size()`, which is wrong (or outright errors,
+since the agent's Bash tool has no controlling tty) when rendering
+headlessly. A fixed viewport sidesteps this entirely.
 
 `CrosstermBackend::writer()` is gated behind an unstable ratatui feature and
 isn't callable on the pinned version, so don't rely on it to get the bytes
@@ -134,9 +179,9 @@ use ratatui::{
     Terminal, TerminalOptions, Viewport,
 };
 
-const WIDTH: u16 = 84;
-const HEIGHT: u16 = 20;
-const MARGIN: u16 = 2;
+const WIDTH: u16 = 84;   // or 100 for a fills-terminal app
+const HEIGHT: u16 = 20;  // or 30 for a fills-terminal app
+const MARGIN: u16 = 2;   // 0 for a fills-terminal app (no popup card)
 
 #[derive(Clone)]
 struct SharedBuf(Rc<RefCell<Vec<u8>>>);
@@ -177,26 +222,30 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-Run via `cargo run --example mockup --quiet`. If the crate is bin-only (no
-lib target), the example uses `ratatui::style::Color`'s named variants
-directly rather than importing the app's own internal color constants.
+Run via `cargo run --example mockup --quiet`. If the crate has a lib target,
+the example can `use <crate>::...` directly to reuse real functions (color
+constants, etc.) rather than hand-copying them. Bin-only crates use
+`ratatui::style::Color`'s named variants directly instead.
 
-Note: crossterm serializes ratatui's named colors as `\x1b[38;5;0`
-through `\x1b[38;5;15` (an indexed SGR form), not the classic
-`\x1b[30`-`\x1b[37`/`\x1b[90`-`\x1b[97` form the Python path uses. That's
-still the terminal's themed 16-color palette, not true 256-color or RGB;
-indices 0-15 are exactly the same 16 named colors, just addressed
-differently. Don't mistake a `38;5;N` (N <= 15) match for a color-fidelity
-violation when checking ratatui-path output.
+Note: crossterm serializes ratatui's named colors as `\x1b[38;5;0` through
+`\x1b[38;5;15` (an indexed SGR form), not the classic `\x1b[30`-`\x1b[37`/
+`\x1b[90`-`\x1b[97` form the Python path uses. That's still the terminal's
+themed 16-color palette, not true 256-color or RGB; indices 0-15 are
+exactly the same 16 named colors, just addressed differently. Don't mistake
+a `38;5;N`/`48;5;N` (N <= 15) match for a color-fidelity violation when
+checking ratatui-path output.
 
 ## 5. Standards (both methods)
 
-- **Width**: always 84 columns, `POPUP_MARGIN`-inset (2-cell blank margin,
-  then an 80-col drawn card). Height has no fixed number: pick whatever's
-  reasonable for the content.
-- **Colors**: only the 16 named ANSI colors shown in the `ANSI_FG` table
-  above (matches `ratatui::style::Color`'s named, non-RGB variants); never
-  invent a color the real picker couldn't produce.
+- **Size**: whichever shape section 0 determined for this app. Fixed-width
+  popup: always 84 columns, 2-cell margin, 80-col drawn card; height has no
+  fixed number, pick whatever's reasonable for the content. Fills-terminal:
+  a representative **100 columns x 30 rows**, unless the discussion
+  specifically concerns behavior at a narrower/shorter size, in which case
+  mock up that size instead and say so.
+- **Colors**: only the 16 named ANSI colors shown in the `ANSI_FG`/`ANSI_BG`
+  tables above (matches `ratatui::style::Color`'s named, non-RGB variants);
+  never invent a color the real app couldn't produce.
 
 ## 6. Launching
 
@@ -221,22 +270,30 @@ mux send --tab "$tab" --cmd "clear && cargo run --example mockup --quiet"
 extra option (never a separate window, never a virtualized text trick):
 
 ```bash
+tmux split-window -h -t "$tab"   # left-right, if the window is wide enough
+tmux split-window -t "$tab"      # stacked top-bottom otherwise (tmux default)
+```
+
+For a fixed-width popup app, check whether the window is wide enough for a
+true left-right split first (`N` options need `N*84 + (N-1)` columns):
+
+```bash
 width=$(tmux display-message -p -t "$tab" '#{window_width}')
-# N options need N*84 + (N-1) columns to fit true left-right
 ```
 
-If `$width` is large enough for all options at 84 cols each plus divider
-columns, split left-right:
+Write one script per option and label each variant inline in its own title
+row (e.g. `<app> -- BEFORE arrow` / `<app> -- AFTER arrow`, using this
+repo's actual app name) so the two panes are distinguishable at a glance
+without relying on pane position or memory of which command went where.
+
+`mux send --tab` only reaches a tab's *active* pane, so once split, target
+each pane directly. Grab their IDs first, then send each variant's command
+to its own pane:
 
 ```bash
-tmux split-window -h -t "$tab"
-```
-
-Otherwise split stacked top-bottom (tmux's default; omit `-h`), which
-always preserves each pane's 84-col width regardless of window size:
-
-```bash
-tmux split-window -t "$tab"
+tmux list-panes -t "$tab" -F '#{pane_id}'
+tmux send-keys -t "%142" "clear && python3 /path/to/variant_a.py" Enter
+tmux send-keys -t "%143" "clear && python3 /path/to/variant_b.py" Enter
 ```
 
 ## 7. Cleanup (mandatory, every time)
@@ -251,6 +308,6 @@ rm -f examples/mockup.rs   # only if the ratatui path was used
 ```
 
 Deleting `examples/mockup.rs` isn't just tidiness: it sits under `cargo
-clippy --all-targets -- -D warnings`, part of your own local build/test
-loop. Leaving it around would break the *next*, unrelated `cargo clippy`
-run.
+clippy --all-targets -- -D warnings` (or similar), part of your own local
+build/test loop. Leaving it around would break the *next*, unrelated `cargo
+clippy` run.
