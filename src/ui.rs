@@ -578,7 +578,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             ],
             Mode::Settings => vec![styled_hint("j/k move · enter/space toggle · esc back")],
             Mode::RepoPicker(_) => vec![styled_hint(
-                "type owner/repo or paste a url · up/down recent · tab toggle · enter switch · esc cancel",
+                "owner/repo or a url · up/down recent · tab toggle · enter switch · esc cancel",
             )],
             Mode::LabelPicker(_) => vec![styled_hint("j/k move · enter select · esc cancel")],
             _ if state.shortcuts_visible() => vec![
@@ -3065,6 +3065,8 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("up/down recent"));
         assert!(rendered.contains("enter switch"));
+        assert!(rendered.contains("tab toggle"));
+        assert!(rendered.contains("esc cancel"));
     }
 
     #[test]
