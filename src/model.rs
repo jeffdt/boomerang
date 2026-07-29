@@ -552,22 +552,48 @@ impl AppState {
         }
     }
 
-    /// Move the highlighted recent-repo suggestion by `delta`, wrapping, and
-    /// copy it into `input` so Enter submits it immediately and it stays
-    /// editable before that.
+    /// Move within the Recent history, claiming `History` focus. The first
+    /// press after `Input` focus lands on a real edge (`Down` → top/most
+    /// recent, `Up` → bottom/oldest) instead of moving relative to a
+    /// highlight the user never actually saw selected. Once already in
+    /// `History` focus, subsequent presses move relatively with wraparound,
+    /// same as before. Never writes into `input` — `focus` alone decides
+    /// what `repo_picker_submit` uses.
     pub fn repo_picker_move(&mut self, delta: isize) {
         if let Mode::RepoPicker(picker) = &mut self.mode {
             let len = picker.filtered.len();
             if len == 0 {
                 return;
             }
-            let current = picker.highlight as isize;
-            let next = (current + delta).rem_euclid(len as isize) as usize;
-            picker.highlight = next;
-            if let Some(&idx) = picker.filtered.get(next) {
-                picker.input = picker.recent[idx].clone();
+            match picker.focus {
+                RepoPickerFocus::Input => {
+                    picker.focus = RepoPickerFocus::History;
+                    picker.highlight = if delta > 0 { 0 } else { len - 1 };
+                }
+                RepoPickerFocus::History => {
+                    let current = picker.highlight as isize;
+                    let next = (current + delta).rem_euclid(len as isize) as usize;
+                    picker.highlight = next;
+                }
             }
             picker.error = None;
+        }
+    }
+
+    /// Toggle between `Input` and `History` focus with no side effects —
+    /// doesn't move `highlight` and doesn't touch `input`. Fills the one
+    /// gap Up/Down/typing don't cover: returning to the input field without
+    /// an edit keystroke. A no-op when there's nothing in the history list
+    /// to focus.
+    pub fn repo_picker_toggle_focus(&mut self) {
+        if let Mode::RepoPicker(picker) = &mut self.mode {
+            if picker.filtered.is_empty() {
+                return;
+            }
+            picker.focus = match picker.focus {
+                RepoPickerFocus::Input => RepoPickerFocus::History,
+                RepoPickerFocus::History => RepoPickerFocus::Input,
+            };
         }
     }
 
@@ -2747,22 +2773,56 @@ mod tests {
     }
 
     #[test]
-    fn repo_picker_move_wraps_and_autofills_input_from_highlighted_entry() {
+    fn repo_picker_move_lands_on_an_edge_on_first_press_from_input_focus() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec![
+                "jeffdt/boomerang".to_string(),
+                "jeffdt/rolomux".to_string(),
+                "jeffdt/universe".to_string(),
+            ],
+            true,
+        );
+        state.repo_picker_move(1);
+        let picker = repo_picker_state(&state);
+        assert_eq!(
+            picker.highlight, 0,
+            "first Down from Input focus lands on the top entry, not the second"
+        );
+        assert_eq!(picker.focus, RepoPickerFocus::History);
+        assert_eq!(picker.input, "", "history selection never writes into input");
+    }
+
+    #[test]
+    fn repo_picker_move_up_from_input_focus_lands_on_the_last_entry() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_move(-1);
+        let picker = repo_picker_state(&state);
+        assert_eq!(picker.highlight, 1);
+        assert_eq!(picker.focus, RepoPickerFocus::History);
+    }
+
+    #[test]
+    fn repo_picker_move_wraps_relatively_once_already_in_history_focus() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_repo_picker(
             vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             true,
         );
         state.repo_picker_move(1);
-        assert_eq!(repo_picker_state(&state).input, "jeffdt/rolomux");
+        assert_eq!(repo_picker_state(&state).highlight, 0);
+        state.repo_picker_move(1);
+        assert_eq!(repo_picker_state(&state).highlight, 1);
         state.repo_picker_move(1);
         assert_eq!(
-            repo_picker_state(&state).input,
-            "jeffdt/boomerang",
+            repo_picker_state(&state).highlight,
+            0,
             "moving past the end wraps back to the first entry"
         );
-        state.repo_picker_move(-1);
-        assert_eq!(repo_picker_state(&state).input, "jeffdt/rolomux");
     }
 
     #[test]
@@ -2771,6 +2831,32 @@ mod tests {
         state.enter_repo_picker(vec![], true);
         state.repo_picker_move(1);
         assert_eq!(repo_picker_state(&state).input, "");
+    }
+
+    #[test]
+    fn repo_picker_toggle_focus_switches_without_moving_highlight_or_input() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_push('x');
+        state.repo_picker_toggle_focus();
+        let picker = repo_picker_state(&state);
+        assert_eq!(picker.focus, RepoPickerFocus::History);
+        assert_eq!(picker.highlight, 0, "toggling doesn't move the highlight");
+        assert_eq!(picker.input, "x", "toggling doesn't touch input text");
+
+        state.repo_picker_toggle_focus();
+        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
+    }
+
+    #[test]
+    fn repo_picker_toggle_focus_is_a_no_op_with_no_recent_repos() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec![], true);
+        state.repo_picker_toggle_focus();
+        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
     }
 
     #[test]
