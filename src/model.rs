@@ -537,6 +537,7 @@ impl AppState {
     pub fn repo_picker_push(&mut self, c: char) {
         if let Mode::RepoPicker(picker) = &mut self.mode {
             picker.input.push(c);
+            picker.focus = RepoPickerFocus::Input;
             picker.error = None;
             Self::recompute_repo_filter(picker);
         }
@@ -545,6 +546,7 @@ impl AppState {
     pub fn repo_picker_backspace(&mut self) {
         if let Mode::RepoPicker(picker) = &mut self.mode {
             picker.input.pop();
+            picker.focus = RepoPickerFocus::Input;
             picker.error = None;
             Self::recompute_repo_filter(picker);
         }
@@ -2692,8 +2694,29 @@ mod tests {
         state.repo_picker_push('a');
         state.repo_picker_push('b');
         assert_eq!(repo_picker_state(&state).input, "ab");
+        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
         state.repo_picker_backspace();
         assert_eq!(repo_picker_state(&state).input, "a");
+        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
+    }
+
+    #[test]
+    fn repo_picker_push_reclaims_input_focus_from_history() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_move(1);
+        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::History);
+        assert_eq!(repo_picker_state(&state).highlight, 0);
+        state.repo_picker_push('x');
+        let picker = repo_picker_state(&state);
+        assert_eq!(picker.focus, RepoPickerFocus::Input);
+        assert_eq!(
+            picker.highlight, 0,
+            "reclaiming input focus doesn't mutate the stored highlight index"
+        );
     }
 
     #[test]
