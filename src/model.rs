@@ -597,10 +597,6 @@ impl AppState {
         }
     }
 
-    /// Resolve the picker's current input into an `owner/repo` target. On
-    /// success the caller is responsible for switching the source's repo and
-    /// leaving picker mode; on failure an error message is recorded on the
-    /// picker state and the mode is left unchanged so the user can correct it.
     /// Resolve the picker's current selection into an `owner/repo` target.
     /// When `focus == History`, submits the highlighted recent entry
     /// directly, ignoring whatever text (if any) sits in `input`. When
