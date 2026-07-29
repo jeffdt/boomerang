@@ -601,10 +601,22 @@ impl AppState {
     /// success the caller is responsible for switching the source's repo and
     /// leaving picker mode; on failure an error message is recorded on the
     /// picker state and the mode is left unchanged so the user can correct it.
+    /// Resolve the picker's current selection into an `owner/repo` target.
+    /// When `focus == History`, submits the highlighted recent entry
+    /// directly, ignoring whatever text (if any) sits in `input`. When
+    /// `focus == Input`, parses `input` as before. On failure (`Input`
+    /// focus only — a `History` selection is always a previously-valid
+    /// entry) an error message is recorded on the picker state and the
+    /// mode is left unchanged so the user can correct it.
     pub fn repo_picker_submit(&mut self) -> Option<String> {
         let Mode::RepoPicker(picker) = &mut self.mode else {
             return None;
         };
+        if picker.focus == RepoPickerFocus::History {
+            if let Some(&idx) = picker.filtered.get(picker.highlight) {
+                return Some(picker.recent[idx].clone());
+            }
+        }
         match crate::gh::parse_repo_spec(&picker.input) {
             Some(repo) => Some(repo),
             None => {
@@ -2894,6 +2906,22 @@ mod tests {
         assert_eq!(
             repo_picker_state(&state).error.as_deref(),
             Some("type a repo, e.g. owner/repo")
+        );
+    }
+
+    #[test]
+    fn repo_picker_submit_returns_highlighted_history_entry_ignoring_stray_input() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_push('x');
+        state.repo_picker_move(1);
+        assert_eq!(
+            state.repo_picker_submit(),
+            Some("jeffdt/rolomux".to_string()),
+            "History focus submits the highlighted recent entry, not the stray 'x' left in input"
         );
     }
 
