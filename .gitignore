@@ -1,12 +1,12 @@
 /target
-/examples/mockup.rs
-plans/
-specs/
-.claude/local
-.claude/worktrees
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
-.claude/.claude
-AGENTS.local.md
-CLAUDE.local.md
 
+/plans
+/specs
+/.superpowers
+/examples/mockup.rs
+*.local.md
+
+/.claude/local
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
+/.claude/worktrees
