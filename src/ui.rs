@@ -1,7 +1,7 @@
 use crate::loading;
 use crate::model::{
-    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerState, SettingsRow,
-    NAMED_COLORS,
+    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerFocus, RepoPickerState,
+    SettingsRow, NAMED_COLORS,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -578,7 +578,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
             ],
             Mode::Settings => vec![styled_hint("j/k move · enter/space toggle · esc back")],
             Mode::RepoPicker(_) => vec![styled_hint(
-                "type owner/repo or paste a url · up/down recent · enter switch · esc cancel",
+                "type owner/repo or paste a url · up/down recent · tab toggle · enter switch · esc cancel",
             )],
             Mode::LabelPicker(_) => vec![styled_hint("j/k move · enter select · esc cancel")],
             _ if state.shortcuts_visible() => vec![
@@ -941,20 +941,30 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
         ])
         .split(area);
 
+    let input_focused = picker.focus == RepoPickerFocus::Input;
     let input_block = Block::default()
         .borders(Borders::ALL)
         .title("owner/repo or a github.com URL")
-        .border_style(field_style(true));
+        .border_style(field_style(input_focused));
     let input_inner = input_block.inner(chunks[0]);
     frame.render_widget(input_block, chunks[0]);
-    frame.render_widget(Paragraph::new(picker.input.as_str()), input_inner);
+    let input_style = if input_focused {
+        Style::default()
+    } else {
+        Style::default().fg(DIM)
+    };
+    frame.render_widget(
+        Paragraph::new(picker.input.as_str()).style(input_style),
+        input_inner,
+    );
 
+    let history_focused = picker.focus == RepoPickerFocus::History;
     let items: Vec<ListItem> = picker
         .filtered
         .iter()
         .enumerate()
         .map(|(row, &idx)| {
-            let style = if row == picker.highlight {
+            let style = if history_focused && row == picker.highlight {
                 Style::default().bg(SEL_BG).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
@@ -962,7 +972,10 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
             ListItem::new(picker.recent[idx].clone()).style(style)
         })
         .collect();
-    let list_block = Block::default().borders(Borders::ALL).title("Recent");
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Recent")
+        .border_style(field_style(history_focused));
     if items.is_empty() {
         let message = if picker.recent.is_empty() {
             "No recent repos yet"
@@ -3052,6 +3065,71 @@ mod tests {
         let rendered = render_to_string(&state);
         assert!(rendered.contains("up/down recent"));
         assert!(rendered.contains("enter switch"));
+    }
+
+    #[test]
+    fn draw_repo_picker_input_border_is_yellow_when_input_focused() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(vec!["jeffdt/boomerang".to_string()], true);
+        let buf = render_buffer(&state);
+        let (x, y) =
+            find_in_buffer(&buf, "owner/repo or a github.com URL").expect("input title renders");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn draw_repo_picker_history_border_is_yellow_and_input_dims_once_history_focused() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        state.repo_picker_push('x');
+        state.repo_picker_move(1);
+        let buf = render_buffer(&state);
+
+        let (rx, ry) = find_in_buffer(&buf, "Recent").expect("recent title renders");
+        assert_eq!(buf[(rx, ry)].style().fg, Some(Color::Yellow));
+
+        let (ix, iy) =
+            find_in_buffer(&buf, "owner/repo or a github.com URL").expect("input title renders");
+        assert_eq!(
+            buf[(ix, iy)].style().fg,
+            Some(Color::Reset),
+            "input border is plain (Cell::style() always reports a concrete fg, Some(Color::Reset) when nothing set it, never None), not yellow, once history is focused"
+        );
+
+        let (tx, ty) = find_in_buffer(&buf, "x").expect("typed input character renders");
+        assert_eq!(
+            buf[(tx, ty)].style().fg,
+            Some(Color::DarkGray),
+            "input text dims once history is focused"
+        );
+    }
+
+    #[test]
+    fn draw_repo_picker_shows_no_highlighted_row_until_history_focused() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_repo_picker(
+            vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
+            true,
+        );
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "jeffdt/boomerang").expect("recent entry renders");
+        assert_eq!(
+            buf[(x, y)].style().bg,
+            Some(Color::Reset),
+            "boot state: nothing in Recent is selected yet (Cell::style() always reports a concrete bg, Some(Color::Reset) when nothing set it, never None)"
+        );
+
+        state.repo_picker_move(1);
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "jeffdt/boomerang").expect("recent entry renders");
+        assert_eq!(
+            buf[(x, y)].style().bg,
+            Some(Color::DarkGray),
+            "after Down, the top entry is highlighted"
+        );
     }
 
     #[test]
