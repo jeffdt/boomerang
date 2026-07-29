@@ -13,6 +13,17 @@ it is not a tmux plugin and runs no background process. Same architectural
 family as its sibling project, [rolomux](https://github.com/jeffdt/rolomux)
 (formerly `smux`).
 
+## Claude Code plugin
+
+Shared skills (`mockup`, `vhs-recording`, `cutting-a-release`, `live-preview`)
+come from the `tui-utils` plugin (github.com/jeffdt/tui-utils), not this
+repo. One-time per machine:
+
+```
+/plugin marketplace add jeffdt/tui-utils
+/plugin install tui-utils@tui-utils
+```
+
 ## Durable design decisions
 
 - **Mock up visual/rendering changes before writing the spec.** When a design
