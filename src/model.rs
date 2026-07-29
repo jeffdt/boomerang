@@ -153,6 +153,17 @@ pub enum Mode {
     LabelPicker(Box<LabelPickerState>),
 }
 
+/// Which surface of the repo picker currently owns keyboard input and
+/// would be submitted on Enter. Typing/Backspace claim `Input`; Up/Down
+/// claim `History`; Tab/Shift+Tab toggle explicitly. `input` and the
+/// history list (`recent`/`filtered`/`highlight`) never copy into each
+/// other — this field alone decides what Enter submits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoPickerFocus {
+    Input,
+    History,
+}
+
 /// State for the repo picker (issue #20): type `owner/repo` or a github.com
 /// URL directly, or move `highlight` through `recent` (most-recent-first
 /// history from config) to autofill `input` from a prior target. `filtered`
@@ -164,7 +175,7 @@ pub struct RepoPickerState {
     pub recent: Vec<String>,
     pub filtered: Vec<usize>,
     pub highlight: usize,
-    pub error: Option<String>,
+    pub focus: RepoPickerFocus,
     /// Whether Esc can back out to a prior list view. False only when the
     /// picker *is* the entire startup screen (launched outside a git repo
     /// with no repo passed on the CLI), in which case there's no list behind
@@ -174,6 +185,7 @@ pub struct RepoPickerState {
     /// a real repo context exists (e.g. mid-switch, before the fetch lands,
     /// or if it fails while the issue list itself loaded fine).
     pub can_cancel: bool,
+    pub error: Option<String>,
 }
 
 /// Canonical table of the 16 named `ratatui::style::Color` variants, in the
@@ -507,6 +519,7 @@ impl AppState {
             recent,
             filtered,
             highlight: 0,
+            focus: RepoPickerFocus::Input,
             error: None,
             can_cancel,
         }));
@@ -2668,6 +2681,7 @@ mod tests {
         assert_eq!(picker.input, "");
         assert_eq!(picker.filtered, vec![0, 1]);
         assert_eq!(picker.highlight, 0);
+        assert_eq!(picker.focus, RepoPickerFocus::Input);
         assert_eq!(picker.error, None);
     }
 
