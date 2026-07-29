@@ -149,6 +149,25 @@ It is not responsible for your commits, PRs, releases, or builds.
 Its only job is to package your ideas into issues and help you find them again later.
 It should be fun to use and easy on the eyes, and should never clash with the aesthetics of your terminal.
 
+## Development
+
+```sh
+cargo build
+cargo test
+cargo run
+```
+
+This repo also ships two Claude Code skills for working on it visually:
+`mockup`, for comparing ANSI mockups of a design change before
+implementing it, and `live-preview`, for popping the freshly built binary
+open in a real tmux window once a feature is done. Both come from the
+`tui-utils` plugin:
+
+```
+/plugin marketplace add jeffdt/tui-utils
+/plugin install tui-utils@tui-utils
+```
+
 ## Disclaimer
 
 This project was fully vibe coded. Use at your own risk.
