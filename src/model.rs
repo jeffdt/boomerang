@@ -839,14 +839,19 @@ impl AppState {
 
     pub fn form_input(&mut self, input: ratatui_textarea::Input) {
         if let Mode::Form(form) = &mut self.mode {
-            match form.field {
-                FormField::Title => {
-                    form.title_input.input(input);
-                }
-                FormField::Body => {
-                    form.body_input.input(input);
-                }
-                FormField::Labels | FormField::Submit => {}
+            let textarea = match form.field {
+                FormField::Title => &mut form.title_input,
+                FormField::Body => &mut form.body_input,
+                FormField::Labels | FormField::Submit => return,
+            };
+            // ratatui-textarea's own default keymap binds Ctrl+U to undo(), but the
+            // footer hint advertises "ctrl+u clear line" (see draw_shortcuts_hint in
+            // ui.rs), matching the near-universal readline convention. Intercept it
+            // here rather than let it fall through to the library default.
+            if input.key == ratatui_textarea::Key::Char('u') && input.ctrl {
+                textarea.delete_line_by_head();
+            } else {
+                textarea.input(input);
             }
         }
     }
@@ -1900,19 +1905,42 @@ mod tests {
     }
 
     #[test]
-    fn form_input_ctrl_u_then_ctrl_r_is_undo_then_redo() {
+    fn form_input_ctrl_u_clears_to_line_start_on_title() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        type_str(&mut state, "a");
+        type_str(&mut state, "hello world");
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left);
+        press(&mut state, ratatui_textarea::Key::Left); // between "hello " and "world"
         press_ctrl(&mut state, ratatui_textarea::Key::Char('u'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_text(), "", "Ctrl+U undoes the last insertion");
+            assert_eq!(
+                form.title_text(),
+                "world",
+                "the footer hint advertises ctrl+u as clear line, not undo"
+            );
+            assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
             panic!("expected Form mode");
         }
-        press_ctrl(&mut state, ratatui_textarea::Key::Char('r'));
+    }
+
+    #[test]
+    fn form_input_ctrl_u_on_body_is_scoped_to_current_line() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.form_next_field(); // Body
+        type_str(&mut state, "one\ntwo");
+        press_ctrl(&mut state, ratatui_textarea::Key::Char('u'));
         if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.title_text(), "a", "Ctrl+R redoes it");
+            assert_eq!(
+                form.body_text(),
+                "one\n",
+                "clearing on the second line must not touch the first line"
+            );
+            assert_eq!(form.body_input.cursor(), (1, 0));
         } else {
             panic!("expected Form mode");
         }
