@@ -811,6 +811,7 @@ fn event_loop<S: IssueSource>(
                     RepoPickerInput::Backspace => state.repo_picker_backspace(),
                     RepoPickerInput::Up => state.repo_picker_move(-1),
                     RepoPickerInput::Down => state.repo_picker_move(1),
+                    RepoPickerInput::ToggleFocus => state.repo_picker_toggle_focus(),
                     RepoPickerInput::Cancel => {
                         if state.repo_picker_cancel() {
                             return Ok(());

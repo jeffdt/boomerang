@@ -225,6 +225,7 @@ pub enum RepoPickerInput {
     Backspace,
     Up,
     Down,
+    ToggleFocus,
     Submit,
     Cancel,
     None,
@@ -236,6 +237,7 @@ pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
         KeyCode::Esc => RepoPickerInput::Cancel,
         KeyCode::Up => RepoPickerInput::Up,
         KeyCode::Down => RepoPickerInput::Down,
+        KeyCode::Tab | KeyCode::BackTab => RepoPickerInput::ToggleFocus,
         KeyCode::Backspace => RepoPickerInput::Backspace,
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             RepoPickerInput::Char(c)
@@ -1363,6 +1365,18 @@ mod tests {
         assert_eq!(
             map_repo_picker_key(key(KeyCode::Esc)),
             RepoPickerInput::Cancel
+        );
+    }
+
+    #[test]
+    fn map_repo_picker_key_maps_tab_and_backtab_to_toggle_focus() {
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Tab)),
+            RepoPickerInput::ToggleFocus
+        );
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::BackTab)),
+            RepoPickerInput::ToggleFocus
         );
     }
 
