@@ -394,6 +394,10 @@ pub struct AppState {
     pub checked: BTreeSet<u32>,
     pub accent_color: String,
     pub repo_accent_color: String,
+    pub yank_template_primary: String,
+    pub yank_template_secondary: String,
+    pub yank_template_tertiary: String,
+    pub yank_multi_delimiter: String,
 }
 
 impl AppState {
@@ -421,6 +425,10 @@ impl AppState {
             checked: BTreeSet::new(),
             accent_color: DEFAULT_ACCENT_COLOR.to_string(),
             repo_accent_color: DEFAULT_REPO_ACCENT_COLOR.to_string(),
+            yank_template_primary: crate::copy::DEFAULT_TEMPLATE_PRIMARY.to_string(),
+            yank_template_secondary: crate::copy::DEFAULT_TEMPLATE_SECONDARY.to_string(),
+            yank_template_tertiary: crate::copy::DEFAULT_TEMPLATE_TERTIARY.to_string(),
+            yank_multi_delimiter: crate::copy::DEFAULT_MULTI_DELIMITER.to_string(),
         }
     }
 
@@ -2549,6 +2557,15 @@ mod tests {
         let state = AppState::new(vec![], vec![]);
         assert!(!state.exit_on_copy_yank);
         assert!(state.zebra_striping);
+    }
+
+    #[test]
+    fn new_app_state_defaults_yank_templates_and_delimiter() {
+        let state = AppState::new(vec![], vec![]);
+        assert_eq!(state.yank_template_primary, crate::copy::DEFAULT_TEMPLATE_PRIMARY);
+        assert_eq!(state.yank_template_secondary, crate::copy::DEFAULT_TEMPLATE_SECONDARY);
+        assert_eq!(state.yank_template_tertiary, crate::copy::DEFAULT_TEMPLATE_TERTIARY);
+        assert_eq!(state.yank_multi_delimiter, crate::copy::DEFAULT_MULTI_DELIMITER);
     }
 
     #[test]
