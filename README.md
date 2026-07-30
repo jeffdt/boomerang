@@ -75,9 +75,9 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `o` | Open the selected issue in your browser |
-| `y` | Copy `#123` to the clipboard (or every checked issue, comma-joined, if any are checked) |
-| `Y` (shift+y) | Copy a markdown link to the clipboard |
-| `Ctrl-y` | Copy the plain URL to the clipboard |
+| `y` | Copy using the primary yank template (default: `#123`; every checked issue is rendered and joined if any are checked — see [Customizing yank templates](#customizing-yank-templates)) |
+| `Y` (shift+y) | Copy using the secondary yank template (default: a markdown link) |
+| `Ctrl-y` | Copy using the tertiary yank template (default: the plain URL) |
 | `R` (shift+r) | Switch to a different repo |
 | `,` | Open Settings |
 | `?` | Reveal the shortcut legend, if "Show shortcuts" is set to On demand |
@@ -101,6 +101,55 @@ row, and `q`/`Esc` returns to the list.
 | Exit popup after copy/yank | Off | When on, a successful `y`/`Y`/`Ctrl-y` copy closes the popup immediately instead of staying open. |
 | Zebra striping | On | Dims every other row in the issue list to make scanning easier. Uses your terminal's own faint/dim rendering rather than a fixed color, so it adapts to your terminal theme. |
 | Show shortcuts | Always | When set to On demand, the list's footer shortcut legend stays collapsed to a `? shortcuts` nudge until you press `?`; it starts collapsed again next launch. |
+
+## Customizing yank templates
+
+`y` / `Y` / `Ctrl-y` each yank a template string, set in
+`~/.config/boomerang/config.toml` (or `$XDG_CONFIG_HOME/boomerang/config.toml`):
+
+```toml
+yank_template_primary = "#{number}"
+yank_template_secondary = "[#{number}: {title}]({url})"
+yank_template_tertiary = "{url}"
+yank_multi_delimiter = ", "
+```
+
+These are the defaults shown above — matching today's `y`/`Y`/`Ctrl-y`
+output exactly, so nobody needs to touch `config.toml` to keep the current
+behavior.
+
+Available variables: `{number}`, `{title}`, `{url}`, `{body}`, and
+`{body_short:N}` (the body truncated to `N` characters, with `...`
+appended only if it was actually truncated).
+
+When multiple issues are checked, a template with no special markup
+repeats in full and joins with `yank_multi_delimiter` — e.g. checking two
+issues with the default `yank_template_primary` yanks `#1, #2`.
+
+To combine a per-issue chunk with text that should appear only once (say,
+prompting an AI coding assistant with every checked issue in one shot),
+wrap the repeating part in `<<...>>`:
+
+```toml
+yank_template_primary = "claude \"Let's implement <<#{number} - {title}>>\""
+```
+
+Checking issues `#1 Create repo`, `#2 Create readme.md`, and `#3 Set up CI`
+and pressing `y` yanks:
+
+```
+claude "Let's implement #1 - Create repo, #2 - Create readme.md, #3 - Set up CI"
+```
+
+An invalid template (an unknown variable, a malformed `{body_short:N}`, or
+a variable placed outside a `<<...>>` block) reverts to its slot's default
+at startup, with a one-line warning in the status bar explaining why.
+
+> [!NOTE]
+> Any plain-text join is ambiguous once a field can itself contain the
+> separator (e.g. a comma inside a title, when `yank_multi_delimiter` is
+> `", "`). If that bites you, pick a `yank_multi_delimiter` unlikely to
+> appear in your own issue text, like `" | "` or a newline.
 
 ## Quick capture
 
