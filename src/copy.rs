@@ -149,21 +149,6 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn format_reference(issue: &Issue) -> String {
-    format!("#{}", issue.number)
-}
-
-#[allow(dead_code)]
-pub fn format_markdown_link(issue: &Issue) -> String {
-    format!("[#{}: {}]({})", issue.number, issue.title, issue.url)
-}
-
-#[allow(dead_code)]
-pub fn format_url(issue: &Issue) -> String {
-    issue.url.clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -168,6 +168,7 @@ fn main() -> anyhow::Result<()> {
 
     let config_path = config::config_path();
     let mut loaded_config = config::Config::load_from(&config_path);
+    let yank_template_warnings = loaded_config.repair_yank_templates();
     if let Some(repo) = &cli_repo {
         loaded_config.remember_repo(repo);
         let _ = loaded_config.save_to(&config_path);
@@ -195,6 +196,13 @@ fn main() -> anyhow::Result<()> {
     state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
     state.accent_color = loaded_config.accent_color.clone();
     state.repo_accent_color = loaded_config.repo_accent_color.clone();
+    state.yank_template_primary = loaded_config.yank_template_primary.clone();
+    state.yank_template_secondary = loaded_config.yank_template_secondary.clone();
+    state.yank_template_tertiary = loaded_config.yank_template_tertiary.clone();
+    state.yank_multi_delimiter = loaded_config.yank_multi_delimiter.clone();
+    if !yank_template_warnings.is_empty() {
+        state.set_status_error(yank_template_warnings.join("; "));
+    }
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
 }
@@ -687,19 +695,24 @@ fn event_loop<S: IssueSource>(
                     ListInput::Edit => state.enter_edit(),
                     ListInput::RequestClose => state.request_close(),
                     ListInput::ToggleCheck => state.toggle_check(),
-                    ListInput::CopyReference => {
-                        if copy_selected(state, copy::format_reference, copy::copy_to_clipboard) {
+                    ListInput::CopyPrimary => {
+                        let template = state.yank_template_primary.clone();
+                        let delimiter = state.yank_multi_delimiter.clone();
+                        if copy_selected(state, &template, &delimiter, copy::copy_to_clipboard) {
                             return Ok(());
                         }
                     }
-                    ListInput::CopyMarkdownLink => {
-                        if copy_selected(state, copy::format_markdown_link, copy::copy_to_clipboard)
-                        {
+                    ListInput::CopySecondary => {
+                        let template = state.yank_template_secondary.clone();
+                        let delimiter = state.yank_multi_delimiter.clone();
+                        if copy_selected(state, &template, &delimiter, copy::copy_to_clipboard) {
                             return Ok(());
                         }
                     }
-                    ListInput::CopyUrl => {
-                        if copy_selected(state, copy::format_url, copy::copy_to_clipboard) {
+                    ListInput::CopyTertiary => {
+                        let template = state.yank_template_tertiary.clone();
+                        let delimiter = state.yank_multi_delimiter.clone();
+                        if copy_selected(state, &template, &delimiter, copy::copy_to_clipboard) {
                             return Ok(());
                         }
                     }
@@ -1226,23 +1239,24 @@ fn probe_auth_status() -> bool {
 
 fn copy_selected(
     state: &mut AppState,
-    format: impl Fn(&model::Issue) -> String,
+    template: &str,
+    delimiter: &str,
     copy_fn: impl Fn(&str) -> anyhow::Result<()>,
 ) -> bool {
     if !state.checked.is_empty() {
         let numbers: Vec<u32> = state.checked.iter().copied().collect();
-        let texts: Vec<String> = numbers
+        let issues: Vec<&model::Issue> = numbers
             .iter()
             .filter_map(|&number| state.find_issue(number))
-            .map(&format)
             .collect();
-        if texts.is_empty() {
+        if issues.is_empty() {
             return false;
         }
-        let text = texts.join(", ");
+        let count = issues.len();
+        let text = copy::render_template(template, &issues, delimiter);
         return match copy_fn(&text) {
             Ok(()) => {
-                state.set_status(format!("copied {}: {text}", texts.len()));
+                state.set_status(format!("copied {count}: {text}"));
                 state.checked.clear();
                 state.exit_on_copy_yank
             }
@@ -1253,7 +1267,7 @@ fn copy_selected(
         };
     }
     if let Some(issue) = state.selected_issue() {
-        let text = format(issue);
+        let text = copy::render_template(template, &[issue], delimiter);
         match copy_fn(&text) {
             Ok(()) => {
                 state.set_status(format!("copied: {text}"));
@@ -1337,7 +1351,8 @@ mod tests {
         state.exit_on_copy_yank = true;
         assert!(copy_selected(
             &mut state,
-            copy::format_reference,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
             fake_copy_ok
         ));
     }
@@ -1348,7 +1363,8 @@ mod tests {
         state.exit_on_copy_yank = false;
         assert!(!copy_selected(
             &mut state,
-            copy::format_reference,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
             fake_copy_ok
         ));
     }
@@ -1359,7 +1375,8 @@ mod tests {
         state.exit_on_copy_yank = true;
         assert!(!copy_selected(
             &mut state,
-            copy::format_reference,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
             fake_copy_ok
         ));
     }
@@ -1372,7 +1389,12 @@ mod tests {
         );
         state.checked.insert(1);
         state.checked.insert(3);
-        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
+        copy_selected(
+            &mut state,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
+            fake_copy_ok,
+        );
         assert_eq!(state.status.as_ref().unwrap().0, "copied 2: #1, #3");
     }
 
@@ -1383,7 +1405,12 @@ mod tests {
         state.exit_on_copy_yank = false;
         state.checked.insert(1);
         state.checked.insert(2);
-        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
+        copy_selected(
+            &mut state,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
+            fake_copy_ok,
+        );
         assert!(state.checked.is_empty());
     }
 
@@ -1392,14 +1419,24 @@ mod tests {
         let mut state = AppState::new(vec![issue(1, "one")], vec![]);
         state.checked.insert(1);
         state.checked.insert(999);
-        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
+        copy_selected(
+            &mut state,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
+            fake_copy_ok,
+        );
         assert_eq!(state.status.as_ref().unwrap().0, "copied 1: #1");
     }
 
     #[test]
     fn copy_selected_falls_back_to_single_issue_when_nothing_checked() {
         let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
-        copy_selected(&mut state, copy::format_reference, fake_copy_ok);
+        copy_selected(
+            &mut state,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
+            fake_copy_ok,
+        );
         assert_eq!(state.status.as_ref().unwrap().0, "copied: #1");
     }
 
@@ -1409,13 +1446,62 @@ mod tests {
         state.exit_on_copy_yank = true;
         assert!(!copy_selected(
             &mut state,
-            copy::format_reference,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            copy::DEFAULT_MULTI_DELIMITER,
             fake_copy_err
         ));
         assert_eq!(
             state.status.as_ref().unwrap().0,
             "copy failed: no clipboard"
         );
+    }
+
+    #[test]
+    fn copy_selected_renders_repeat_block_template_across_checked_issues() {
+        let mut state = AppState::new(
+            vec![issue(1, "Create repo"), issue(2, "Create readme.md")],
+            vec![],
+        );
+        state.checked.insert(1);
+        state.checked.insert(2);
+        copy_selected(
+            &mut state,
+            "claude \"Let's implement <<#{number} - {title}>>\"",
+            ", ",
+            fake_copy_ok,
+        );
+        assert_eq!(
+            state.status.as_ref().unwrap().0,
+            "copied 2: claude \"Let's implement #1 - Create repo, #2 - Create readme.md\""
+        );
+    }
+
+    #[test]
+    fn copy_selected_honors_a_custom_multi_delimiter() {
+        let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
+        state.checked.insert(1);
+        state.checked.insert(2);
+        copy_selected(&mut state, copy::DEFAULT_TEMPLATE_PRIMARY, " | ", fake_copy_ok);
+        assert_eq!(state.status.as_ref().unwrap().0, "copied 2: #1 | #2");
+    }
+
+    #[test]
+    fn repair_yank_templates_warning_is_surfaced_as_a_startup_status() {
+        let mut config = config::Config {
+            yank_template_secondary: "{not_a_real_variable}".to_string(),
+            ..config::Config::default()
+        };
+        let warnings = config.repair_yank_templates();
+        let mut state = AppState::new(vec![], vec![]);
+        if !warnings.is_empty() {
+            state.set_status_error(warnings.join("; "));
+        }
+        assert!(state
+            .status
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("yank_template_secondary"));
     }
 
     #[test]
