@@ -75,7 +75,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `o` | Open the selected issue in your browser |
-| `y` | Copy using the primary yank template (default: `#123`; every checked issue is rendered and joined if any are checked — see [Customizing yank templates](#customizing-yank-templates)) |
+| `y` | Copy using the primary yank template (default: `#123`; every checked issue is rendered and joined if any are checked, see [Customizing yank templates](#customizing-yank-templates)) |
 | `Y` (shift+y) | Copy using the secondary yank template (default: a markdown link) |
 | `Ctrl-y` | Copy using the tertiary yank template (default: the plain URL) |
 | `R` (shift+r) | Switch to a different repo |
@@ -114,7 +114,7 @@ yank_template_tertiary = "{url}"
 yank_multi_delimiter = ", "
 ```
 
-These are the defaults shown above — matching today's `y`/`Y`/`Ctrl-y`
+These are the defaults shown above, matching today's `y`/`Y`/`Ctrl-y`
 output exactly, so nobody needs to touch `config.toml` to keep the current
 behavior.
 
@@ -123,7 +123,7 @@ Available variables: `{number}`, `{title}`, `{url}`, `{body}`, and
 appended only if it was actually truncated).
 
 When multiple issues are checked, a template with no special markup
-repeats in full and joins with `yank_multi_delimiter` — e.g. checking two
+repeats in full and joins with `yank_multi_delimiter`: checking two
 issues with the default `yank_template_primary` yanks `#1, #2`.
 
 To combine a per-issue chunk with text that should appear only once (say,
@@ -150,6 +150,11 @@ at startup, with a one-line warning in the status bar explaining why.
 > separator (e.g. a comma inside a title, when `yank_multi_delimiter` is
 > `", "`). If that bites you, pick a `yank_multi_delimiter` unlikely to
 > appear in your own issue text, like `" | "` or a newline.
+>
+> Templates that build a shell command (like the `claude "..."` example
+> above) should be pasted carefully: issue titles and bodies are untrusted
+> external text, and on a public repo they could contain characters a
+> shell would interpret, like `"`, `;`, or `$(...)`.
 
 ## Quick capture
 

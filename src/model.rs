@@ -398,6 +398,7 @@ pub struct AppState {
     pub yank_template_secondary: String,
     pub yank_template_tertiary: String,
     pub yank_multi_delimiter: String,
+    pub yank_template_warning: Option<String>,
 }
 
 impl AppState {
@@ -429,6 +430,7 @@ impl AppState {
             yank_template_secondary: crate::copy::DEFAULT_TEMPLATE_SECONDARY.to_string(),
             yank_template_tertiary: crate::copy::DEFAULT_TEMPLATE_TERTIARY.to_string(),
             yank_multi_delimiter: crate::copy::DEFAULT_MULTI_DELIMITER.to_string(),
+            yank_template_warning: None,
         }
     }
 

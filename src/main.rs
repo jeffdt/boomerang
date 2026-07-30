@@ -168,11 +168,11 @@ fn main() -> anyhow::Result<()> {
 
     let config_path = config::config_path();
     let mut loaded_config = config::Config::load_from(&config_path);
-    let yank_template_warnings = loaded_config.repair_yank_templates();
     if let Some(repo) = &cli_repo {
         loaded_config.remember_repo(repo);
         let _ = loaded_config.save_to(&config_path);
     }
+    let yank_template_warnings = loaded_config.repair_yank_templates();
 
     let source = match &cli_repo {
         Some(repo) => GhCliSource::with_repo(repo.clone()),
@@ -201,7 +201,7 @@ fn main() -> anyhow::Result<()> {
     state.yank_template_tertiary = loaded_config.yank_template_tertiary.clone();
     state.yank_multi_delimiter = loaded_config.yank_multi_delimiter.clone();
     if !yank_template_warnings.is_empty() {
-        state.set_status_error(yank_template_warnings.join("; "));
+        state.yank_template_warning = Some(yank_template_warnings.join("; "));
     }
 
     run_ui(&mut state, &source, &config_path, has_repo_context)
@@ -975,6 +975,9 @@ fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadS
             state.finish_loading();
             state.set_status_error(gh_error_status(&e));
         }
+    }
+    if let Some(warning) = state.yank_template_warning.take() {
+        state.set_status_error(warning);
     }
 }
 
@@ -1773,6 +1776,24 @@ mod tests {
         assert!(!state.is_loading());
         assert_status_ends_with(&state, &ERROR_ICONS, "gh error: repo unavailable");
         assert_eq!(state.status_color(), Some(Color::Red));
+    }
+
+    #[test]
+    fn finish_initial_load_surfaces_pending_yank_template_warning_over_success_message() {
+        let mut state = AppState::loading();
+        state.yank_template_warning = Some("some warning".to_string());
+        finish_initial_load(
+            &mut state,
+            Ok(InitialLoadSuccess {
+                issues: vec![],
+                labels: vec![],
+                repo_name: None,
+                elapsed: Duration::from_millis(10),
+            }),
+        );
+        assert_status_ends_with(&state, &ERROR_ICONS, "some warning");
+        assert_eq!(state.status_color(), Some(Color::Red));
+        assert!(state.yank_template_warning.is_none());
     }
 
     #[test]

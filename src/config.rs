@@ -225,6 +225,20 @@ mod tests {
     }
 
     #[test]
+    fn load_from_old_schema_file_without_yank_fields_fills_in_defaults() {
+        let path = temp_path("old-schema");
+        fs::write(&path, "exit_on_copy_yank = true\nzebra_striping = false\n").unwrap();
+        let config = Config::load_from(&path);
+        assert!(config.exit_on_copy_yank);
+        assert!(!config.zebra_striping);
+        assert_eq!(config.yank_template_primary, copy::DEFAULT_TEMPLATE_PRIMARY);
+        assert_eq!(config.yank_template_secondary, copy::DEFAULT_TEMPLATE_SECONDARY);
+        assert_eq!(config.yank_template_tertiary, copy::DEFAULT_TEMPLATE_TERTIARY);
+        assert_eq!(config.yank_multi_delimiter, copy::DEFAULT_MULTI_DELIMITER);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn repair_yank_templates_leaves_valid_templates_untouched() {
         let mut config = Config {
             yank_template_primary: "{number}: {title}".to_string(),

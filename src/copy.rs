@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 pub const DEFAULT_TEMPLATE_PRIMARY: &str = "#{number}";
 pub const DEFAULT_TEMPLATE_SECONDARY: &str = "[#{number}: {title}]({url})";
 pub const DEFAULT_TEMPLATE_TERTIARY: &str = "{url}";
-#[allow(dead_code)]
 pub const DEFAULT_MULTI_DELIMITER: &str = ", ";
 
 const KNOWN_VARIABLES: &[&str] = &["number", "title", "url", "body", "body_short"];
