@@ -57,9 +57,9 @@ pub enum ListInput {
     Edit,
     RequestClose,
     ToggleCheck,
-    CopyReference,
-    CopyMarkdownLink,
-    CopyUrl,
+    CopyPrimary,
+    CopySecondary,
+    CopyTertiary,
     OpenInBrowser,
     Refresh,
     EnterSettings,
@@ -86,9 +86,11 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char(',') => ListInput::EnterSettings,
         KeyCode::Char('R') => ListInput::SwitchRepo,
         KeyCode::Char('?') => ListInput::ToggleShortcuts,
-        KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => ListInput::CopyUrl,
-        KeyCode::Char('y') => ListInput::CopyReference,
-        KeyCode::Char('Y') => ListInput::CopyMarkdownLink,
+        KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            ListInput::CopyTertiary
+        }
+        KeyCode::Char('y') => ListInput::CopyPrimary,
+        KeyCode::Char('Y') => ListInput::CopySecondary,
         KeyCode::Char('q') | KeyCode::Esc => ListInput::Quit,
         _ => ListInput::None,
     }
@@ -1072,10 +1074,10 @@ mod tests {
     }
 
     #[test]
-    fn maps_lowercase_y_to_copy_reference() {
+    fn maps_lowercase_y_to_copy_primary() {
         assert_eq!(
             map_list_key(key(KeyCode::Char('y'))),
-            ListInput::CopyReference
+            ListInput::CopyPrimary
         );
     }
 
@@ -1097,17 +1099,17 @@ mod tests {
     }
 
     #[test]
-    fn maps_uppercase_y_to_copy_markdown_link() {
+    fn maps_uppercase_y_to_copy_secondary() {
         assert_eq!(
             map_list_key(key(KeyCode::Char('Y'))),
-            ListInput::CopyMarkdownLink
+            ListInput::CopySecondary
         );
     }
 
     #[test]
-    fn maps_ctrl_y_to_copy_url() {
+    fn maps_ctrl_y_to_copy_tertiary() {
         let k = key_with(KeyCode::Char('y'), KeyModifiers::CONTROL);
-        assert_eq!(map_list_key(k), ListInput::CopyUrl);
+        assert_eq!(map_list_key(k), ListInput::CopyTertiary);
     }
 
     #[test]
