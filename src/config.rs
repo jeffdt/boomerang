@@ -1,3 +1,4 @@
+use crate::copy;
 use crate::model::{DEFAULT_ACCENT_COLOR, DEFAULT_REPO_ACCENT_COLOR};
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -15,6 +16,10 @@ pub struct Config {
     pub recent_repos: Vec<String>,
     pub accent_color: String,
     pub repo_accent_color: String,
+    pub yank_template_primary: String,
+    pub yank_template_secondary: String,
+    pub yank_template_tertiary: String,
+    pub yank_multi_delimiter: String,
 }
 
 impl Default for Config {
@@ -26,6 +31,10 @@ impl Default for Config {
             recent_repos: Vec::new(),
             accent_color: DEFAULT_ACCENT_COLOR.to_string(),
             repo_accent_color: DEFAULT_REPO_ACCENT_COLOR.to_string(),
+            yank_template_primary: copy::DEFAULT_TEMPLATE_PRIMARY.to_string(),
+            yank_template_secondary: copy::DEFAULT_TEMPLATE_SECONDARY.to_string(),
+            yank_template_tertiary: copy::DEFAULT_TEMPLATE_TERTIARY.to_string(),
+            yank_multi_delimiter: copy::DEFAULT_MULTI_DELIMITER.to_string(),
         }
     }
 }
@@ -52,6 +61,26 @@ impl Config {
         self.recent_repos.retain(|existing| existing != repo);
         self.recent_repos.insert(0, repo.to_string());
         self.recent_repos.truncate(MAX_RECENT_REPOS);
+    }
+
+    /// Validates the three yank templates, reverting any invalid one to
+    /// its slot's compiled-in default. Returns one warning message per
+    /// reverted template, for surfacing to the user at startup.
+    pub fn repair_yank_templates(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if let Err(e) = copy::validate_template(&self.yank_template_primary) {
+            warnings.push(format!("invalid yank_template_primary, reverted to default: {e}"));
+            self.yank_template_primary = copy::DEFAULT_TEMPLATE_PRIMARY.to_string();
+        }
+        if let Err(e) = copy::validate_template(&self.yank_template_secondary) {
+            warnings.push(format!("invalid yank_template_secondary, reverted to default: {e}"));
+            self.yank_template_secondary = copy::DEFAULT_TEMPLATE_SECONDARY.to_string();
+        }
+        if let Err(e) = copy::validate_template(&self.yank_template_tertiary) {
+            warnings.push(format!("invalid yank_template_tertiary, reverted to default: {e}"));
+            self.yank_template_tertiary = copy::DEFAULT_TEMPLATE_TERTIARY.to_string();
+        }
+        warnings
     }
 }
 
@@ -91,6 +120,10 @@ mod tests {
         assert!(config.recent_repos.is_empty());
         assert_eq!(config.accent_color, "Blue");
         assert_eq!(config.repo_accent_color, "Green");
+        assert_eq!(config.yank_template_primary, "#{number}");
+        assert_eq!(config.yank_template_secondary, "[#{number}: {title}]({url})");
+        assert_eq!(config.yank_template_tertiary, "{url}");
+        assert_eq!(config.yank_multi_delimiter, ", ");
     }
 
     #[test]
@@ -120,6 +153,10 @@ mod tests {
             recent_repos: vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             accent_color: "Magenta".to_string(),
             repo_accent_color: "Cyan".to_string(),
+            yank_template_primary: "#{number}: {title}".to_string(),
+            yank_template_secondary: "{url}".to_string(),
+            yank_template_tertiary: "{body_short:40}".to_string(),
+            yank_multi_delimiter: " | ".to_string(),
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path);
@@ -172,5 +209,29 @@ mod tests {
         Config::default().save_to(&path).unwrap();
         assert!(path.exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repair_yank_templates_reverts_invalid_template_and_returns_a_warning() {
+        let mut config = Config {
+            yank_template_secondary: "{not_a_real_variable}".to_string(),
+            ..Config::default()
+        };
+        let warnings = config.repair_yank_templates();
+        assert_eq!(config.yank_template_secondary, Config::default().yank_template_secondary);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("yank_template_secondary"));
+        assert!(warnings[0].contains("unknown variable: {not_a_real_variable}"));
+    }
+
+    #[test]
+    fn repair_yank_templates_leaves_valid_templates_untouched() {
+        let mut config = Config {
+            yank_template_primary: "{number}: {title}".to_string(),
+            ..Config::default()
+        };
+        let warnings = config.repair_yank_templates();
+        assert_eq!(config.yank_template_primary, "{number}: {title}");
+        assert!(warnings.is_empty());
     }
 }
