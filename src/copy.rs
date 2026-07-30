@@ -58,10 +58,10 @@ pub fn validate_template(template: &str) -> std::result::Result<(), String> {
     let (prefix, unit, suffix) = split_repeat_block(template)?;
     let has_block = template.contains("<<");
     if has_block {
-        let outside = find_placeholders(&prefix)
+        let mut outside = find_placeholders(&prefix)
             .into_iter()
             .chain(find_placeholders(&suffix));
-        for _ in outside {
+        if outside.next().is_some() {
             return Err(
                 "variables must be inside << >> when a repeating block is present".to_string(),
             );
