@@ -251,6 +251,15 @@ mod tests {
     }
 
     #[test]
+    fn body_short_truncates_on_character_boundaries_for_multi_byte_utf8() {
+        let issue = issue_with_body("héllo wörld 🎉🎉🎉");
+        assert_eq!(
+            render_template("{body_short:7}", &[&issue], ", "),
+            "héllo w..."
+        );
+    }
+
+    #[test]
     fn renders_repeat_block_once_per_issue_and_joins_with_delimiter() {
         let one = issue(1, "Create repo");
         let two = issue(2, "Create readme.md");
