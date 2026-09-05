@@ -280,24 +280,72 @@ fn inset(area: Rect, margin: u16) -> Rect {
     }
 }
 
-/// Title for the outer popup frame. Static `"boomerang"` for every mode
-/// except the create/edit form, where it names the target repo (and, when
-/// editing, the issue number) so the form is never ambiguous about what
-/// it's about to submit to.
-fn outer_title_text(state: &AppState) -> String {
-    match &state.mode {
-        Mode::Form(form) => match form.editing {
-            Some(number) => match state.repo_name_with_owner.as_deref() {
-                Some(repo) => format!("Editing issue #{number} in {repo}"),
-                None => format!("Editing issue #{number}"),
-            },
-            None => match state.repo_name_with_owner.as_deref() {
-                Some(repo) => format!("New issue in {repo}"),
-                None => "New issue".to_string(),
-            },
-        },
-        _ => "boomerang".to_string(),
+/// Styled span for a repo's `owner/name` string, colored with the user's
+/// `repo_accent_color` (distinct from the border's own `accent_color`) so it
+/// stands out as the piece of window chrome people actually care about, per
+/// issue #105. `base` carries the surrounding title's weight/slant (bold +
+/// italic); only the color is overridden here.
+fn repo_span(repo: &str, state: &AppState, base: Style) -> Span<'static> {
+    Span::styled(
+        repo.to_string(),
+        base.fg(color_from_name(&state.repo_accent_color)),
+    )
+}
+
+/// Title spans for the "New issue [in {repo}]" popup, shared by the outer
+/// create form and the separate quick-capture popup (`draw_little_create`)
+/// so the two never drift out of sync with each other.
+fn new_issue_title_spans(repo: Option<&str>, state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
+    match repo {
+        Some(repo) => vec![
+            Span::styled("New issue in ", emphasis),
+            repo_span(repo, state, emphasis),
+        ],
+        None => vec![Span::styled("New issue", emphasis)],
     }
+}
+
+/// Middle spans (no brackets) of the outer popup's title, naming whatever
+/// the window is currently about. Every mode leads with the detected repo
+/// when one is known — that's the thing people actually care about — and
+/// falls back to the literal `"boomerang"` only pre-detection, when there's
+/// nothing else to show. The app's own name otherwise lives in the border's
+/// dim bottom-right corner (see `draw`), not competing here.
+fn outer_title_spans(state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
+    let repo = state.repo_name_with_owner.as_deref();
+    match &state.mode {
+        Mode::Form(form) => match (form.editing, repo) {
+            (Some(number), Some(repo)) => vec![
+                Span::styled(format!("Editing issue #{number} in "), emphasis),
+                repo_span(repo, state, emphasis),
+            ],
+            (Some(number), None) => vec![Span::styled(format!("Editing issue #{number}"), emphasis)],
+            (None, repo) => new_issue_title_spans(repo, state, emphasis),
+        },
+        _ => match repo {
+            Some(repo) => vec![repo_span(repo, state, emphasis)],
+            None => vec![Span::styled("boomerang", emphasis)],
+        },
+    }
+}
+
+/// The `"boomerang"` label for the border's bottom-right corner, present on
+/// every top-level popup so the app's identity never fully disappears, just
+/// recedes behind whatever repo/action is named up top. Mirrors the top
+/// title's `‹ … ›` bracket styling (italic) so it reads as the same family
+/// of window chrome, but in `Color::Gray` rather than bold — one shade
+/// brighter than `DIM`, dim enough to recede without vanishing entirely. The
+/// trailing `─` (in `border_style`, matching the top title's leading `─`)
+/// keeps the same one-dash gap from the corner glyph on both titles.
+fn app_name_corner_title(border_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "‹ boomerang ›",
+            Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+        ),
+        Span::styled("─", border_style),
+    ])
+    .right_aligned()
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
@@ -308,18 +356,16 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(color_from_name(&state.accent_color));
-    let title_text = outer_title_text(state);
+    let emphasis = border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC);
+    let mut title_spans = vec![Span::styled("─", border_style), Span::styled("‹ ", emphasis)];
+    title_spans.extend(outer_title_spans(state, emphasis));
+    title_spans.push(Span::styled(" ›", emphasis));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(Line::from(vec![
-            Span::styled("─", border_style),
-            Span::styled(
-                format!("‹ {title_text} ›"),
-                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
-            ),
-        ]));
+        .title(Line::from(title_spans))
+        .title_bottom(app_name_corner_title(border_style));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -369,18 +415,8 @@ fn draw_list(frame: &mut Frame, area: Rect, state: &AppState) {
             Constraint::Min(1),
         ])
         .split(area);
-    let (prefix, label, repo) = state.issues_header_parts();
+    let (prefix, label) = state.issues_header_parts();
     let mut spans = Vec::new();
-    if let Some(repo) = repo {
-        spans.push(Span::styled("Repo: ", Style::default().fg(DIM)));
-        spans.push(Span::styled(
-            repo,
-            Style::default()
-                .fg(color_from_name(&state.repo_accent_color))
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(" · ", Style::default().fg(DIM)));
-    }
     spans.push(Span::styled(prefix, Style::default().fg(DIM)));
     if let Some(name) = &label {
         spans.push(Span::styled(" · label: ", Style::default().fg(DIM)));
@@ -713,21 +749,20 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         .split(area);
 
     let border_style = Style::default().fg(color_from_name(&state.accent_color));
-    let title_text = match state.repo_name_with_owner.as_deref() {
-        Some(repo) => format!("New issue in {repo}"),
-        None => "New issue".to_string(),
-    };
+    let emphasis = border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC);
+    let mut title_spans = vec![Span::styled("─", border_style), Span::styled("‹ ", emphasis)];
+    title_spans.extend(new_issue_title_spans(
+        state.repo_name_with_owner.as_deref(),
+        state,
+        emphasis,
+    ));
+    title_spans.push(Span::styled(" ›", emphasis));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(Line::from(vec![
-            Span::styled("─", border_style),
-            Span::styled(
-                format!("‹ {title_text} ›"),
-                border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC),
-            ),
-        ]));
+        .title(Line::from(title_spans))
+        .title_bottom(app_name_corner_title(border_style));
     frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
 
     // The hint is only ever actionable when idle (capture_loop ignores keys
@@ -1818,11 +1853,11 @@ mod tests {
     }
 
     #[test]
-    fn list_header_leads_with_repo_and_trails_with_state_filter() {
+    fn list_body_header_omits_repo_since_the_border_already_names_it() {
         let mut with_repo = AppState::new(vec![], vec![]);
         with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
         let rendered = render_to_string(&with_repo);
-        assert!(rendered.contains("Repo: jeffdt/boomerang · Open issues"));
+        assert!(rendered.contains("‹ jeffdt/boomerang ›"));
 
         let without_repo = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&without_repo);
@@ -1837,15 +1872,17 @@ mod tests {
 
         state.cycle_state_filter(); // Open -> Triage
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Repo: jeffdt/boomerang · Triage issues"));
+        assert!(rendered.contains("Triage issues"));
+        assert!(!rendered.contains("Repo:"));
 
         state.cycle_state_filter(); // Triage -> Closed
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Repo: jeffdt/boomerang · Closed issues"));
+        assert!(rendered.contains("Closed issues"));
 
         state.cycle_state_filter(); // Closed -> All
         let rendered = render_to_string(&state);
-        assert!(rendered.contains("Repo: jeffdt/boomerang · All issues"));
+        assert!(rendered.contains("All issues"));
+        assert!(rendered.contains("‹ jeffdt/boomerang ›"));
     }
 
     #[test]
@@ -2129,16 +2166,35 @@ mod tests {
     }
 
     #[test]
-    fn list_border_title_is_boomerang_regardless_of_repo_name() {
+    fn list_border_title_shows_repo_name_when_known_falls_back_to_boomerang_otherwise() {
+        // Uses a repo name that doesn't itself contain "boomerang" so this
+        // test can't be fooled by the border's always-present bottom-right
+        // corner label (see `app_name_corner_title`).
         let mut with_repo = AppState::new(vec![issue(1, "a")], vec![]);
-        with_repo.repo_name_with_owner = Some("jeffdt/boomerang".to_string());
+        with_repo.repo_name_with_owner = Some("jeffdt/myrepo".to_string());
         let rendered_with_repo = render_to_string(&with_repo);
-        assert!(rendered_with_repo.contains("‹ boomerang ›"));
-        assert!(!rendered_with_repo.contains("‹ jeffdt/boomerang ›"));
+        assert!(rendered_with_repo.contains("‹ jeffdt/myrepo ›"));
 
         let without_repo = AppState::new(vec![issue(1, "a")], vec![]);
         let rendered_without_repo = render_to_string(&without_repo);
         assert!(rendered_without_repo.contains("‹ boomerang ›"));
+    }
+
+    #[test]
+    fn outer_border_always_shows_a_bracketed_boomerang_label_in_the_bottom_right_corner() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/myrepo".to_string());
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ boomerang ›"));
+
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
+        let style = buf[(x, y)].style();
+        assert_eq!(style.fg, Some(Color::Gray));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
+        // The corner label sits on the popup's last row, well below the top
+        // border row where the repo-name title lives.
+        assert!(y > 1);
     }
 
     #[test]
@@ -2787,6 +2843,19 @@ mod tests {
             !rendered.contains("New issue in"),
             "title should not claim a repo it doesn't have, got: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn little_create_also_shows_the_bracketed_boomerang_corner_label() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.repo_name_with_owner = Some("jeffdt/myrepo".to_string());
+        state.enter_little_create();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("‹ boomerang ›"));
+
+        let buf = render_buffer(&state);
+        let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
+        assert_eq!(buf[(x, y)].style().fg, Some(Color::Gray));
     }
 
     #[test]
