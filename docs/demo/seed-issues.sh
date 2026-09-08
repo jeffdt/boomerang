@@ -14,9 +14,14 @@
 #     to match), so drift from a previous recording session can't accumulate.
 #   - exactly one "$FEATURED_TITLE" issue survives across recordings, reset
 #     to a pristine just-captured state every run (no body, no labels).
-#     edit-issue.tape adds those live, so this issue needs to start empty
-#     every time, not just the first. Duplicates left over from prior
-#     recording iterations get closed.
+#     hero.tape labels it live, so this issue needs to start unlabeled every
+#     time, not just the first. Duplicates left over from prior recording
+#     iterations get closed.
+#   - every open "$QUICK_CAPTURE_TITLE" issue gets closed. quick-capture.tape
+#     is a real side-effect recording - each run files a genuine new issue
+#     with this exact title, and nothing else ever cleans those up, so
+#     without this step they accumulate by one every re-recording and
+#     eventually throw off the issue count/order every other tape assumes.
 #
 # Every step is idempotent, so it's safe to run before every recording
 # session regardless of what state the sandbox repo is currently in.
@@ -27,6 +32,7 @@ set -euo pipefail
 
 REPO="jeffdt/universe"
 FEATURED_TITLE="Check if light speed is constant for every observer"
+QUICK_CAPTURE_TITLE="spike: check if light speed is constant for every observer"
 
 # name|color|description
 DESIRED_LABELS=(
@@ -116,6 +122,16 @@ if [ -n "$current_labels" ]; then
     gh issue edit "$keep" -R "$REPO" --remove-label "$l" >/dev/null
   done <<< "$current_labels"
 fi
+
+echo "==> Closing '$QUICK_CAPTURE_TITLE' byproducts from prior quick-capture recordings"
+while IFS= read -r n; do
+  [ -z "$n" ] && continue
+  echo "    closing #$n"
+  gh issue close "$n" -R "$REPO" -c "Closing - byproduct of recording a boomerang demo." >/dev/null
+done < <(
+  gh issue list -R "$REPO" --state open --json number,title \
+    -q ".[] | select(.title == \"$QUICK_CAPTURE_TITLE\") | .number"
+)
 
 echo "==> Current state of $REPO"
 gh issue list -R "$REPO" --state open --json number,title,labels \

@@ -17,6 +17,10 @@ The idea becomes permanent immediately instead of a mental post-it that gets los
 
 It's a standalone binary that tmux pops open on demand, in the same spirit as [rolomux](https://github.com/jeffdt/rolomux): executes right where you work, does its job, and gets out of the way again.
 
+![Hero demo: a claude -p command is half-typed in the terminal, the popup opens over it to browse the issue list, an issue is opened and tagged with a label, then that issue and a related one are checked and yanked together, landing both issue numbers back in the half-typed command](docs/images/hero.gif)
+
+Catching an idea is only half the point - finding it again and getting it back out is the other half. Pop the picker open, browse or search to the issue you want, flesh it out or relabel it right there if it needs it, then check it (and anything related) and yank the numbers straight to your clipboard, ready to paste into a commit message, a PR description, or - as above - a `claude -p` prompt to go straight from "I filed this" to "an agent is working on it."
+
 ## Installation
 
 > [!IMPORTANT]
@@ -90,17 +94,29 @@ Inside the create/edit form: `Tab`/`Shift+Tab` moves between Title/Body/Labels,
 `Space` toggles a label when the Labels field is focused, and `Enter` advances
 Title → Body → submit (submitting from the Labels field).
 
+## Quick capture
+
+![Quick capture demo: a tmux popup opens over a Python REPL, a one-line issue title is typed and submitted, and the popup closes back into the still-running REPL](docs/images/quick-capture.gif)
+
+`boomerang --capture` skips the `gh` issue fetch entirely and opens straight to the title-only quick-create prompt (`Enter` to create, `Esc` to cancel), then exits.
+This is extra handy when bound to its own key (see the `bind I` example above) for firing off an issue with minimal disruption to your work.
+`boomerang --capture-full` does the same but opens the full form instead, if you prefer to capture body + label upfront at idea-time.
+
 ## Settings
 
 Press `,` to open Settings, a small view of picker-wide preferences. `j`/`k`
 (or `↓`/`↑`) moves between rows, `Enter`/`Space`/`h`/`l` toggles the selected
 row, and `q`/`Esc` returns to the list.
 
+![Settings demo: toggling zebra striping off, then cycling the accent color and repo color, before returning to a list that shows all three changes at once](docs/images/settings.gif)
+
 | Setting | Default | Description |
 | --- | --- | --- |
 | Exit popup after copy/yank | Off | When on, a successful `y`/`Y`/`Ctrl-y` copy closes the popup immediately instead of staying open. |
 | Zebra striping | On | Dims every other row in the issue list to make scanning easier. Uses your terminal's own faint/dim rendering rather than a fixed color, so it adapts to your terminal theme. |
 | Show shortcuts | Always | When set to On demand, the list's footer shortcut legend stays collapsed to a `? shortcuts` nudge until you press `?`; it starts collapsed again next launch. |
+| Accent color | Blue | The color used for boomerang's own borders and highlighted UI elements. Cycles through the 16 named colors from your terminal theme. |
+| Repo color | Green | The color used for the repo name shown in the window border. Cycles through the same 16 named colors, independently of Accent color. |
 
 ## Customizing yank templates
 
@@ -155,29 +171,6 @@ at startup, with a one-line warning in the status bar explaining why.
 > above) should be pasted carefully: issue titles and bodies are untrusted
 > external text, and on a public repo they could contain characters a
 > shell would interpret, like `"`, `;`, or `$(...)`.
-
-## Quick capture
-
-![Quick capture demo: a tmux popup opens over a Python REPL, a one-line issue title is typed and submitted, and the popup closes back into the still-running REPL](docs/images/quick-capture.gif)
-
-`boomerang --capture` skips the `gh` issue fetch entirely and opens straight to the title-only quick-create prompt (`Enter` to create, `Esc` to cancel), then exits.
-This is extra handy when bound to its own key (see the `bind I` example above) for firing off an issue with minimal disruption to your work.
-`boomerang --capture-full` does the same but opens the full form instead, if you prefer to capture body + label upfront at idea-time.
-
-## Picking it back up
-
-![Browse-and-yank demo: a claude -p command is half-typed in the terminal, the popup opens over it to browse the issue list, yanks the chosen issue, and closes back into the still-waiting shell to finish the command](docs/images/browse-and-yank.gif)
-
-Catching an idea is only half the point; getting it back out is the other half.
-Mid-task and need an issue number? Pop the picker open, `y` copies `#123` to the clipboard, and it closes right back into whatever you were doing.
-Paste straight into a commit message, a PR description, or - as above - a `claude -p` prompt to go straight from "I filed this" to "an agent is working on it."
-
-## Fleshing it out
-
-![Edit demo: the light-speed spike issue is found by search, then given a body explaining why it's worth testing and tagged with the spike label](docs/images/edit-issue.gif)
-
-The point of capturing an idea in three seconds is that you don't have to flesh it out right then.
-`Enter`/`e` opens the full edit form on any issue - title, body, and labels - so when you do have time, you can find it again with `/` and fill in the rest without ever having lost it in the meantime.
 
 ## Diagnostics
 
