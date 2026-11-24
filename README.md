@@ -75,7 +75,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → triage → closed → all |
 | `Space` | Check/uncheck the selected issue for a multi-copy |
-| `c` | Create: title + body + label picker |
+| `n` | New issue: title + body + label picker |
 | `Enter` / `e` | Edit the selected issue's title/body/labels |
 | `x` | Close the selected issue (y/n confirm) |
 | `o` | Open the selected issue in your browser |
@@ -106,7 +106,7 @@ This is extra handy when bound to its own key (see the `bind I` example above) f
 
 Press `,` to open Settings, a small view of picker-wide preferences. `j`/`k`
 (or `↓`/`↑`) moves between rows, `Enter`/`Space`/`h`/`l` toggles the selected
-row, and `q`/`Esc` returns to the list.
+row, and `q`/`Esc`/`,` returns to the list.
 
 ![Settings demo: toggling zebra striping off, then cycling the accent color and repo color, before returning to a list that shows all three changes at once](docs/images/settings.gif)
 
