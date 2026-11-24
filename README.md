@@ -53,7 +53,7 @@ Boomerang also has a minimalist "capture" mode: it skips fetching the issue list
 To set it up, create a second binding to launch boomerang in capture mode.
 
 ```tmux
-bind I display-popup -E -B -d "#{pane_current_path}" -w 84 -h 4 "exec boomerang --capture"
+bind I display-popup -E -b rounded -d "#{pane_current_path}" -w 86 -h 6 "exec boomerang --capture"
 ```
 
 Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix + I`!
