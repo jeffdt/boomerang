@@ -303,7 +303,11 @@ fn repo_span(repo: &str, state: &AppState, base: Style) -> Span<'static> {
 /// Title spans for the "New issue [in {repo}]" popup, shared by the outer
 /// create form and the separate quick-capture popup (`draw_little_create`)
 /// so the two never drift out of sync with each other.
-fn new_issue_title_spans(repo: Option<&str>, state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
+fn new_issue_title_spans(
+    repo: Option<&str>,
+    state: &AppState,
+    emphasis: Style,
+) -> Vec<Span<'static>> {
     match repo {
         Some(repo) => vec![
             Span::styled("New issue in ", emphasis),
@@ -327,7 +331,9 @@ fn outer_title_spans(state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
                 Span::styled(format!("Editing issue #{number} in "), emphasis),
                 repo_span(repo, state, emphasis),
             ],
-            (Some(number), None) => vec![Span::styled(format!("Editing issue #{number}"), emphasis)],
+            (Some(number), None) => {
+                vec![Span::styled(format!("Editing issue #{number}"), emphasis)]
+            }
             (None, repo) => new_issue_title_spans(repo, state, emphasis),
         },
         _ => match repo {
@@ -349,7 +355,9 @@ fn app_name_corner_title(border_style: Style) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             "‹ boomerang ›",
-            Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
         ),
         Span::styled("─", border_style),
     ])
@@ -365,7 +373,10 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let area = inset(frame.area(), POPUP_MARGIN);
     let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let emphasis = border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC);
-    let mut title_spans = vec![Span::styled("─", border_style), Span::styled("‹ ", emphasis)];
+    let mut title_spans = vec![
+        Span::styled("─", border_style),
+        Span::styled("‹ ", emphasis),
+    ];
     title_spans.extend(outer_title_spans(state, emphasis));
     title_spans.push(Span::styled(" ›", emphasis));
     let block = Block::default()
@@ -772,7 +783,10 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
 
     let border_style = Style::default().fg(color_from_name(&state.accent_color));
     let emphasis = border_style.add_modifier(Modifier::BOLD | Modifier::ITALIC);
-    let mut title_spans = vec![Span::styled("─", border_style), Span::styled("‹ ", emphasis)];
+    let mut title_spans = vec![
+        Span::styled("─", border_style),
+        Span::styled("‹ ", emphasis),
+    ];
     title_spans.extend(new_issue_title_spans(
         state.repo_name_with_owner.as_deref(),
         state,
@@ -1072,7 +1086,11 @@ fn draw_label_picker(frame: &mut Frame, area: Rect, picker: &LabelPickerState, s
         None => None,
     };
     for row in 0..=picker.labels.len() {
-        let marker = if Some(row) == active_row { "\u{2713} " } else { "  " };
+        let marker = if Some(row) == active_row {
+            "\u{2713} "
+        } else {
+            "  "
+        };
         let mut spans = vec![Span::raw(marker)];
         if row == 0 {
             spans.push(Span::raw("All labels"));
@@ -1090,7 +1108,9 @@ fn draw_label_picker(frame: &mut Frame, area: Rect, picker: &LabelPickerState, s
         };
         items.push(ListItem::new(Line::from(spans)).style(style));
     }
-    let block = Block::default().borders(Borders::ALL).title("Filter by label");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Filter by label");
     frame.render_widget(List::new(items).block(block), chunks[0]);
 
     draw_shortcuts_hint(frame, chunks[1], state);
@@ -1140,19 +1160,43 @@ mod tests {
 
     #[test]
     fn maps_lowercase_l_to_label_filter() {
-        assert_eq!(map_list_key(key(KeyCode::Char('l'))), ListInput::LabelFilter);
+        assert_eq!(
+            map_list_key(key(KeyCode::Char('l'))),
+            ListInput::LabelFilter
+        );
     }
 
     #[test]
     fn label_picker_key_mapping() {
-        assert_eq!(map_label_picker_key(key(KeyCode::Char('j'))), LabelPickerInput::Down);
-        assert_eq!(map_label_picker_key(key(KeyCode::Down)), LabelPickerInput::Down);
-        assert_eq!(map_label_picker_key(key(KeyCode::Char('k'))), LabelPickerInput::Up);
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Char('j'))),
+            LabelPickerInput::Down
+        );
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Down)),
+            LabelPickerInput::Down
+        );
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Char('k'))),
+            LabelPickerInput::Up
+        );
         assert_eq!(map_label_picker_key(key(KeyCode::Up)), LabelPickerInput::Up);
-        assert_eq!(map_label_picker_key(key(KeyCode::Enter)), LabelPickerInput::Select);
-        assert_eq!(map_label_picker_key(key(KeyCode::Esc)), LabelPickerInput::Cancel);
-        assert_eq!(map_label_picker_key(key(KeyCode::Char('q'))), LabelPickerInput::Cancel);
-        assert_eq!(map_label_picker_key(key(KeyCode::Char('z'))), LabelPickerInput::None);
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Enter)),
+            LabelPickerInput::Select
+        );
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Esc)),
+            LabelPickerInput::Cancel
+        );
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Char('q'))),
+            LabelPickerInput::Cancel
+        );
+        assert_eq!(
+            map_label_picker_key(key(KeyCode::Char('z'))),
+            LabelPickerInput::None
+        );
     }
 
     #[test]
@@ -1236,12 +1280,27 @@ mod tests {
     fn search_key_mapping_moves_selection_like_rolomux() {
         let ctrl = KeyModifiers::CONTROL;
         assert_eq!(map_search_key(key(KeyCode::Up)), SearchInput::Up);
-        assert_eq!(map_search_key(key_with(KeyCode::Char('p'), ctrl)), SearchInput::Up);
-        assert_eq!(map_search_key(key_with(KeyCode::Char('k'), ctrl)), SearchInput::Up);
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Char('p'), ctrl)),
+            SearchInput::Up
+        );
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Char('k'), ctrl)),
+            SearchInput::Up
+        );
         assert_eq!(map_search_key(key(KeyCode::Down)), SearchInput::Down);
-        assert_eq!(map_search_key(key_with(KeyCode::Char('n'), ctrl)), SearchInput::Down);
-        assert_eq!(map_search_key(key_with(KeyCode::Char('j'), ctrl)), SearchInput::Down);
-        assert_eq!(map_search_key(key(KeyCode::Char('n'))), SearchInput::Char('n'));
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Char('n'), ctrl)),
+            SearchInput::Down
+        );
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Char('j'), ctrl)),
+            SearchInput::Down
+        );
+        assert_eq!(
+            map_search_key(key(KeyCode::Char('n'))),
+            SearchInput::Char('n')
+        );
         assert_eq!(
             map_search_key(key_with(KeyCode::Backspace, KeyModifiers::ALT)),
             SearchInput::DeleteWord
@@ -1251,11 +1310,26 @@ mod tests {
     #[test]
     fn repo_picker_key_mapping_moves_with_ctrl_n_p_j_k() {
         let ctrl = KeyModifiers::CONTROL;
-        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('p'), ctrl)), RepoPickerInput::Up);
-        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('k'), ctrl)), RepoPickerInput::Up);
-        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('n'), ctrl)), RepoPickerInput::Down);
-        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('j'), ctrl)), RepoPickerInput::Down);
-        assert_eq!(map_repo_picker_key(key(KeyCode::Char('n'))), RepoPickerInput::Char('n'));
+        assert_eq!(
+            map_repo_picker_key(key_with(KeyCode::Char('p'), ctrl)),
+            RepoPickerInput::Up
+        );
+        assert_eq!(
+            map_repo_picker_key(key_with(KeyCode::Char('k'), ctrl)),
+            RepoPickerInput::Up
+        );
+        assert_eq!(
+            map_repo_picker_key(key_with(KeyCode::Char('n'), ctrl)),
+            RepoPickerInput::Down
+        );
+        assert_eq!(
+            map_repo_picker_key(key_with(KeyCode::Char('j'), ctrl)),
+            RepoPickerInput::Down
+        );
+        assert_eq!(
+            map_repo_picker_key(key(KeyCode::Char('n'))),
+            RepoPickerInput::Char('n')
+        );
     }
 
     #[test]
@@ -2737,7 +2811,8 @@ mod tests {
     #[test]
     fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
-        let list_line1 = "j/k move · h hide pane · / search · a state · l label · space check · e edit";
+        let list_line1 =
+            "j/k move · h hide pane · / search · a state · l label · space check · e edit";
         let list_line2 = "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";

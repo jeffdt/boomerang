@@ -47,17 +47,13 @@ Bind it in ~/.tmux.conf, e.g.:
 
 #[derive(Debug, PartialEq)]
 enum StartupCommand {
-    Launch {
-        repo: Option<String>,
-    },
+    Launch { repo: Option<String> },
     Version,
     Help,
     Doctor,
     Capture,
     CaptureFull,
-    PreviewLoading {
-        duration: Duration,
-    },
+    PreviewLoading { duration: Duration },
 }
 
 fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupCommand, String> {
@@ -1508,7 +1504,12 @@ mod tests {
         let mut state = AppState::new(vec![issue(1, "one"), issue(2, "two")], vec![]);
         state.checked.insert(1);
         state.checked.insert(2);
-        copy_selected(&mut state, copy::DEFAULT_TEMPLATE_PRIMARY, " | ", fake_copy_ok);
+        copy_selected(
+            &mut state,
+            copy::DEFAULT_TEMPLATE_PRIMARY,
+            " | ",
+            fake_copy_ok,
+        );
         assert_eq!(state.status.as_ref().unwrap().0, "copied 2: #1 | #2");
     }
 
@@ -1847,7 +1848,11 @@ mod tests {
         assert_eq!(state.issues, vec![created]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_status_ends_with(&state, &SUCCESS_ICONS, "created issue in 1.2s, refresh 50ms");
+        assert_status_ends_with(
+            &state,
+            &SUCCESS_ICONS,
+            "created issue in 1.2s, refresh 50ms",
+        );
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1875,7 +1880,11 @@ mod tests {
         assert_eq!(state.issues, vec![updated]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_status_ends_with(&state, &SUCCESS_ICONS, "updated issue in 950ms, refresh 75ms");
+        assert_status_ends_with(
+            &state,
+            &SUCCESS_ICONS,
+            "updated issue in 950ms, refresh 75ms",
+        );
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
@@ -1927,7 +1936,11 @@ mod tests {
         assert_eq!(state.issues, vec![remaining]);
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_status_ends_with(&state, &SUCCESS_ICONS, "closed issue in 400ms, refresh 30ms");
+        assert_status_ends_with(
+            &state,
+            &SUCCESS_ICONS,
+            "closed issue in 400ms, refresh 30ms",
+        );
         assert_eq!(state.status_color(), Some(Color::Green));
     }
 
