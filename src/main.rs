@@ -13,7 +13,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use gh::{GhCliSource, IssueSource, StateFilter};
-use model::{AppState, FormState, Issue, Label, Mode, PendingOperation};
+use model::{AppState, FormState, Issue, Label, LineInput, Mode, PendingOperation};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::{self, stdout};
@@ -334,11 +334,10 @@ fn capture_loop<S: IssueSource>(
                 continue;
             }
             match map_little_create_key(key) {
-                LittleCreateInput::Char(c) => state.little_create_push(c),
-                LittleCreateInput::Backspace => state.little_create_backspace(),
+                LittleCreateInput::TextEdit(input) => state.little_create_input(input),
                 LittleCreateInput::Submit => {
                     if let Some(title) = state.little_create_submit() {
-                        state.mode = Mode::LittleCreate(title.clone());
+                        state.mode = Mode::LittleCreate(Box::new(LineInput::new(&title)));
                         state.begin_pending(PendingOperation::CreateIssue);
                         create_rx = Some(spawn_create(
                             (*source).clone(),
@@ -349,7 +348,6 @@ fn capture_loop<S: IssueSource>(
                     }
                 }
                 LittleCreateInput::Cancel => return Ok(()),
-                LittleCreateInput::None => {}
             }
         }
     }
@@ -737,14 +735,10 @@ fn event_loop<S: IssueSource>(
                     ListInput::None => {}
                 },
                 Mode::Search => match map_search_key(key) {
-                    SearchInput::Char(c) => state.search_push(c),
-                    SearchInput::Backspace => state.search_backspace(),
+                    SearchInput::TextEdit(input) => state.search_input(input),
                     SearchInput::Up => state.move_cursor(-1),
                     SearchInput::Down => state.move_cursor(1),
-                    SearchInput::DeleteWord => state.search_delete_word(),
-                    SearchInput::Clear => state.search_clear(),
                     SearchInput::Exit => state.exit_search(),
-                    SearchInput::None => {}
                 },
                 // Unreachable in the full popup: nothing in ListInput enters
                 // Mode::LittleCreate here anymore. The variant itself stays
@@ -827,8 +821,7 @@ fn event_loop<S: IssueSource>(
                     SettingsInput::None => {}
                 },
                 Mode::RepoPicker(_) => match ui::map_repo_picker_key(key) {
-                    RepoPickerInput::Char(c) => state.repo_picker_push(c),
-                    RepoPickerInput::Backspace => state.repo_picker_backspace(),
+                    RepoPickerInput::TextEdit(input) => state.repo_picker_input(input),
                     RepoPickerInput::Up => state.repo_picker_move(-1),
                     RepoPickerInput::Down => state.repo_picker_move(1),
                     RepoPickerInput::ToggleFocus => state.repo_picker_toggle_focus(),
@@ -842,7 +835,6 @@ fn event_loop<S: IssueSource>(
                             switch_repo(state, source, config_path, &mut initial_load_rx, repo);
                         }
                     }
-                    RepoPickerInput::None => {}
                 },
                 Mode::LabelPicker(_) => match map_label_picker_key(key) {
                     LabelPickerInput::Down => state.label_picker_move(1),
@@ -935,7 +927,7 @@ fn switch_repo<S: IssueSource>(
     state.state_filter = StateFilter::Open;
     state.label_filter = None;
     state.checked.clear();
-    state.search_query.clear();
+    state.search_query = LineInput::default();
     state.repo_name_with_owner = None;
     state.cursor = 0;
     state.mode = Mode::List;

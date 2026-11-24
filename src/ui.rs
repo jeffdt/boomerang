@@ -1,7 +1,7 @@
 use crate::loading;
 use crate::model::{
-    AppState, FormField, Label, LabelPickerState, Mode, RepoPickerFocus, RepoPickerState,
-    SettingsRow, NAMED_COLORS,
+    AppState, FormField, Label, LabelPickerState, LineInput, Mode, RepoPickerFocus,
+    RepoPickerState, SettingsRow, NAMED_COLORS,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -96,52 +96,42 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchInput {
-    Char(char),
-    Backspace,
     Up,
     Down,
-    DeleteWord,
-    Clear,
     Exit,
-    None,
+    TextEdit(Input),
 }
 
 pub fn map_search_key(key: KeyEvent) -> SearchInput {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc | KeyCode::Enter => SearchInput::Exit,
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => SearchInput::DeleteWord,
-        KeyCode::Backspace => SearchInput::Backspace,
         KeyCode::Up => SearchInput::Up,
         KeyCode::Down => SearchInput::Down,
         KeyCode::Char('p' | 'k') if ctrl => SearchInput::Up,
         KeyCode::Char('n' | 'j') if ctrl => SearchInput::Down,
-        KeyCode::Char('w') if ctrl => SearchInput::DeleteWord,
-        KeyCode::Char('u') if ctrl => SearchInput::Clear,
-        KeyCode::Char(_) if ctrl => SearchInput::None,
-        KeyCode::Char(c) => SearchInput::Char(c),
-        _ => SearchInput::None,
+        _ => SearchInput::TextEdit(Input::from(key)),
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LittleCreateInput {
-    Char(char),
-    Backspace,
     Submit,
     Cancel,
-    None,
+    TextEdit(Input),
 }
 
 pub fn map_little_create_key(key: KeyEvent) -> LittleCreateInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char(c) => LittleCreateInput::Char(c),
-        KeyCode::Backspace => LittleCreateInput::Backspace,
+        // Ctrl+J is how Shift+Enter arrives (see map_form_key); the textarea
+        // would otherwise treat it as delete-to-start-of-line.
         KeyCode::Enter => LittleCreateInput::Submit,
+        KeyCode::Char('j') if ctrl => LittleCreateInput::Submit,
         KeyCode::Esc => LittleCreateInput::Cancel,
-        _ => LittleCreateInput::None,
+        _ => LittleCreateInput::TextEdit(Input::from(key)),
     }
 }
 
@@ -228,16 +218,14 @@ pub fn map_settings_key(key: KeyEvent) -> SettingsInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoPickerInput {
-    Char(char),
-    Backspace,
     Up,
     Down,
     ToggleFocus,
     Submit,
     Cancel,
-    None,
+    TextEdit(Input),
 }
 
 pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
@@ -250,9 +238,7 @@ pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
         KeyCode::Char('p' | 'k') if ctrl => RepoPickerInput::Up,
         KeyCode::Char('n' | 'j') if ctrl => RepoPickerInput::Down,
         KeyCode::Tab | KeyCode::BackTab => RepoPickerInput::ToggleFocus,
-        KeyCode::Backspace => RepoPickerInput::Backspace,
-        KeyCode::Char(c) if !ctrl => RepoPickerInput::Char(c),
-        _ => RepoPickerInput::None,
+        _ => RepoPickerInput::TextEdit(Input::from(key)),
     }
 }
 
@@ -347,26 +333,21 @@ fn outer_title_spans(state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
 /// every top-level popup so the app's identity never fully disappears, just
 /// recedes behind whatever repo/action is named up top. Mirrors the top
 /// title's `‹ … ›` bracket styling (italic) so it reads as the same family
-/// of window chrome, but in `Color::Gray` rather than bold — one shade
-/// brighter than `DIM`, dim enough to recede without vanishing entirely. The
+/// of window chrome, but in the border's own color rather than bold, so it
+/// blends into the frame instead of standing out against it. The
 /// trailing `─` (in `border_style`, matching the top title's leading `─`)
 /// keeps the same one-dash gap from the corner glyph on both titles.
 fn app_name_corner_title(border_style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            "‹ boomerang ›",
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::ITALIC),
-        ),
+        Span::styled("‹ boomerang ›", border_style.add_modifier(Modifier::ITALIC)),
         Span::styled("─", border_style),
     ])
     .right_aligned()
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    if let Mode::LittleCreate(buf) = &state.mode {
-        draw_little_create(frame, buf, state);
+    if let Mode::LittleCreate(title) = &state.mode {
+        draw_little_create(frame, title, state);
         return;
     }
 
@@ -623,10 +604,8 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let lines: Vec<Line> = if !idle {
         vec![styled_hint("q quit")]
     } else if let Mode::Search = &state.mode {
-        vec![Line::from(Span::styled(
-            format!("/{}", state.search_query),
-            Style::default().fg(DIM),
-        ))]
+        // The query itself is drawn as a textarea after the "/" below.
+        vec![Line::from(Span::styled("/", Style::default().fg(DIM)))]
     } else {
         match &state.mode {
             Mode::Form(_) => vec![
@@ -666,6 +645,16 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         bottom_area,
     );
+    if idle && state.mode == Mode::Search {
+        let mut query = state.search_query.0.clone();
+        query.set_style(Style::default().fg(DIM));
+        let query_area = Rect {
+            x: bottom_area.x + 1,
+            width: bottom_area.width.saturating_sub(1),
+            ..bottom_area
+        };
+        frame.render_widget(&query, query_area);
+    }
 }
 
 fn toast_text(state: &AppState) -> String {
@@ -764,7 +753,7 @@ fn secondary(selected: bool) -> Style {
     }
 }
 
-fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
+fn draw_little_create(frame: &mut Frame, title: &LineInput, state: &AppState) {
     // Deliberately flush at the top, unlike every other screen: this is a
     // separate, intentionally distinct compact prompt (issue #46 follow-up),
     // not meant to visually match the rest of the app's chrome. Only left/
@@ -799,7 +788,9 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         .border_style(border_style)
         .title(Line::from(title_spans))
         .title_bottom(app_name_corner_title(border_style));
-    frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
+    let title_inner = block.inner(chunks[0]);
+    frame.render_widget(block, chunks[0]);
+    frame.render_widget(&title.0, title_inner);
 
     // The hint is only ever actionable when idle (capture_loop ignores keys
     // other than quit while pending), so it's safe to swap it out entirely
@@ -1021,15 +1012,12 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
         .border_style(field_style(input_focused));
     let input_inner = input_block.inner(chunks[0]);
     frame.render_widget(input_block, chunks[0]);
-    let input_style = if input_focused {
-        Style::default()
-    } else {
-        Style::default().fg(DIM)
-    };
-    frame.render_widget(
-        Paragraph::new(picker.input.as_str()).style(input_style),
-        input_inner,
-    );
+    let mut input = picker.input.0.clone();
+    if !input_focused {
+        input.set_style(Style::default().fg(DIM));
+        input.set_cursor_style(Style::default().fg(DIM));
+    }
+    frame.render_widget(&input, input_inner);
 
     let history_focused = picker.focus == RepoPickerFocus::History;
     let items: Vec<ListItem> = picker
@@ -1254,26 +1242,46 @@ mod tests {
         assert_eq!(map_search_key(key(KeyCode::Esc)), SearchInput::Exit);
         assert_eq!(
             map_search_key(key(KeyCode::Char('x'))),
-            SearchInput::Char('x')
+            SearchInput::TextEdit(Input::from(key(KeyCode::Char('x'))))
         );
     }
 
     #[test]
-    fn search_key_mapping_swallows_ctrl_chars() {
-        let ctrl_h = key_with(KeyCode::Char('h'), KeyModifiers::CONTROL);
-        assert_eq!(map_search_key(ctrl_h), SearchInput::None);
+    fn single_line_inputs_pass_word_jumps_and_ctrl_edits_to_the_textarea() {
+        let alt = KeyModifiers::ALT;
+        let ctrl = KeyModifiers::CONTROL;
+        for k in [
+            key_with(KeyCode::Left, alt),
+            key_with(KeyCode::Char('b'), alt),
+            key_with(KeyCode::Backspace, alt),
+            key_with(KeyCode::Char('w'), ctrl),
+            key_with(KeyCode::Char('u'), ctrl),
+        ] {
+            let edit = Input::from(k);
+            assert_eq!(map_search_key(k), SearchInput::TextEdit(edit.clone()));
+            assert_eq!(
+                map_repo_picker_key(k),
+                RepoPickerInput::TextEdit(edit.clone())
+            );
+            assert_eq!(map_little_create_key(k), LittleCreateInput::TextEdit(edit));
+        }
     }
 
     #[test]
-    fn search_key_mapping_handles_ctrl_u_as_clear() {
-        let ctrl_u = key_with(KeyCode::Char('u'), KeyModifiers::CONTROL);
-        assert_eq!(map_search_key(ctrl_u), SearchInput::Clear);
-    }
-
-    #[test]
-    fn search_key_mapping_handles_ctrl_w_as_delete_word() {
-        let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
-        assert_eq!(map_search_key(ctrl_w), SearchInput::DeleteWord);
+    fn little_create_key_mapping_submits_on_enter_or_shift_enter_and_cancels_on_esc() {
+        let shift_enter = key_with(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert_eq!(
+            map_little_create_key(key(KeyCode::Enter)),
+            LittleCreateInput::Submit
+        );
+        assert_eq!(
+            map_little_create_key(shift_enter),
+            LittleCreateInput::Submit
+        );
+        assert_eq!(
+            map_little_create_key(key(KeyCode::Esc)),
+            LittleCreateInput::Cancel
+        );
     }
 
     #[test]
@@ -1299,11 +1307,7 @@ mod tests {
         );
         assert_eq!(
             map_search_key(key(KeyCode::Char('n'))),
-            SearchInput::Char('n')
-        );
-        assert_eq!(
-            map_search_key(key_with(KeyCode::Backspace, KeyModifiers::ALT)),
-            SearchInput::DeleteWord
+            SearchInput::TextEdit(Input::from(key(KeyCode::Char('n'))))
         );
     }
 
@@ -1328,15 +1332,7 @@ mod tests {
         );
         assert_eq!(
             map_repo_picker_key(key(KeyCode::Char('n'))),
-            RepoPickerInput::Char('n')
-        );
-    }
-
-    #[test]
-    fn search_key_mapping_plain_char_unaffected() {
-        assert_eq!(
-            map_search_key(key(KeyCode::Char('h'))),
-            SearchInput::Char('h')
+            RepoPickerInput::TextEdit(Input::from(key(KeyCode::Char('n'))))
         );
     }
 
@@ -1520,15 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn map_repo_picker_key_covers_typing_navigation_submit_and_cancel() {
-        assert_eq!(
-            map_repo_picker_key(key(KeyCode::Char('a'))),
-            RepoPickerInput::Char('a')
-        );
-        assert_eq!(
-            map_repo_picker_key(key(KeyCode::Backspace)),
-            RepoPickerInput::Backspace
-        );
+    fn map_repo_picker_key_covers_navigation_submit_and_cancel() {
         assert_eq!(map_repo_picker_key(key(KeyCode::Up)), RepoPickerInput::Up);
         assert_eq!(
             map_repo_picker_key(key(KeyCode::Down)),
@@ -1554,12 +1542,6 @@ mod tests {
             map_repo_picker_key(key(KeyCode::BackTab)),
             RepoPickerInput::ToggleFocus
         );
-    }
-
-    #[test]
-    fn map_repo_picker_key_swallows_ctrl_chars() {
-        let ctrl_c = key_with(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(map_repo_picker_key(ctrl_c), RepoPickerInput::None);
     }
 
     #[test]
@@ -2178,15 +2160,6 @@ mod tests {
     }
 
     #[test]
-    fn search_mode_shows_query_in_status_line() {
-        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
-        state.enter_search();
-        state.search_push('x');
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("/x"));
-    }
-
-    #[test]
     fn shows_friendly_message_when_no_issues_match_filter() {
         let state = AppState::new(vec![], vec![]);
         let rendered = render_to_string(&state);
@@ -2194,14 +2167,28 @@ mod tests {
     }
 
     #[test]
-    fn little_create_mode_renders_typed_title() {
-        let mut state = AppState::new(vec![], vec![]);
-        state.enter_little_create();
-        state.little_create_push('F');
-        state.little_create_push('i');
-        state.little_create_push('x');
-        let rendered = render_to_string(&state);
-        assert!(rendered.contains("Fix"));
+    fn long_text_scrolls_to_keep_the_typed_end_visible_in_every_single_line_input() {
+        let enter_modes: [fn(&mut AppState); 3] = [
+            AppState::enter_little_create,
+            |s| s.enter_repo_picker(vec![], true),
+            AppState::enter_search,
+        ];
+        for enter in enter_modes {
+            let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+            enter(&mut state);
+            for c in format!("HEADMARK{}TAILMARK", "x".repeat(120)).chars() {
+                state.type_char(c);
+            }
+            let rendered = render_to_string(&state);
+            assert!(
+                rendered.contains("TAILMARK"),
+                "typed end visible:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("HEADMARK"),
+                "start scrolled off:\n{rendered}"
+            );
+        }
     }
 
     #[test]
@@ -2323,7 +2310,7 @@ mod tests {
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
         let style = buf[(x, y)].style();
-        assert_eq!(style.fg, Some(Color::Gray));
+        assert_eq!(style.fg, Some(color_from_name(&state.accent_color)));
         assert!(style.add_modifier.contains(Modifier::ITALIC));
         // The corner label sits on the popup's last row, well below the top
         // border row where the repo-name title lives.
@@ -2581,7 +2568,7 @@ mod tests {
     fn search_mode_hint_hugs_bottom_row_in_list_view() {
         let mut state = AppState::new(vec![issue(1, "a")], vec![]);
         state.enter_search();
-        state.search_push('x');
+        state.type_char('x');
         let buf = render_buffer(&state);
         let (_, hint_y) = find_in_buffer(&buf, "/x").expect("search query hint should render");
         // chunks[2] (hint area) is 2 rows tall and starts at y=20, so last row is 21
@@ -2989,7 +2976,10 @@ mod tests {
 
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
-        assert_eq!(buf[(x, y)].style().fg, Some(Color::Gray));
+        assert_eq!(
+            buf[(x, y)].style().fg,
+            Some(color_from_name(&state.accent_color))
+        );
     }
 
     #[test]
@@ -3238,7 +3228,7 @@ mod tests {
             vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             true,
         );
-        state.repo_picker_push('j');
+        state.type_char('j');
         let rendered = render_to_string(&state);
         assert!(rendered.contains('j'));
         assert!(rendered.contains("jeffdt/boomerang"));
@@ -3257,7 +3247,7 @@ mod tests {
     fn draw_repo_picker_shows_error_message() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_repo_picker(vec![], true);
-        state.repo_picker_push('x');
+        state.type_char('x');
         state.repo_picker_submit();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("doesn't look like a repo"));
@@ -3291,7 +3281,7 @@ mod tests {
             vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             true,
         );
-        state.repo_picker_push('x');
+        state.type_char('x');
         state.repo_picker_move(1);
         let buf = render_buffer(&state);
 
