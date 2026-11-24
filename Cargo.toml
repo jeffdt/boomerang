@@ -1,6 +1,6 @@
 [package]
 name = "boomerang"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 description = "A tmux-popup TUI for browsing, searching, creating, editing, and closing GitHub issues in the current repo"
 license = "MIT"
@@ -13,7 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 crossterm = "0.29"
 nucleo-matcher = "0.3"
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 ratatui-textarea = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

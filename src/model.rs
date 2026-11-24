@@ -1136,12 +1136,24 @@ impl AppState {
         if let Some((_, kind, set_at)) = &self.status {
             let lifetime = match kind {
                 StatusKind::Success => FLASH_GREEN_DURATION + FLASH_GRAY_DURATION,
-                StatusKind::Info | StatusKind::Error => STATUS_TOAST_DURATION,
+                StatusKind::Info => STATUS_TOAST_DURATION,
+                StatusKind::Error => return,
             };
             if set_at.elapsed() >= lifetime {
                 self.status = None;
             }
         }
+    }
+
+    /// Clear an error status, which never expires on its own so it can be
+    /// read or screenshotted. Returns whether one was cleared, so the caller
+    /// can swallow the dismissing keypress.
+    pub fn dismiss_error(&mut self) -> bool {
+        if matches!(self.status, Some((_, StatusKind::Error, _))) {
+            self.status = None;
+            return true;
+        }
+        false
     }
 
     /// The color the pending/status text should render in right now: yellow
@@ -2359,7 +2371,7 @@ mod tests {
     }
 
     #[test]
-    fn error_status_still_expires_at_the_original_toast_duration() {
+    fn error_status_persists_until_dismissed() {
         let mut state = AppState::new(vec![], vec![]);
         state.set_status_error("gh error: boom".to_string());
         state.status = state.status.take().map(|(msg, kind, set_at)| {
@@ -2370,7 +2382,18 @@ mod tests {
             )
         });
         state.clear_expired_status();
+        assert!(state.status.is_some(), "errors persist");
+        assert!(state.dismiss_error());
         assert!(state.status.is_none());
+        assert!(!state.dismiss_error(), "nothing left to dismiss");
+    }
+
+    #[test]
+    fn dismiss_error_leaves_info_status_alone() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.set_status("copied: #1".to_string());
+        assert!(!state.dismiss_error());
+        assert!(state.status.is_some());
     }
 
     #[test]

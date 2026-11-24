@@ -130,7 +130,7 @@ fn env_status(name: &str) -> &'static str {
     }
 }
 
-fn active_log_path() -> Option<PathBuf> {
+pub fn active_log_path() -> Option<PathBuf> {
     if !log_enabled_value(env::var(LOG_ENV).ok().as_deref()) {
         return None;
     }
