@@ -123,8 +123,11 @@ mod tests {
     fn pulse_frame_index_holds_steady_within_an_interval() {
         let motion = bar_motion(SEED, 0);
         let start = pulse_frame_index(Duration::from_millis(10), SEED, 0);
-        let later =
-            pulse_frame_index(Duration::from_millis(motion.interval_ms as u64 - 1), SEED, 0);
+        let later = pulse_frame_index(
+            Duration::from_millis(motion.interval_ms as u64 - 1),
+            SEED,
+            0,
+        );
         assert_eq!(start, later);
     }
 

@@ -69,15 +69,21 @@ impl Config {
     pub fn repair_yank_templates(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
         if let Err(e) = copy::validate_template(&self.yank_template_primary) {
-            warnings.push(format!("invalid yank_template_primary, reverted to default: {e}"));
+            warnings.push(format!(
+                "invalid yank_template_primary, reverted to default: {e}"
+            ));
             self.yank_template_primary = copy::DEFAULT_TEMPLATE_PRIMARY.to_string();
         }
         if let Err(e) = copy::validate_template(&self.yank_template_secondary) {
-            warnings.push(format!("invalid yank_template_secondary, reverted to default: {e}"));
+            warnings.push(format!(
+                "invalid yank_template_secondary, reverted to default: {e}"
+            ));
             self.yank_template_secondary = copy::DEFAULT_TEMPLATE_SECONDARY.to_string();
         }
         if let Err(e) = copy::validate_template(&self.yank_template_tertiary) {
-            warnings.push(format!("invalid yank_template_tertiary, reverted to default: {e}"));
+            warnings.push(format!(
+                "invalid yank_template_tertiary, reverted to default: {e}"
+            ));
             self.yank_template_tertiary = copy::DEFAULT_TEMPLATE_TERTIARY.to_string();
         }
         warnings
@@ -121,7 +127,10 @@ mod tests {
         assert_eq!(config.accent_color, "Blue");
         assert_eq!(config.repo_accent_color, "Green");
         assert_eq!(config.yank_template_primary, "#{number}");
-        assert_eq!(config.yank_template_secondary, "[#{number}: {title}]({url})");
+        assert_eq!(
+            config.yank_template_secondary,
+            "[#{number}: {title}]({url})"
+        );
         assert_eq!(config.yank_template_tertiary, "{url}");
         assert_eq!(config.yank_multi_delimiter, ", ");
     }
@@ -218,7 +227,10 @@ mod tests {
             ..Config::default()
         };
         let warnings = config.repair_yank_templates();
-        assert_eq!(config.yank_template_secondary, Config::default().yank_template_secondary);
+        assert_eq!(
+            config.yank_template_secondary,
+            Config::default().yank_template_secondary
+        );
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("yank_template_secondary"));
         assert!(warnings[0].contains("unknown variable: {not_a_real_variable}"));
@@ -232,8 +244,14 @@ mod tests {
         assert!(config.exit_on_copy_yank);
         assert!(!config.zebra_striping);
         assert_eq!(config.yank_template_primary, copy::DEFAULT_TEMPLATE_PRIMARY);
-        assert_eq!(config.yank_template_secondary, copy::DEFAULT_TEMPLATE_SECONDARY);
-        assert_eq!(config.yank_template_tertiary, copy::DEFAULT_TEMPLATE_TERTIARY);
+        assert_eq!(
+            config.yank_template_secondary,
+            copy::DEFAULT_TEMPLATE_SECONDARY
+        );
+        assert_eq!(
+            config.yank_template_tertiary,
+            copy::DEFAULT_TEMPLATE_TERTIARY
+        );
         assert_eq!(config.yank_multi_delimiter, copy::DEFAULT_MULTI_DELIMITER);
         let _ = fs::remove_file(&path);
     }

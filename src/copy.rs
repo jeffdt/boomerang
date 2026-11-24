@@ -73,7 +73,9 @@ pub fn validate_template(template: &str) -> std::result::Result<(), String> {
         if name == "body_short" {
             match arg {
                 Some(value) if value.parse::<usize>().is_ok() => {}
-                Some(value) => return Err(format!("invalid body_short length: {{body_short:{value}}}")),
+                Some(value) => {
+                    return Err(format!("invalid body_short length: {{body_short:{value}}}"))
+                }
                 None => {
                     return Err("body_short requires a length, e.g. {body_short:60}".to_string())
                 }
@@ -133,7 +135,10 @@ fn render_unit(unit: &str, issue: &Issue) -> String {
 pub fn render_template(template: &str, issues: &[&Issue], delimiter: &str) -> String {
     let (prefix, unit, suffix) = split_repeat_block(template)
         .unwrap_or_else(|_| (String::new(), template.to_string(), String::new()));
-    let rendered: Vec<String> = issues.iter().map(|issue| render_unit(&unit, issue)).collect();
+    let rendered: Vec<String> = issues
+        .iter()
+        .map(|issue| render_unit(&unit, issue))
+        .collect();
     format!("{prefix}{}{suffix}", rendered.join(delimiter))
 }
 
@@ -195,7 +200,10 @@ mod tests {
     #[test]
     fn renders_body_variable() {
         let issue = issue_with_body("Full body text.");
-        assert_eq!(render_template("{body}", &[&issue], ", "), "Full body text.");
+        assert_eq!(
+            render_template("{body}", &[&issue], ", "),
+            "Full body text."
+        );
     }
 
     #[test]
@@ -269,10 +277,7 @@ mod tests {
     fn no_repeat_block_marker_repeats_whole_template_matching_todays_behavior() {
         let one = issue(1, "one");
         let two = issue(2, "two");
-        assert_eq!(
-            render_template("#{number}", &[&one, &two], ", "),
-            "#1, #2"
-        );
+        assert_eq!(render_template("#{number}", &[&one, &two], ", "), "#1, #2");
     }
 
     fn issue(number: u32, title: &str) -> Issue {

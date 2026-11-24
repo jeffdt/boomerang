@@ -655,7 +655,10 @@ impl AppState {
     pub fn enter_label_picker(&mut self) {
         let labels: Vec<String> = self.all_label_names();
         let cursor = match &self.label_filter {
-            Some(active) => labels.iter().position(|name| name == active).map_or(0, |i| i + 1),
+            Some(active) => labels
+                .iter()
+                .position(|name| name == active)
+                .map_or(0, |i| i + 1),
             None => 0,
         };
         self.mode = Mode::LabelPicker(Box::new(LabelPickerState { labels, cursor }));
@@ -676,7 +679,11 @@ impl AppState {
         let selected = picker.selected_label().map(str::to_string);
         // Reselecting the row already active as the filter (or "All labels"
         // when there's no selection) clears it instead of leaving it a no-op.
-        self.label_filter = if selected == self.label_filter { None } else { selected };
+        self.label_filter = if selected == self.label_filter {
+            None
+        } else {
+            selected
+        };
         self.mode = Mode::List;
     }
 
@@ -1238,7 +1245,10 @@ mod tests {
 
     fn labeled(number: u32, title: &str, label_name: &str) -> Issue {
         Issue {
-            labels: vec![Label { name: label_name.into(), color: "ff0000".into() }],
+            labels: vec![Label {
+                name: label_name.into(),
+                color: "ff0000".into(),
+            }],
             ..issue(number, title)
         }
     }
@@ -2591,10 +2601,22 @@ mod tests {
     #[test]
     fn new_app_state_defaults_yank_templates_and_delimiter() {
         let state = AppState::new(vec![], vec![]);
-        assert_eq!(state.yank_template_primary, crate::copy::DEFAULT_TEMPLATE_PRIMARY);
-        assert_eq!(state.yank_template_secondary, crate::copy::DEFAULT_TEMPLATE_SECONDARY);
-        assert_eq!(state.yank_template_tertiary, crate::copy::DEFAULT_TEMPLATE_TERTIARY);
-        assert_eq!(state.yank_multi_delimiter, crate::copy::DEFAULT_MULTI_DELIMITER);
+        assert_eq!(
+            state.yank_template_primary,
+            crate::copy::DEFAULT_TEMPLATE_PRIMARY
+        );
+        assert_eq!(
+            state.yank_template_secondary,
+            crate::copy::DEFAULT_TEMPLATE_SECONDARY
+        );
+        assert_eq!(
+            state.yank_template_tertiary,
+            crate::copy::DEFAULT_TEMPLATE_TERTIARY
+        );
+        assert_eq!(
+            state.yank_multi_delimiter,
+            crate::copy::DEFAULT_MULTI_DELIMITER
+        );
     }
 
     #[test]
@@ -2844,7 +2866,10 @@ mod tests {
             "first Down from Input focus lands on the top entry, not the second"
         );
         assert_eq!(picker.focus, RepoPickerFocus::History);
-        assert_eq!(picker.input, "", "history selection never writes into input");
+        assert_eq!(
+            picker.input, "",
+            "history selection never writes into input"
+        );
     }
 
     #[test]
@@ -2996,8 +3021,14 @@ mod tests {
 
     fn labels_fixture() -> Vec<Label> {
         vec![
-            Label { name: "bug".into(), color: "d73a4a".into() },
-            Label { name: "docs".into(), color: "0075ca".into() },
+            Label {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            },
+            Label {
+                name: "docs".into(),
+                color: "0075ca".into(),
+            },
         ]
     }
 
