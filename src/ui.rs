@@ -345,23 +345,44 @@ fn outer_title_spans(state: &AppState, emphasis: Style) -> Vec<Span<'static>> {
 
 /// The `"boomerang"` label for the border's bottom-right corner, present on
 /// every top-level popup so the app's identity never fully disappears, just
-/// recedes behind whatever repo/action is named up top. Mirrors the top
-/// title's `‹ … ›` bracket styling (italic) so it reads as the same family
-/// of window chrome, but in `Color::Gray` rather than bold — one shade
-/// brighter than `DIM`, dim enough to recede without vanishing entirely. The
-/// trailing `─` (in `border_style`, matching the top title's leading `─`)
+/// recedes behind whatever repo/action is named up top. Italic in the border
+/// color rather than bold, so it blends into the border instead of standing
+/// out from it. The trailing `─` (matching the top title's leading `─`)
 /// keeps the same one-dash gap from the corner glyph on both titles.
 fn app_name_corner_title(border_style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            "‹ boomerang ›",
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::ITALIC),
-        ),
+        Span::styled("‹ boomerang ›", border_style.add_modifier(Modifier::ITALIC)),
         Span::styled("─", border_style),
     ])
     .right_aligned()
+}
+
+/// Renders a form textarea and, when it's the focused field, places the
+/// terminal's cursor at its insertion point.
+fn render_textarea(
+    frame: &mut Frame,
+    textarea: &ratatui_textarea::TextArea,
+    area: Rect,
+    focused: bool,
+) {
+    frame.render_widget(textarea, area);
+    if !focused {
+        return;
+    }
+    // scroll_offset is recorded during render, so read it after drawing.
+    let cursor = textarea.screen_cursor();
+    let (top_row, top_col) = textarea.scroll_offset();
+    frame.set_cursor_position((
+        area.x + (cursor.col as u16).saturating_sub(top_col),
+        area.y + (cursor.row as u16).saturating_sub(top_row),
+    ));
+}
+
+/// Places the terminal's cursor right after `text` drawn at the start of
+/// `area`'s first row, for inputs that only ever append at the end.
+fn set_cursor_after(frame: &mut Frame, area: Rect, text: &str) {
+    let width = Line::raw(text).width() as u16;
+    frame.set_cursor_position((area.x + width.min(area.width.saturating_sub(1)), area.y));
 }
 
 pub fn draw(frame: &mut Frame, state: &AppState) {
@@ -620,13 +641,12 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     let idle = !state.is_loading() && !state.is_pending();
     // The pending spinner text itself renders in draw_toast; repeating it
     // here would show it twice stacked in the footer.
+    let search_prompt =
+        (idle && matches!(state.mode, Mode::Search)).then(|| format!("/{}", state.search_query));
     let lines: Vec<Line> = if !idle {
         vec![styled_hint("q quit")]
-    } else if let Mode::Search = &state.mode {
-        vec![Line::from(Span::styled(
-            format!("/{}", state.search_query),
-            Style::default().fg(DIM),
-        ))]
+    } else if let Some(prompt) = &search_prompt {
+        vec![Line::styled(prompt.clone(), Style::default().fg(DIM))]
     } else {
         match &state.mode {
             Mode::Form(_) => vec![
@@ -666,6 +686,9 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
         bottom_area,
     );
+    if let Some(prompt) = &search_prompt {
+        set_cursor_after(frame, bottom_area, prompt);
+    }
 }
 
 fn toast_text(state: &AppState) -> String {
@@ -799,7 +822,9 @@ fn draw_little_create(frame: &mut Frame, buf: &str, state: &AppState) {
         .border_style(border_style)
         .title(Line::from(title_spans))
         .title_bottom(app_name_corner_title(border_style));
+    let input_area = block.inner(chunks[0]);
     frame.render_widget(Paragraph::new(buf).block(block), chunks[0]);
+    set_cursor_after(frame, input_area, buf);
 
     // The hint is only ever actionable when idle (capture_loop ignores keys
     // other than quit while pending), so it's safe to swap it out entirely
@@ -849,7 +874,12 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .border_style(field_style(form.field == FormField::Title));
     let title_inner = title_block.inner(chunks[0]);
     frame.render_widget(title_block, chunks[0]);
-    frame.render_widget(&form.title_input, title_inner);
+    render_textarea(
+        frame,
+        &form.title_input,
+        title_inner,
+        form.field == FormField::Title,
+    );
 
     let body_block = Block::default()
         .borders(Borders::ALL)
@@ -857,7 +887,12 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .border_style(field_style(form.field == FormField::Body));
     let body_inner = body_block.inner(chunks[1]);
     frame.render_widget(body_block, chunks[1]);
-    frame.render_widget(&form.body_input, body_inner);
+    render_textarea(
+        frame,
+        &form.body_input,
+        body_inner,
+        form.field == FormField::Body,
+    );
 
     let items: Vec<ListItem> = form
         .all_label_names
@@ -1030,6 +1065,9 @@ fn draw_repo_picker(frame: &mut Frame, area: Rect, picker: &RepoPickerState, sta
         Paragraph::new(picker.input.as_str()).style(input_style),
         input_inner,
     );
+    if input_focused {
+        set_cursor_after(frame, input_inner, &picker.input);
+    }
 
     let history_focused = picker.focus == RepoPickerFocus::History;
     let items: Vec<ListItem> = picker
@@ -2323,7 +2361,7 @@ mod tests {
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
         let style = buf[(x, y)].style();
-        assert_eq!(style.fg, Some(Color::Gray));
+        assert_eq!(style.fg, Some(color_from_name(&state.accent_color)));
         assert!(style.add_modifier.contains(Modifier::ITALIC));
         // The corner label sits on the popup's last row, well below the top
         // border row where the repo-name title lives.
@@ -2989,7 +3027,100 @@ mod tests {
 
         let buf = render_buffer(&state);
         let (x, y) = find_in_buffer(&buf, "boomerang").expect("corner label should render");
-        assert_eq!(buf[(x, y)].style().fg, Some(Color::Gray));
+        assert_eq!(
+            buf[(x, y)].style().fg,
+            Some(color_from_name(&state.accent_color))
+        );
+    }
+
+    /// Renders `state` and returns the buffer plus where the terminal
+    /// cursor ended up, or `None` when no input placed it (hidden).
+    fn render_with_cursor(state: &AppState) -> (ratatui::buffer::Buffer, Option<(u16, u16)>) {
+        let mut terminal = Terminal::new(TestBackend::new(84, 25)).unwrap();
+        terminal.draw(|f| draw(f, state)).unwrap();
+        let backend = terminal.backend();
+        let cursor = backend
+            .cursor_visible()
+            .then(|| backend.cursor_position().into());
+        (backend.buffer().clone(), cursor)
+    }
+
+    #[test]
+    fn form_places_the_terminal_cursor_after_the_focused_title() {
+        let mut state = AppState::new(vec![issue(7, "abc")], vec![]);
+        state.enter_edit();
+        let (buf, cursor) = render_with_cursor(&state);
+        let (x, y) = find_in_buffer(&buf, "abc").unwrap();
+        assert_eq!(cursor, Some((x + 3, y)));
+    }
+
+    #[test]
+    fn form_cursor_follows_focus_into_the_body() {
+        let mut state = AppState::new(vec![issue(7, "abc")], vec![]);
+        state.enter_edit();
+        state.form_next_field();
+        let (buf, cursor) = render_with_cursor(&state);
+        let (title_x, title_y) = find_in_buffer(&buf, "abc").unwrap();
+        // Empty body: cursor sits at the body's first cell, below the title box.
+        assert_eq!(cursor.map(|(x, _)| x), Some(title_x));
+        assert!(cursor.unwrap().1 > title_y);
+    }
+
+    #[test]
+    fn form_cursor_moves_mid_text() {
+        let mut state = AppState::new(vec![issue(7, "abc")], vec![]);
+        state.enter_edit();
+        state.form_input(Input::from(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::NONE,
+        )));
+        let (buf, cursor) = render_with_cursor(&state);
+        let (x, y) = find_in_buffer(&buf, "abc").unwrap();
+        assert_eq!(cursor, Some((x + 2, y)));
+    }
+
+    #[test]
+    fn form_body_cursor_tracks_scrolling_past_the_visible_rows() {
+        let body: String = (0..40).map(|i| format!("line{i}\n")).collect();
+        let mut state = AppState::new(
+            vec![Issue {
+                body: body.trim_end().to_string(),
+                ..issue(7, "abc")
+            }],
+            vec![],
+        );
+        state.enter_edit();
+        state.form_next_field();
+        let (buf, cursor) = render_with_cursor(&state);
+        let (x, y) = find_in_buffer(&buf, "line39").expect("last line scrolled into view");
+        assert_eq!(cursor, Some((x + 6, y)));
+    }
+
+    #[test]
+    fn little_create_places_the_terminal_cursor_after_the_typed_text() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_little_create();
+        state.little_create_push('h');
+        state.little_create_push('i');
+        let (buf, cursor) = render_with_cursor(&state);
+        let (x, y) = find_in_buffer(&buf, "hi").unwrap();
+        assert_eq!(cursor, Some((x + 2, y)));
+    }
+
+    #[test]
+    fn search_places_the_terminal_cursor_after_the_query() {
+        let mut state = AppState::new(vec![issue(1, "a")], vec![]);
+        state.enter_search();
+        state.search_push('z');
+        let (buf, cursor) = render_with_cursor(&state);
+        let (x, y) = find_in_buffer(&buf, "/z").unwrap();
+        assert_eq!(cursor, Some((x + 2, y)));
+    }
+
+    #[test]
+    fn list_view_hides_the_terminal_cursor() {
+        let state = AppState::new(vec![issue(1, "a")], vec![]);
+        assert_eq!(render_with_cursor(&state).1, None);
     }
 
     #[test]

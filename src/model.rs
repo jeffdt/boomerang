@@ -337,6 +337,8 @@ impl FormState {
 fn new_single_line_textarea(initial: &str) -> TextArea<'static> {
     let mut textarea = TextArea::new(vec![initial.to_string()]);
     textarea.set_cursor_line_style(Style::default());
+    // The terminal's own cursor marks the insertion point instead (see ui::draw_form).
+    textarea.set_cursor_style(Style::default());
     textarea.move_cursor(CursorMove::End);
     textarea
 }
@@ -349,6 +351,8 @@ fn new_multi_line_textarea(initial: &str) -> TextArea<'static> {
     };
     let mut textarea = TextArea::new(lines);
     textarea.set_cursor_line_style(Style::default());
+    // The terminal's own cursor marks the insertion point instead (see ui::draw_form).
+    textarea.set_cursor_style(Style::default());
     textarea.set_wrap_mode(WrapMode::Word);
     textarea.move_cursor(CursorMove::Bottom);
     textarea.move_cursor(CursorMove::End);

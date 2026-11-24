@@ -7,6 +7,7 @@ mod model;
 mod search;
 mod ui;
 
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{self, Event};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -211,7 +212,7 @@ fn run_ui<S: IssueSource>(
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen)?;
+    execute!(out, EnterAlternateScreen, SetCursorStyle::SteadyBar)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
     diagnostics::log_event("terminal_ready");
 
@@ -219,7 +220,11 @@ fn run_ui<S: IssueSource>(
     let result = event_loop(&mut terminal, state, source, initial_load_rx, config_path);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -229,7 +234,7 @@ fn run_loading_preview(duration: Duration) -> anyhow::Result<()> {
 
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen)?;
+    execute!(out, EnterAlternateScreen, SetCursorStyle::SteadyBar)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let started = Instant::now();
@@ -242,7 +247,11 @@ fn run_loading_preview(duration: Duration) -> anyhow::Result<()> {
     };
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -275,7 +284,7 @@ fn poll_create(rx: &Option<CreateReceiver>) -> Option<anyhow::Result<()>> {
 fn run_capture<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen)?;
+    execute!(out, EnterAlternateScreen, SetCursorStyle::SteadyBar)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let mut state = AppState::new(vec![], vec![]);
@@ -285,7 +294,11 @@ fn run_capture<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     let result = capture_loop(&mut terminal, &mut state, source, repo_name_rx);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -404,7 +417,7 @@ fn apply_repo_name_result(state: &mut AppState, result: anyhow::Result<String>) 
 fn run_capture_full<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen)?;
+    execute!(out, EnterAlternateScreen, SetCursorStyle::SteadyBar)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let mut state = AppState::new(vec![], vec![]);
@@ -414,7 +427,11 @@ fn run_capture_full<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     let result = capture_full_loop(&mut terminal, &mut state, source, Some(labels_rx));
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    )?;
     terminal.show_cursor()?;
     result
 }
