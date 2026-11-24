@@ -386,7 +386,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(1),
-                    Constraint::Length(1),
+                    Constraint::Length(toast_height(state, inner.width)),
                     Constraint::Length(2),
                 ])
                 .split(inner);
@@ -649,11 +649,25 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     );
 }
 
-fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
-    let text = state
+fn toast_text(state: &AppState) -> String {
+    state
         .pending_message()
         .or_else(|| state.status.as_ref().map(|(msg, _, _)| msg.clone()))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Rows the toast needs to show its message wrapped, so a long gh error
+/// isn't clipped. Capped so it can't crowd out the list.
+fn toast_height(state: &AppState, width: u16) -> u16 {
+    const MAX_TOAST_ROWS: usize = 4;
+    Paragraph::new(toast_text(state))
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .clamp(1, MAX_TOAST_ROWS) as u16
+}
+
+fn draw_toast(frame: &mut Frame, area: Rect, state: &AppState) {
+    let text = toast_text(state);
     let style = match state.status_color() {
         Some(color) => Style::default().fg(color),
         None => Style::default(),
@@ -793,7 +807,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(toast_height(state, area.width)),
             Constraint::Length(2),
         ])
         .split(area);
@@ -922,7 +936,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(toast_height(state, area.width)),
             Constraint::Length(1),
         ])
         .split(area);
@@ -1621,6 +1635,13 @@ mod tests {
         let (x, y) =
             find_in_buffer(&buf, "created issue in 1s").expect("status toast should render");
         assert_eq!(buf[(x, y)].style().fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn long_error_toast_wraps_so_its_tail_stays_visible() {
+        let mut state = AppState::new(vec![issue(1, "Test issue")], vec![]);
+        state.set_status_error(format!("gh error: {} tail-marker", "x".repeat(150)));
+        assert!(render_to_string(&state).contains("tail-marker"));
     }
 
     #[test]

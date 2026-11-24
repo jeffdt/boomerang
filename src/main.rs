@@ -328,6 +328,9 @@ fn capture_loop<S: IssueSource>(
             if key.kind != event::KeyEventKind::Press {
                 continue;
             }
+            if state.dismiss_error() {
+                continue;
+            }
             if state.is_pending() {
                 if map_list_key(key) == ListInput::Quit {
                     return Ok(());
@@ -472,6 +475,9 @@ fn capture_full_loop<S: IssueSource>(
         }
         if let Event::Key(key) = event::read()? {
             if key.kind != event::KeyEventKind::Press {
+                continue;
+            }
+            if state.dismiss_error() {
                 continue;
             }
             if state.is_loading() {
@@ -663,6 +669,9 @@ fn event_loop<S: IssueSource>(
         }
         if let Event::Key(key) = event::read()? {
             if key.kind != event::KeyEventKind::Press {
+                continue;
+            }
+            if state.dismiss_error() {
                 continue;
             }
             if state.is_loading() {
@@ -1201,6 +1210,16 @@ fn submit_form<S: IssueSource>(
 
 fn gh_error_status(error: &anyhow::Error) -> String {
     gh_error_status_with_token_hint(error, std::env::var_os("GITHUB_TOKEN").is_some())
+        + &gh_log_hint()
+}
+
+/// Point at where the full `gh` invocation (args, exit status, stderr) is
+/// logged, since the banner itself only carries stderr.
+fn gh_log_hint() -> String {
+    match diagnostics::active_log_path() {
+        Some(path) => format!(" · log: {}", path.display()),
+        None => format!(" · rerun with {}=1 to log gh calls", diagnostics::LOG_ENV),
+    }
 }
 
 fn gh_error_status_with_token_hint(error: &anyhow::Error, github_token_set: bool) -> String {
@@ -1715,7 +1734,11 @@ mod tests {
         finish_refresh(&mut state, Err(anyhow::anyhow!("network unreachable")));
         assert!(!state.is_pending());
         assert_eq!(state.issues, vec![issue(1, "Existing issue")]);
-        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network unreachable");
+        assert_status_ends_with(
+            &state,
+            &ERROR_ICONS,
+            &format!("gh error: network unreachable{}", gh_log_hint()),
+        );
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1774,7 +1797,11 @@ mod tests {
         let mut state = AppState::loading();
         finish_initial_load(&mut state, Err(anyhow::anyhow!("repo unavailable")));
         assert!(!state.is_loading());
-        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: repo unavailable");
+        assert_status_ends_with(
+            &state,
+            &ERROR_ICONS,
+            &format!("gh error: repo unavailable{}", gh_log_hint()),
+        );
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1910,7 +1937,11 @@ mod tests {
         );
         assert!(!state.is_pending());
         assert_eq!(state.mode, Mode::List);
-        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: close failed");
+        assert_status_ends_with(
+            &state,
+            &ERROR_ICONS,
+            &format!("gh error: close failed{}", gh_log_hint()),
+        );
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 
@@ -1941,7 +1972,11 @@ mod tests {
             Err(anyhow::anyhow!("network failed")),
         );
         assert_eq!(state.mode, Mode::Form(Box::new(draft)));
-        assert_status_ends_with(&state, &ERROR_ICONS, "gh error: network failed");
+        assert_status_ends_with(
+            &state,
+            &ERROR_ICONS,
+            &format!("gh error: network failed{}", gh_log_hint()),
+        );
         assert_eq!(state.status_color(), Some(Color::Red));
     }
 

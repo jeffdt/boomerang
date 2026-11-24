@@ -271,11 +271,14 @@ impl GhCliSource {
         };
         diagnostics::log_gh_result(full_args, started.elapsed(), &output);
         if !output.status.success() {
-            bail!(
-                "gh {} failed: {}",
-                full_args.join(" "),
-                String::from_utf8_lossy(&output.stderr)
-            );
+            // The args live in the diagnostic log; leading with stderr keeps the
+            // actual reason on screen instead of clipped behind a long command.
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let reason = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+            if reason.is_empty() {
+                bail!("gh exited with {}", output.status);
+            }
+            bail!("{reason}");
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
