@@ -24,7 +24,7 @@ pub struct Issue {
 use crate::gh::StateFilter;
 use crate::search;
 use ratatui::style::{Color, Style};
-use ratatui_textarea::{CursorMove, TextArea, WrapMode};
+use ratatui_textarea::{CursorMove, Input, Key, TextArea, WrapMode};
 use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -144,7 +144,7 @@ pub struct LoadingState {
 pub enum Mode {
     List,
     Search,
-    LittleCreate(String),
+    LittleCreate(Box<LineInput>),
     Form(Box<FormState>),
     ConfirmClose(u32),
     ConfirmDiscard(Box<Mode>),
@@ -171,7 +171,7 @@ pub enum RepoPickerFocus {
 /// the issue search box ranks issue titles.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoPickerState {
-    pub input: String,
+    pub input: LineInput,
     pub recent: Vec<String>,
     pub filtered: Vec<usize>,
     pub highlight: usize,
@@ -334,6 +334,50 @@ impl FormState {
     }
 }
 
+/// A single-line text field. `TextArea` scrolls horizontally to keep the
+/// cursor visible and brings the usual editing keys; this wrapper adds the
+/// equality `Mode` needs, since `TextArea` has no `PartialEq`.
+#[derive(Debug, Clone)]
+pub struct LineInput(pub TextArea<'static>);
+
+impl Default for LineInput {
+    fn default() -> Self {
+        Self::new("")
+    }
+}
+
+impl PartialEq for LineInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.lines() == other.0.lines() && self.0.cursor() == other.0.cursor()
+    }
+}
+
+impl LineInput {
+    pub fn new(initial: &str) -> Self {
+        Self(new_single_line_textarea(initial))
+    }
+
+    pub fn text(&self) -> String {
+        self.0.lines().concat()
+    }
+
+    /// Applies a key and returns whether the text changed.
+    pub fn input(&mut self, input: Input) -> bool {
+        edit_text(&mut self.0, input)
+    }
+}
+
+/// Feeds a key to a textarea, rebinding Ctrl+U from the library's undo to
+/// readline's delete-to-start-of-line: the footer hints advertise it, and
+/// Ghostty sends Cmd+Backspace as Ctrl+U. Returns whether the text changed.
+fn edit_text(textarea: &mut TextArea<'static>, input: Input) -> bool {
+    if input.key == Key::Char('u') && input.ctrl {
+        textarea.delete_line_by_head()
+    } else {
+        textarea.input(input)
+    }
+}
+
 fn new_single_line_textarea(initial: &str) -> TextArea<'static> {
     let mut textarea = TextArea::new(vec![initial.to_string()]);
     textarea.set_cursor_line_style(Style::default());
@@ -378,7 +422,7 @@ pub struct AppState {
     pub label_filter: Option<String>,
     pub mode: Mode,
     pub cursor: usize,
-    pub search_query: String,
+    pub search_query: LineInput,
     pub search_ranked: Vec<usize>,
     pub status: Option<(String, StatusKind, Instant)>,
     pub flash: Option<(u32, Instant)>,
@@ -410,7 +454,7 @@ impl AppState {
             label_filter: None,
             mode: Mode::List,
             cursor: 0,
-            search_query: String::new(),
+            search_query: LineInput::default(),
             search_ranked: Vec::new(),
             status: None,
             flash: None,
@@ -525,7 +569,7 @@ impl AppState {
     pub fn enter_repo_picker(&mut self, recent: Vec<String>, can_cancel: bool) {
         let filtered: Vec<usize> = (0..recent.len()).collect();
         self.mode = Mode::RepoPicker(Box::new(RepoPickerState {
-            input: String::new(),
+            input: LineInput::default(),
             recent,
             filtered,
             highlight: 0,
@@ -536,29 +580,24 @@ impl AppState {
     }
 
     fn recompute_repo_filter(picker: &mut RepoPickerState) {
-        if picker.input.trim().is_empty() {
+        let input = picker.input.text();
+        if input.trim().is_empty() {
             picker.filtered = (0..picker.recent.len()).collect();
         } else {
-            picker.filtered = search::rank(&picker.input, &picker.recent);
+            picker.filtered = search::rank(&input, &picker.recent);
         }
         picker.highlight = 0;
     }
 
-    pub fn repo_picker_push(&mut self, c: char) {
+    /// Any edit key claims `Input` focus; only a change to the text clears
+    /// the error and re-ranks the Recent list.
+    pub fn repo_picker_input(&mut self, input: Input) {
         if let Mode::RepoPicker(picker) = &mut self.mode {
-            picker.input.push(c);
             picker.focus = RepoPickerFocus::Input;
-            picker.error = None;
-            Self::recompute_repo_filter(picker);
-        }
-    }
-
-    pub fn repo_picker_backspace(&mut self) {
-        if let Mode::RepoPicker(picker) = &mut self.mode {
-            picker.input.pop();
-            picker.focus = RepoPickerFocus::Input;
-            picker.error = None;
-            Self::recompute_repo_filter(picker);
+            if picker.input.input(input) {
+                picker.error = None;
+                Self::recompute_repo_filter(picker);
+            }
         }
     }
 
@@ -623,13 +662,14 @@ impl AppState {
                 return Some(picker.recent[idx].clone());
             }
         }
-        match crate::gh::parse_repo_spec(&picker.input) {
+        let input = picker.input.text();
+        match crate::gh::parse_repo_spec(&input) {
             Some(repo) => Some(repo),
             None => {
-                picker.error = Some(if picker.input.trim().is_empty() {
+                picker.error = Some(if input.trim().is_empty() {
                     "type a repo, e.g. owner/repo".to_string()
                 } else {
-                    format!("'{}' doesn't look like a repo", picker.input.trim())
+                    format!("'{}' doesn't look like a repo", input.trim())
                 });
                 None
             }
@@ -764,72 +804,48 @@ impl AppState {
 
     pub fn enter_search(&mut self) {
         self.mode = Mode::Search;
-        self.search_query.clear();
+        self.search_query = LineInput::default();
         self.search_ranked = (0..self.issues.len()).collect();
         self.cursor = 0;
     }
 
     fn recompute_search(&mut self) {
-        if self.search_query.is_empty() {
+        let query = self.search_query.text();
+        if query.is_empty() {
             self.search_ranked = (0..self.issues.len()).collect();
         } else {
             let titles: Vec<&str> = self.issues.iter().map(|i| i.title.as_str()).collect();
-            self.search_ranked = search::rank(&self.search_query, &titles);
+            self.search_ranked = search::rank(&query, &titles);
         }
         self.cursor = 0;
     }
 
-    pub fn search_push(&mut self, c: char) {
-        self.search_query.push(c);
-        self.recompute_search();
-    }
-
-    pub fn search_backspace(&mut self) {
-        self.search_query.pop();
-        self.recompute_search();
-    }
-
-    pub fn search_delete_word(&mut self) {
-        while !self.search_query.is_empty() && self.search_query.ends_with(' ') {
-            self.search_query.pop();
+    pub fn search_input(&mut self, input: Input) {
+        if self.search_query.input(input) {
+            self.recompute_search();
         }
-        while !self.search_query.is_empty() && !self.search_query.ends_with(' ') {
-            self.search_query.pop();
-        }
-        self.recompute_search();
-    }
-
-    pub fn search_clear(&mut self) {
-        self.search_query.clear();
-        self.recompute_search();
     }
 
     pub fn exit_search(&mut self) {
         let target = self.visible_indices().get(self.cursor).copied();
         self.mode = Mode::List;
-        self.search_query.clear();
+        self.search_query = LineInput::default();
         self.cursor = self.visible_position_of(target);
     }
 
     pub fn enter_little_create(&mut self) {
-        self.mode = Mode::LittleCreate(String::new());
+        self.mode = Mode::LittleCreate(Box::default());
     }
 
-    pub fn little_create_push(&mut self, c: char) {
-        if let Mode::LittleCreate(buf) = &mut self.mode {
-            buf.push(c);
-        }
-    }
-
-    pub fn little_create_backspace(&mut self) {
-        if let Mode::LittleCreate(buf) = &mut self.mode {
-            buf.pop();
+    pub fn little_create_input(&mut self, input: Input) {
+        if let Mode::LittleCreate(title) = &mut self.mode {
+            title.input(input);
         }
     }
 
     pub fn little_create_submit(&mut self) -> Option<String> {
         if let Mode::LittleCreate(buf) = &self.mode {
-            let title = buf.trim().to_string();
+            let title = buf.text().trim().to_string();
             if title.is_empty() {
                 return None;
             }
@@ -842,7 +858,7 @@ impl AppState {
     pub fn cancel_form_or_create(&mut self) {
         let dirty = match &self.mode {
             Mode::Form(form) => form.is_dirty(),
-            Mode::LittleCreate(buf) => !buf.trim().is_empty(),
+            Mode::LittleCreate(buf) => !buf.text().trim().is_empty(),
             _ => false,
         };
         if dirty {
@@ -903,22 +919,14 @@ impl AppState {
         }
     }
 
-    pub fn form_input(&mut self, input: ratatui_textarea::Input) {
+    pub fn form_input(&mut self, input: Input) {
         if let Mode::Form(form) = &mut self.mode {
             let textarea = match form.field {
                 FormField::Title => &mut form.title_input,
                 FormField::Body => &mut form.body_input,
                 FormField::Labels | FormField::Submit => return,
             };
-            // ratatui-textarea's own default keymap binds Ctrl+U to undo(), but the
-            // footer hint advertises "ctrl+u clear line" (see draw_shortcuts_hint in
-            // ui.rs), matching the near-universal readline convention. Intercept it
-            // here rather than let it fall through to the library default.
-            if input.key == ratatui_textarea::Key::Char('u') && input.ctrl {
-                textarea.delete_line_by_head();
-            } else {
-                textarea.input(input);
-            }
+            edit_text(textarea, input);
         }
     }
 
@@ -1227,6 +1235,26 @@ fn spinner_frame(started_at: &Instant, frames: &'static [char]) -> char {
 }
 
 #[cfg(test)]
+impl AppState {
+    /// Sends one key to whichever single-line text input the current mode owns.
+    pub fn type_key(&mut self, input: Input) {
+        match self.mode {
+            Mode::Search => self.search_input(input),
+            Mode::LittleCreate(_) => self.little_create_input(input),
+            Mode::RepoPicker(_) => self.repo_picker_input(input),
+            _ => panic!("no text input in {:?}", self.mode),
+        }
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        self.type_key(Input {
+            key: Key::Char(c),
+            ..Default::default()
+        });
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::gh::StateFilter;
@@ -1315,9 +1343,9 @@ mod tests {
             vec![],
         );
         state.enter_search();
-        state.search_push('a');
-        state.search_push('p');
-        state.search_push('i');
+        state.type_char('a');
+        state.type_char('p');
+        state.type_char('i');
         assert_eq!(
             state.search_ranked.first().copied(),
             Some(1),
@@ -1329,7 +1357,7 @@ mod tests {
     fn exit_search_parks_cursor_on_matched_issue() {
         let mut state = AppState::new(vec![issue(1, "alpha"), issue(2, "beta")], vec![]);
         state.enter_search();
-        state.search_push('b');
+        state.type_char('b');
         assert_eq!(state.cursor, 0, "only match is at ranked position 0");
         state.exit_search();
         assert_eq!(
@@ -1358,7 +1386,7 @@ mod tests {
         let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
         state.enter_search();
         for c in "login".chars() {
-            state.search_push(c);
+            state.type_char(c);
         }
         assert_eq!(
             state.search_ranked,
@@ -1407,27 +1435,19 @@ mod tests {
     }
 
     #[test]
-    fn search_delete_word_removes_last_word() {
-        let mut state = AppState::new(vec![issue(1, "fix login error")], vec![]);
-        state.enter_search();
-        for c in "fix login".chars() {
-            state.search_push(c);
-        }
-        assert_eq!(state.search_query, "fix login");
-        state.search_delete_word();
-        assert_eq!(state.search_query, "fix ");
-    }
-
-    #[test]
     fn search_clear_empties_query() {
         let mut state = AppState::new(vec![issue(1, "test")], vec![]);
         state.enter_search();
         for c in "test query".chars() {
-            state.search_push(c);
+            state.type_char(c);
         }
-        assert_eq!(state.search_query, "test query");
-        state.search_clear();
-        assert_eq!(state.search_query, "");
+        assert_eq!(state.search_query.text(), "test query");
+        state.type_key(Input {
+            key: Key::Char('u'),
+            ctrl: true,
+            ..Default::default()
+        });
+        assert_eq!(state.search_query.text(), "");
         assert_eq!(
             state.search_ranked.len(),
             1,
@@ -1601,7 +1621,7 @@ mod tests {
         let mut state = AppState::new(vec![open_issue, closed_issue], vec![]);
         state.enter_search();
         for c in "login".chars() {
-            state.search_push(c);
+            state.type_char(c);
         }
         assert_eq!(state.visible_indices(), vec![0]);
     }
@@ -1617,7 +1637,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
         for c in "  Fix the bug  ".chars() {
-            state.little_create_push(c);
+            state.type_char(c);
         }
         let submitted = state.little_create_submit();
         assert_eq!(submitted, Some("Fix the bug".to_string()));
@@ -1628,7 +1648,7 @@ mod tests {
     fn little_create_submit_rejects_blank_title() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
-        state.little_create_push(' ');
+        state.type_char(' ');
         assert_eq!(state.little_create_submit(), None);
         assert!(
             matches!(state.mode, Mode::LittleCreate(_)),
@@ -2246,11 +2266,14 @@ mod tests {
     fn cancel_on_dirty_little_create_asks_for_confirmation() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_little_create();
-        state.little_create_push('F');
+        state.type_char('F');
         state.cancel_form_or_create();
         assert!(matches!(state.mode, Mode::ConfirmDiscard(_)));
         state.confirm_discard_no();
-        assert_eq!(state.mode, Mode::LittleCreate("F".to_string()));
+        assert_eq!(
+            state.mode,
+            Mode::LittleCreate(Box::new(LineInput::new("F")))
+        );
     }
 
     #[test]
@@ -2782,24 +2805,11 @@ mod tests {
             true,
         );
         let picker = repo_picker_state(&state);
-        assert_eq!(picker.input, "");
+        assert_eq!(picker.input.text(), "");
         assert_eq!(picker.filtered, vec![0, 1]);
         assert_eq!(picker.highlight, 0);
         assert_eq!(picker.focus, RepoPickerFocus::Input);
         assert_eq!(picker.error, None);
-    }
-
-    #[test]
-    fn repo_picker_push_and_backspace_edit_input() {
-        let mut state = AppState::new(vec![], vec![]);
-        state.enter_repo_picker(vec![], true);
-        state.repo_picker_push('a');
-        state.repo_picker_push('b');
-        assert_eq!(repo_picker_state(&state).input, "ab");
-        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
-        state.repo_picker_backspace();
-        assert_eq!(repo_picker_state(&state).input, "a");
-        assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
     }
 
     #[test]
@@ -2812,7 +2822,7 @@ mod tests {
         state.repo_picker_move(1);
         assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::History);
         assert_eq!(repo_picker_state(&state).highlight, 0);
-        state.repo_picker_push('x');
+        state.type_char('x');
         let picker = repo_picker_state(&state);
         assert_eq!(picker.focus, RepoPickerFocus::Input);
         assert_eq!(
@@ -2830,7 +2840,7 @@ mod tests {
         );
         repo_picker_state_mut(&mut state).error = Some("stale error".to_string());
         for c in "rolo".chars() {
-            state.repo_picker_push(c);
+            state.type_char(c);
         }
         let picker = repo_picker_state(&state);
         assert_eq!(
@@ -2867,7 +2877,8 @@ mod tests {
         );
         assert_eq!(picker.focus, RepoPickerFocus::History);
         assert_eq!(
-            picker.input, "",
+            picker.input.text(),
+            "",
             "history selection never writes into input"
         );
     }
@@ -2909,7 +2920,7 @@ mod tests {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_repo_picker(vec![], true);
         state.repo_picker_move(1);
-        assert_eq!(repo_picker_state(&state).input, "");
+        assert_eq!(repo_picker_state(&state).input.text(), "");
     }
 
     #[test]
@@ -2919,12 +2930,16 @@ mod tests {
             vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             true,
         );
-        state.repo_picker_push('x');
+        state.type_char('x');
         state.repo_picker_toggle_focus();
         let picker = repo_picker_state(&state);
         assert_eq!(picker.focus, RepoPickerFocus::History);
         assert_eq!(picker.highlight, 0, "toggling doesn't move the highlight");
-        assert_eq!(picker.input, "x", "toggling doesn't touch input text");
+        assert_eq!(
+            picker.input.text(),
+            "x",
+            "toggling doesn't touch input text"
+        );
 
         state.repo_picker_toggle_focus();
         assert_eq!(repo_picker_state(&state).focus, RepoPickerFocus::Input);
@@ -2942,9 +2957,9 @@ mod tests {
     fn repo_picker_submit_accepts_a_valid_owner_repo() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_repo_picker(vec![], true);
-        state.repo_picker_push('j');
+        state.type_char('j');
         for c in "effdt/rolomux".chars() {
-            state.repo_picker_push(c);
+            state.type_char(c);
         }
         assert_eq!(
             state.repo_picker_submit(),
@@ -2956,7 +2971,7 @@ mod tests {
     fn repo_picker_submit_rejects_invalid_input_and_records_an_error() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_repo_picker(vec![], true);
-        state.repo_picker_push('x');
+        state.type_char('x');
         assert_eq!(state.repo_picker_submit(), None);
         assert!(repo_picker_state(&state).error.is_some());
         assert!(
@@ -2983,7 +2998,7 @@ mod tests {
             vec!["jeffdt/boomerang".to_string(), "jeffdt/rolomux".to_string()],
             true,
         );
-        state.repo_picker_push('x');
+        state.type_char('x');
         state.repo_picker_move(1);
         assert_eq!(
             state.repo_picker_submit(),
