@@ -271,10 +271,9 @@ impl GhCliSource {
         };
         diagnostics::log_gh_result(full_args, started.elapsed(), &output);
         if !output.status.success() {
-            // The args live in the diagnostic log; leading with stderr keeps the
-            // actual reason on screen instead of clipped behind a long command.
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let reason = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+            // The args and full stderr live in the diagnostic log; the banner
+            // gets only gh's headline so it stays short.
+            let reason = stderr_headline(&String::from_utf8_lossy(&output.stderr));
             if reason.is_empty() {
                 bail!("gh exited with {}", output.status);
             }
@@ -282,6 +281,16 @@ impl GhCliSource {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+}
+
+/// First non-blank line of gh's stderr with runs of whitespace collapsed,
+/// e.g. "To get started with GitHub CLI, please run:  gh auth login".
+fn stderr_headline(stderr: &str) -> String {
+    stderr
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
 }
 
 impl IssueSource for GhCliSource {
@@ -485,6 +494,16 @@ mod tests {
             parse_created_issue_number("https://github.com/owner/repo/issues/71\n").unwrap(),
             71
         );
+    }
+
+    #[test]
+    fn stderr_headline_keeps_only_the_first_non_blank_line() {
+        let stderr = "\nTo get started with GitHub CLI, please run:  gh auth login\nAlternatively, populate the GH_TOKEN environment variable.\n";
+        assert_eq!(
+            stderr_headline(stderr),
+            "To get started with GitHub CLI, please run: gh auth login"
+        );
+        assert_eq!(stderr_headline("  \n"), "");
     }
 
     #[test]

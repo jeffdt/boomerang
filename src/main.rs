@@ -1218,7 +1218,7 @@ fn gh_error_status(error: &anyhow::Error) -> String {
 fn gh_log_hint() -> String {
     match diagnostics::active_log_path() {
         Some(path) => format!(" · log: {}", path.display()),
-        None => format!(" · rerun with {}=1 to log gh calls", diagnostics::LOG_ENV),
+        None => format!(" · {}=1 for full output", diagnostics::LOG_ENV),
     }
 }
 
@@ -1244,7 +1244,10 @@ fn looks_like_auth_or_access_error(message: &str) -> bool {
 }
 
 fn refine_auth_error(message: String, auth_status_ok: bool) -> String {
-    if auth_status_ok || !looks_like_auth_or_access_error(&message) {
+    if auth_status_ok
+        || !looks_like_auth_or_access_error(&message)
+        || message.contains("gh auth login")
+    {
         message
     } else {
         format!("{message} (and `gh auth status` failed: run `gh auth login`)")
@@ -2082,6 +2085,13 @@ mod tests {
     fn refine_auth_error_leaves_message_untouched_when_auth_status_succeeded() {
         let message = "gh error: HTTP 403 forbidden".to_string();
         assert_eq!(refine_auth_error(message.clone(), true), message);
+    }
+
+    #[test]
+    fn refine_auth_error_skips_hint_when_gh_already_says_to_log_in() {
+        let message =
+            "gh error: To get started with GitHub CLI, please run: gh auth login".to_string();
+        assert_eq!(refine_auth_error(message.clone(), false), message);
     }
 
     #[test]
