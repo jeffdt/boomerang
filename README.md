@@ -72,7 +72,7 @@ Then reload again with `tmux source-file ~/.tmux.conf` and try it with `prefix +
 | --- | --- |
 | `j`/`k` (or `↓`/`↑`) | Move the cursor |
 | `h` | Hide/show the description pane (shown by default) |
-| `/` | Fuzzy search by title (`Enter`/`Esc` to return to the list) |
+| `/` | Fuzzy search by title (`↑`/`↓` or `Ctrl-p`/`Ctrl-n` to move, `Enter`/`Esc` to return to the list) |
 | `a` | Cycle state filter: open → triage → closed → all |
 | `Space` | Check/uncheck the selected issue for a multi-copy |
 | `n` | New issue: title + body + label picker |

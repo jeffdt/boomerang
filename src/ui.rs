@@ -100,6 +100,8 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
 pub enum SearchInput {
     Char(char),
     Backspace,
+    Up,
+    Down,
     DeleteWord,
     Clear,
     Exit,
@@ -110,7 +112,12 @@ pub fn map_search_key(key: KeyEvent) -> SearchInput {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc | KeyCode::Enter => SearchInput::Exit,
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => SearchInput::DeleteWord,
         KeyCode::Backspace => SearchInput::Backspace,
+        KeyCode::Up => SearchInput::Up,
+        KeyCode::Down => SearchInput::Down,
+        KeyCode::Char('p' | 'k') if ctrl => SearchInput::Up,
+        KeyCode::Char('n' | 'j') if ctrl => SearchInput::Down,
         KeyCode::Char('w') if ctrl => SearchInput::DeleteWord,
         KeyCode::Char('u') if ctrl => SearchInput::Clear,
         KeyCode::Char(_) if ctrl => SearchInput::None,
@@ -234,16 +241,17 @@ pub enum RepoPickerInput {
 }
 
 pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Enter => RepoPickerInput::Submit,
         KeyCode::Esc => RepoPickerInput::Cancel,
         KeyCode::Up => RepoPickerInput::Up,
         KeyCode::Down => RepoPickerInput::Down,
+        KeyCode::Char('p' | 'k') if ctrl => RepoPickerInput::Up,
+        KeyCode::Char('n' | 'j') if ctrl => RepoPickerInput::Down,
         KeyCode::Tab | KeyCode::BackTab => RepoPickerInput::ToggleFocus,
         KeyCode::Backspace => RepoPickerInput::Backspace,
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            RepoPickerInput::Char(c)
-        }
+        KeyCode::Char(c) if !ctrl => RepoPickerInput::Char(c),
         _ => RepoPickerInput::None,
     }
 }
@@ -1222,6 +1230,32 @@ mod tests {
     fn search_key_mapping_handles_ctrl_w_as_delete_word() {
         let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
         assert_eq!(map_search_key(ctrl_w), SearchInput::DeleteWord);
+    }
+
+    #[test]
+    fn search_key_mapping_moves_selection_like_rolomux() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(map_search_key(key(KeyCode::Up)), SearchInput::Up);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('p'), ctrl)), SearchInput::Up);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('k'), ctrl)), SearchInput::Up);
+        assert_eq!(map_search_key(key(KeyCode::Down)), SearchInput::Down);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('n'), ctrl)), SearchInput::Down);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('j'), ctrl)), SearchInput::Down);
+        assert_eq!(map_search_key(key(KeyCode::Char('n'))), SearchInput::Char('n'));
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Backspace, KeyModifiers::ALT)),
+            SearchInput::DeleteWord
+        );
+    }
+
+    #[test]
+    fn repo_picker_key_mapping_moves_with_ctrl_n_p_j_k() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('p'), ctrl)), RepoPickerInput::Up);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('k'), ctrl)), RepoPickerInput::Up);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('n'), ctrl)), RepoPickerInput::Down);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('j'), ctrl)), RepoPickerInput::Down);
+        assert_eq!(map_repo_picker_key(key(KeyCode::Char('n'))), RepoPickerInput::Char('n'));
     }
 
     #[test]
