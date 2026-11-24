@@ -798,7 +798,7 @@ impl AppState {
     }
 
     pub fn exit_search(&mut self) {
-        let target = self.search_ranked.get(self.cursor).copied();
+        let target = self.visible_indices().get(self.cursor).copied();
         self.mode = Mode::List;
         self.search_query.clear();
         self.cursor = self.visible_position_of(target);
@@ -1553,6 +1553,23 @@ mod tests {
         state.cycle_state_filter();
         state.cycle_state_filter();
         assert_eq!(state.label_filter, Some("bug".to_string()));
+    }
+
+    #[test]
+    fn exit_search_after_moving_cursor_under_filter_lands_on_highlighted_issue() {
+        let issues = vec![
+            labeled(1, "alpha bug", "bug"),
+            issue(2, "alpha plain"),
+            labeled(3, "alpha other", "bug"),
+        ];
+        let mut state = AppState::new(issues, vec![]);
+        state.label_filter = Some("bug".to_string());
+        state.enter_search();
+        state.move_cursor(1);
+        let highlighted = state.selected_issue().map(|i| i.number);
+        state.exit_search();
+        assert_eq!(highlighted, Some(3));
+        assert_eq!(state.selected_issue().map(|i| i.number), Some(3));
     }
 
     #[test]

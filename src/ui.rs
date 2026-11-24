@@ -78,7 +78,7 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
         KeyCode::Char('/') => ListInput::EnterSearch,
         KeyCode::Char('a') => ListInput::CycleStateFilter,
         KeyCode::Char('l') => ListInput::LabelFilter,
-        KeyCode::Char('c') => ListInput::BigCreate,
+        KeyCode::Char('n') => ListInput::BigCreate,
         KeyCode::Char('x') => ListInput::RequestClose,
         KeyCode::Char(' ') => ListInput::ToggleCheck,
         KeyCode::Char('o') => ListInput::OpenInBrowser,
@@ -100,6 +100,8 @@ pub fn map_list_key(key: KeyEvent) -> ListInput {
 pub enum SearchInput {
     Char(char),
     Backspace,
+    Up,
+    Down,
     DeleteWord,
     Clear,
     Exit,
@@ -110,7 +112,12 @@ pub fn map_search_key(key: KeyEvent) -> SearchInput {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc | KeyCode::Enter => SearchInput::Exit,
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => SearchInput::DeleteWord,
         KeyCode::Backspace => SearchInput::Backspace,
+        KeyCode::Up => SearchInput::Up,
+        KeyCode::Down => SearchInput::Down,
+        KeyCode::Char('p' | 'k') if ctrl => SearchInput::Up,
+        KeyCode::Char('n' | 'j') if ctrl => SearchInput::Down,
         KeyCode::Char('w') if ctrl => SearchInput::DeleteWord,
         KeyCode::Char('u') if ctrl => SearchInput::Clear,
         KeyCode::Char(_) if ctrl => SearchInput::None,
@@ -216,7 +223,7 @@ pub fn map_settings_key(key: KeyEvent) -> SettingsInput {
         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('h') | KeyCode::Char('l') => {
             SettingsInput::Toggle
         }
-        KeyCode::Char('q') | KeyCode::Esc => SettingsInput::Exit,
+        KeyCode::Char('q') | KeyCode::Char(',') | KeyCode::Esc => SettingsInput::Exit,
         _ => SettingsInput::None,
     }
 }
@@ -234,16 +241,17 @@ pub enum RepoPickerInput {
 }
 
 pub fn map_repo_picker_key(key: KeyEvent) -> RepoPickerInput {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Enter => RepoPickerInput::Submit,
         KeyCode::Esc => RepoPickerInput::Cancel,
         KeyCode::Up => RepoPickerInput::Up,
         KeyCode::Down => RepoPickerInput::Down,
+        KeyCode::Char('p' | 'k') if ctrl => RepoPickerInput::Up,
+        KeyCode::Char('n' | 'j') if ctrl => RepoPickerInput::Down,
         KeyCode::Tab | KeyCode::BackTab => RepoPickerInput::ToggleFocus,
         KeyCode::Backspace => RepoPickerInput::Backspace,
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            RepoPickerInput::Char(c)
-        }
+        KeyCode::Char(c) if !ctrl => RepoPickerInput::Char(c),
         _ => RepoPickerInput::None,
     }
 }
@@ -624,7 +632,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
                     "j/k move · h hide pane · / search · a state · l label · space check · e edit",
                 ),
                 styled_hint(
-                    "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
+                    "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
                 ),
             ],
             _ => vec![Line::from(Span::styled(
@@ -1183,9 +1191,9 @@ mod tests {
     }
 
     #[test]
-    fn maps_lowercase_c_to_big_create_and_shift_c_to_nothing() {
-        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::BigCreate);
-        assert_eq!(map_list_key(key(KeyCode::Char('C'))), ListInput::None);
+    fn maps_n_to_big_create_and_c_to_nothing() {
+        assert_eq!(map_list_key(key(KeyCode::Char('n'))), ListInput::BigCreate);
+        assert_eq!(map_list_key(key(KeyCode::Char('c'))), ListInput::None);
     }
 
     #[test]
@@ -1222,6 +1230,32 @@ mod tests {
     fn search_key_mapping_handles_ctrl_w_as_delete_word() {
         let ctrl_w = key_with(KeyCode::Char('w'), KeyModifiers::CONTROL);
         assert_eq!(map_search_key(ctrl_w), SearchInput::DeleteWord);
+    }
+
+    #[test]
+    fn search_key_mapping_moves_selection_like_rolomux() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(map_search_key(key(KeyCode::Up)), SearchInput::Up);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('p'), ctrl)), SearchInput::Up);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('k'), ctrl)), SearchInput::Up);
+        assert_eq!(map_search_key(key(KeyCode::Down)), SearchInput::Down);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('n'), ctrl)), SearchInput::Down);
+        assert_eq!(map_search_key(key_with(KeyCode::Char('j'), ctrl)), SearchInput::Down);
+        assert_eq!(map_search_key(key(KeyCode::Char('n'))), SearchInput::Char('n'));
+        assert_eq!(
+            map_search_key(key_with(KeyCode::Backspace, KeyModifiers::ALT)),
+            SearchInput::DeleteWord
+        );
+    }
+
+    #[test]
+    fn repo_picker_key_mapping_moves_with_ctrl_n_p_j_k() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('p'), ctrl)), RepoPickerInput::Up);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('k'), ctrl)), RepoPickerInput::Up);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('n'), ctrl)), RepoPickerInput::Down);
+        assert_eq!(map_repo_picker_key(key_with(KeyCode::Char('j'), ctrl)), RepoPickerInput::Down);
+        assert_eq!(map_repo_picker_key(key(KeyCode::Char('n'))), RepoPickerInput::Char('n'));
     }
 
     #[test]
@@ -1395,6 +1429,10 @@ mod tests {
             SettingsInput::Exit
         );
         assert_eq!(map_settings_key(key(KeyCode::Esc)), SettingsInput::Exit);
+        assert_eq!(
+            map_settings_key(key(KeyCode::Char(','))),
+            SettingsInput::Exit
+        );
         assert_eq!(
             map_settings_key(key(KeyCode::Char('z'))),
             SettingsInput::None
@@ -2639,7 +2677,7 @@ mod tests {
         let state = AppState::new(vec![issue(1, "Fix bug")], vec![]);
         let rendered = render_to_string(&state);
         assert!(rendered.contains("h hide pane"));
-        assert!(rendered.contains("c create"));
+        assert!(rendered.contains("n new"));
         assert!(rendered.contains("e edit"));
     }
 
@@ -2662,7 +2700,7 @@ mod tests {
             "l label",
             "space check",
             "e edit",
-            "c create",
+            "n new",
             "x close",
             "o open",
             "y/Y/^y copy",
@@ -2700,7 +2738,7 @@ mod tests {
     fn footer_hint_lines_fit_within_the_real_popup_width_untruncated() {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
         let list_line1 = "j/k move · h hide pane · / search · a state · l label · space check · e edit";
-        let list_line2 = "c create · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let list_line2 = "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
         for line in [list_line1, list_line2, form_line1, form_line2] {
@@ -2724,7 +2762,7 @@ mod tests {
         state.toggle_shortcuts();
         let revealed = render_to_string(&state);
         assert!(revealed.contains("h hide pane"));
-        assert!(revealed.contains("c create"));
+        assert!(revealed.contains("n new"));
         assert!(!revealed.contains("? shortcuts"));
     }
 

@@ -743,6 +743,8 @@ fn event_loop<S: IssueSource>(
                 Mode::Search => match map_search_key(key) {
                     SearchInput::Char(c) => state.search_push(c),
                     SearchInput::Backspace => state.search_backspace(),
+                    SearchInput::Up => state.move_cursor(-1),
+                    SearchInput::Down => state.move_cursor(1),
                     SearchInput::DeleteWord => state.search_delete_word(),
                     SearchInput::Clear => state.search_clear(),
                     SearchInput::Exit => state.exit_search(),
