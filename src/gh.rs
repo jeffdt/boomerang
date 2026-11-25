@@ -126,15 +126,19 @@ pub fn parse_issues_json(json: &str) -> Result<Vec<Issue>> {
         .collect()
 }
 
+/// Parses `gh label list` output, sorted case-insensitively by name since
+/// gh returns labels in no useful order.
 pub fn parse_labels_json(json: &str) -> Result<Vec<Label>> {
     let raw: Vec<RawLabel> = serde_json::from_str(json)?;
-    Ok(raw
+    let mut labels: Vec<Label> = raw
         .into_iter()
         .map(|l| Label {
             name: l.name,
             color: l.color,
         })
-        .collect())
+        .collect();
+    labels.sort_by_key(|l| l.name.to_lowercase());
+    Ok(labels)
 }
 
 pub fn parse_repo_name(raw: &str) -> String {
@@ -430,6 +434,17 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parse_labels_json_sorts_case_insensitively_by_name() {
+        let json = r#"[{"name": "spike", "color": "a"}, {"name": "Bug", "color": "b"}, {"name": "docs", "color": "c"}]"#;
+        let names: Vec<String> = parse_labels_json(json)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.name)
+            .collect();
+        assert_eq!(names, ["Bug", "docs", "spike"]);
     }
 
     #[test]
