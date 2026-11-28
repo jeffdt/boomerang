@@ -17,29 +17,28 @@ family as its sibling project, [rolomux](https://github.com/jeffdt/rolomux)
 
 Shared skills (`mockup`, `vhs-recording`, `cutting-a-release`, `live-preview`)
 come from the `tui-utils` plugin (github.com/jeffdt/tui-utils), not this
-repo. One-time per machine:
+repo. One-time per machine, at user scope:
 
 ```
 /plugin marketplace add jeffdt/tui-utils
 /plugin install tui-utils@tui-utils
 ```
 
+This repo's per-app modifiers for those skills live in
+`[package.metadata.tui-utils]` in `Cargo.toml` (keys documented in the
+plugin's README).
+
 ## Durable design decisions
 
 - **Mock up visual/rendering changes before writing the spec.** When a design
   discussion touches how something renders (colors, layout, new
-  glyphs/columns), don't rely on a text description alone — render an ANSI
-  mockup (a small script with `printf`/`echo -e` escape codes, not the real
-  binary) in a new tmux window via `mux spawn --workspace caller`, so Jeff can
-  look at it before design gets locked in. Skip this for changes with no
-  visual surface (model/logic-only work).
-- **Isolate a manual binary run from Jeff's real config.** When running the
-  compiled binary directly to eyeball a change (not just tests), point
-  `XDG_CONFIG_HOME` at a scratch directory first, e.g. `XDG_CONFIG_HOME=/tmp/
-  boomerang-preview target/release/boomerang`. boomerang has no built-in
-  isolation flag, so without this any interaction with a config-writing
-  feature silently mutates Jeff's real `~/.config/boomerang/config.toml`.
-  Skip it only for changes with no config-writing surface at all.
+  glyphs/columns), don't rely on a text description alone: build a mockup
+  with the `mockup` skill so Jeff can look at it before design gets locked
+  in. Skip this for changes with no visual surface (model/logic-only work).
+- **Leave a live preview when a feature is done** with the `live-preview`
+  skill. Any manual run of the binary also points `XDG_CONFIG_HOME` at a
+  scratch directory, since boomerang has no isolation flag of its own and
+  would otherwise mutate the real `~/.config/boomerang/config.toml`.
 - **Named ANSI colors only.** Use the 16 named terminal colors (e.g.
   `Color::Cyan`, `Color::DarkGray`), never `Color::Rgb`. This is what lets the
   picker inherit the user's terminal theme rather than imposing fixed colors.
@@ -53,11 +52,6 @@ repo. One-time per machine:
   labels (e.g. the same `priority`+`small` pair) — fold those into the same
   spec/plan/PR instead of leaving them for a separate pass. If it's a close
   call whether something belongs in scope, ask rather than guessing.
-- **Always work in a worktree; never implement directly on `main`.** Before
-  starting any implementation work (not just investigation/Q&A), check
-  whether the session is already running in a worktree. If it isn't, create
-  one immediately with `wt switch --create jeffdt/<domain>-<brief-description>`
-  before touching code — don't ask first, just do it, then mention it.
 - **Changes land via pull request, never a local merge to `main`.** Push the
   feature branch and open a PR, then merge it yourself (squash, to keep
   `main` linear) — this is a solo project with no human review gate, so the
@@ -84,42 +78,9 @@ mirroring the `rolomux`/`teleport` pattern:
 ### Cutting a release
 
 **Every push to `main` that changes shipped behavior must also cut a
-release.** Users install via Homebrew, which only ever sees tagged release
-binaries, never `main`. A commit on `main` with no accompanying release is
-invisible to anyone who runs `brew upgrade`. So unless a change is purely
-internal (docs, tests, CI, scratch under `specs/`/`plans/`), finish the job
-in the same session: bump, tag, wait for CI, update the tap. Don't leave
-`main` ahead of the latest release.
-
-The version bump rides in the PR that ships the change. Once it has merged,
-cut the tag and update the tap.
-`$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh` (from the
-`tui-utils` Claude Code plugin, shared across jeffdt's TUI apps) automates
-the mechanical steps; it expects the tap checked out at
-`~/code/homebrew-tap` (set `BOOMERANG_TAP_DIR` if it lives elsewhere):
-
-1. On the feature branch, before opening the PR:
-   `$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh bump
-   <patch|minor|major>`. Bumps `Cargo.toml`, refreshes `Cargo.lock`,
-   commits. That commit rides in the PR.
-2. After the PR merges: `git checkout main && git pull`, then
-   `$CLAUDE_PLUGIN_ROOT/skills/cutting-a-release/release.sh cut`. Tags and pushes
-   `vX.Y.Z`, waits for `release.yml` (builds and attaches
-   **`boomerang-aarch64-apple-darwin`**),
-   downloads and hashes the asset, updates and validates
-   `jeffdt/homebrew-tap`'s `Formula/boomerang.rb`, pushes the tap, and runs
-   `brew update && brew upgrade jeffdt/tap/boomerang` locally.
-
-Two things the script doesn't cover — finish these by hand after `cut`
-succeeds:
-
-- If `~/.tmux.conf`'s popup binds were temporarily pointed at a dev build
-  (`target/release/boomerang`) for testing, revert them to
-  `exec boomerang` and `tmux source-file ~/.tmux.conf`.
-- Clean up the worktree once the work is fully shipped: run `wt remove` from
-  inside the feature worktree.
-
-Currently Apple Silicon only, matching rolomux.
+release** (Homebrew users never see `main`, only tagged releases). See the
+`cutting-a-release` skill for the full bump/tag/tap workflow; set
+`BOOMERANG_TAP_DIR` if the tap isn't at `~/code/homebrew-tap`.
 
 ## Regenerating the README demo GIFs
 

@@ -9,6 +9,11 @@ license = "MIT"
 name = "boomerang"
 path = "src/main.rs"
 
+[package.metadata.tui-utils]
+launch = "popup"
+popup_flags = "-E -B -w 84 -h 60%"
+config_isolation = "xdg"
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
