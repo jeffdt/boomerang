@@ -101,6 +101,8 @@ Title → Body → submit (submitting from the Labels field).
 `boomerang --capture` skips the `gh` issue fetch entirely and opens straight to the title-only quick-create prompt (`Enter` to create, `Esc` to cancel), then exits.
 This is extra handy when bound to its own key (see the `bind I` example above) for firing off an issue with minimal disruption to your work.
 `boomerang --capture-full` does the same but opens the full form instead, if you prefer to capture body + label upfront at idea-time.
+`boomerang --new` opens the same full form, but as the normal picker: issues load behind the form while you type, and submitting lands you on the list with the new issue selected instead of exiting.
+Both full-form modes are usable instantly; labels fill into the Labels field once they've loaded.
 
 ## Settings
 
