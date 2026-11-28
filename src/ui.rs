@@ -613,8 +613,8 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         match &state.mode {
             Mode::Form(_) => vec![
-                styled_hint("tab/shift+tab field · ctrl+s submit"),
-                styled_hint("ctrl+w delete word · ctrl+u clear line · esc cancel"),
+                styled_hint("tab/shift+tab field · ^s submit"),
+                styled_hint("^w delete word · ^u clear line · esc cancel"),
             ],
             Mode::Settings => vec![styled_hint("j/k move · enter/space toggle · esc back")],
             Mode::RepoPicker(_) => vec![styled_hint(
@@ -626,7 +626,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
                     "j/k move · h hide pane · / search · a state · l label · space check · e edit",
                 ),
                 styled_hint(
-                    "n new · x close · o open · y/Y/ctrl+y copy · , settings · R repo · q quit",
+                    "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
                 ),
             ],
             _ => vec![Line::from(Span::styled(
@@ -2260,9 +2260,9 @@ mod tests {
         state.enter_big_create();
         let rendered = render_to_string(&state);
         assert!(rendered.contains("Submit"));
-        assert!(rendered.contains("ctrl+s submit"));
-        assert!(rendered.contains("ctrl+w delete word"));
-        assert!(rendered.contains("ctrl+u"));
+        assert!(rendered.contains("^s submit"));
+        assert!(rendered.contains("^w delete word"));
+        assert!(rendered.contains("^u"));
         assert!(rendered.contains("clear"));
     }
 
@@ -2574,7 +2574,7 @@ mod tests {
         let (_, toast_y) =
             find_in_buffer(&buf, "created issue in 1s").expect("toast should render");
         let (_, shortcuts_y) =
-            find_in_buffer(&buf, "ctrl+s submit").expect("shortcuts hint should render");
+            find_in_buffer(&buf, "^s submit").expect("shortcuts hint should render");
         assert!(
             toast_y < shortcuts_y,
             "expected toast row ({toast_y}) above shortcuts hint row ({shortcuts_y})"
@@ -2811,7 +2811,7 @@ mod tests {
             "n new",
             "x close",
             "o open",
-            "y/Y/ctrl+y copy",
+            "y/Y/^y copy",
             ", settings",
             "R repo",
             "q quit",
@@ -2830,9 +2830,9 @@ mod tests {
         let rendered = render_to_string(&state);
         for shortcut in [
             "tab/shift+tab field",
-            "ctrl+s submit",
-            "ctrl+w delete word",
-            "ctrl+u clear line",
+            "^s submit",
+            "^w delete word",
+            "^u clear line",
             "esc cancel",
         ] {
             assert!(
@@ -2847,10 +2847,9 @@ mod tests {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
         let list_line1 =
             "j/k move · h hide pane · / search · a state · l label · space check · e edit";
-        let list_line2 =
-            "n new · x close · o open · y/Y/ctrl+y copy · , settings · R repo · q quit";
-        let form_line1 = "tab/shift+tab field · ctrl+s submit";
-        let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
+        let list_line2 = "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let form_line1 = "tab/shift+tab field · ^s submit";
+        let form_line2 = "^w delete word · ^u clear line · esc cancel";
         for line in [list_line1, list_line2, form_line1, form_line2] {
             assert!(
                 line.chars().count() <= REAL_POPUP_INNER_WIDTH,

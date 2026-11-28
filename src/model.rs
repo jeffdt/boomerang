@@ -2057,7 +2057,7 @@ mod tests {
             assert_eq!(
                 form.title_text(),
                 "world",
-                "the footer hint advertises ctrl+u as clear line, not undo"
+                "the footer hint advertises ^u as clear line, not undo"
             );
             assert_eq!(form.title_input.cursor(), (0, 0));
         } else {
