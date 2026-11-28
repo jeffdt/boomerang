@@ -369,7 +369,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if state.is_loading() {
+    // Only the list waits on the initial load; a form opened via `--new`
+    // stays usable while issues and labels load behind it.
+    if state.is_loading() && state.mode == Mode::List {
         loading::draw(frame, inner, state);
         return;
     }
@@ -850,6 +852,9 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
     frame.render_widget(body_block, chunks[1]);
     frame.render_widget(&form.body_input, body_inner);
 
+    let placeholder = state
+        .labels_placeholder()
+        .filter(|_| form.all_label_names.is_empty());
     let items: Vec<ListItem> = form
         .all_label_names
         .iter()
@@ -868,6 +873,10 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
             ListItem::new(format!("{mark} {name}")).style(style)
         })
         .collect();
+    let items = match placeholder {
+        Some((text, color)) => vec![ListItem::new(text).style(Style::default().fg(color))],
+        None => items,
+    };
     frame.render_widget(
         List::new(items).block(
             Block::default()
@@ -2205,6 +2214,43 @@ mod tests {
         assert!(rendered.contains("Title"));
         assert!(rendered.contains("Body"));
         assert!(rendered.contains("bug"));
+    }
+
+    #[test]
+    fn loading_screen_only_covers_the_list() {
+        let mut state = AppState::loading();
+        let list_view = render_to_string(&state);
+        assert!(list_view.contains("Loading issues..."), "{list_view}");
+
+        state.enter_big_create();
+        let form_view = render_to_string(&state);
+        assert!(form_view.contains("Title"), "{form_view}");
+        assert!(!form_view.contains("Loading issues..."), "{form_view}");
+
+        state.type_key(ratatui_textarea::Input {
+            key: ratatui_textarea::Key::Char('x'),
+            ..Default::default()
+        });
+        state.cancel_form_or_create();
+        let discard_view = render_to_string(&state);
+        assert!(
+            !discard_view.contains("Loading issues..."),
+            "{discard_view}"
+        );
+        assert!(
+            matches!(state.mode, Mode::ConfirmDiscard(_)),
+            "{:?}",
+            state.mode
+        );
+    }
+
+    #[test]
+    fn form_labels_box_shows_loading_placeholder() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.begin_labels_loading();
+        let rendered = render_to_string(&state);
+        assert!(rendered.contains("loading labels…"), "{rendered}");
     }
 
     #[test]

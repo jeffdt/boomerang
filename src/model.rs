@@ -32,7 +32,6 @@ pub const STATUS_TOAST_DURATION: Duration = Duration::from_secs(2);
 const FLASH_GREEN_DURATION: Duration = Duration::from_millis(2000);
 const FLASH_GRAY_DURATION: Duration = Duration::from_millis(1600);
 const ACTIVITY_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
-const ACTIVITY_SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
 
 const SPINNER_BRAILLE: &[char] = &['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣽', '⣻'];
 const SPINNER_SQUARE: &[char] = &['◰', '◳', '◲', '◱'];
@@ -138,6 +137,18 @@ pub struct LoadingState {
     /// `loading::bar_motion`), picked once per loading session so repeated
     /// loads don't always animate identically.
     pub seed: u64,
+    pub frames: &'static [char],
+}
+
+/// Progress of the label fetch behind an open create form; `None` on
+/// `AppState` once labels have arrived.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LabelsStatus {
+    Loading {
+        started_at: Instant,
+        frames: &'static [char],
+    },
+    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -427,6 +438,7 @@ pub struct AppState {
     pub status: Option<(String, StatusKind, Instant)>,
     pub flash: Option<(u32, Instant)>,
     pub loading: Option<LoadingState>,
+    pub labels_status: Option<LabelsStatus>,
     pub pending: Option<PendingState>,
     pub pane_open: bool,
     pub repo_name_with_owner: Option<String>,
@@ -459,6 +471,7 @@ impl AppState {
             status: None,
             flash: None,
             loading: None,
+            labels_status: None,
             pending: None,
             pane_open: true,
             repo_name_with_owner: None,
@@ -1085,7 +1098,51 @@ impl AppState {
             started_at: Instant::now(),
             what,
             seed: millis_tick() as u64,
+            frames: random_spinner_frames(),
         });
+    }
+
+    pub fn begin_labels_loading(&mut self) {
+        self.labels_status = Some(LabelsStatus::Loading {
+            started_at: Instant::now(),
+            frames: random_spinner_frames(),
+        });
+    }
+
+    pub fn fail_labels(&mut self, error: String) {
+        self.labels_status = Some(LabelsStatus::Failed(error));
+    }
+
+    /// Stores freshly fetched labels and hands their names to any open
+    /// create/edit form, including one parked behind the discard prompt.
+    pub fn set_labels(&mut self, labels: Vec<Label>) {
+        self.all_labels = labels;
+        self.labels_status = None;
+        let names = self.all_label_names();
+        let form = match &mut self.mode {
+            Mode::Form(form) => Some(form),
+            Mode::ConfirmDiscard(previous) => match previous.as_mut() {
+                Mode::Form(form) => Some(form),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(form) = form {
+            form.all_label_names = names;
+        }
+    }
+
+    /// Text and color for the Labels box while labels haven't arrived.
+    pub fn labels_placeholder(&self) -> Option<(String, Color)> {
+        match self.labels_status.as_ref()? {
+            LabelsStatus::Loading { started_at, frames } => Some((
+                format!("{} loading labels…", spinner_frame(started_at, frames)),
+                Color::DarkGray,
+            )),
+            LabelsStatus::Failed(error) => {
+                Some((format!("couldn't load labels: {error}"), Color::Red))
+            }
+        }
     }
 
     pub fn finish_loading(&mut self) {
@@ -1100,7 +1157,7 @@ impl AppState {
         let loading = self.loading.as_ref()?;
         Some(format!(
             "{} Loading {}...",
-            spinner_frame(&loading.started_at, &ACTIVITY_SPINNER_FRAMES),
+            spinner_frame(&loading.started_at, loading.frames),
             loading.what
         ))
     }
@@ -3158,12 +3215,85 @@ mod tests {
     }
 
     #[test]
-    fn loading_message_glyph_still_uses_fixed_ascii_frames() {
+    fn loading_message_glyph_comes_from_a_spinner_preset() {
         let mut state = AppState::new(vec![], vec![]);
         state.begin_loading("issues");
-        let message = state.loading_message().unwrap();
-        let first_char = message.chars().next().unwrap();
-        assert!(ACTIVITY_SPINNER_FRAMES.contains(&first_char));
+        let frames = state.loading.as_ref().unwrap().frames;
+        assert!(SPINNER_PRESETS.contains(&frames));
+        let first_char = state.loading_message().unwrap().chars().next().unwrap();
+        assert!(frames.contains(&first_char));
+    }
+
+    fn label(name: &str) -> Label {
+        Label {
+            name: name.into(),
+            color: "ededed".into(),
+        }
+    }
+
+    #[test]
+    fn set_labels_fills_open_form_label_names() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.begin_labels_loading();
+        state.set_labels(vec![label("bug"), label("docs")]);
+        let Mode::Form(form) = &state.mode else {
+            panic!("expected form, got {:?}", state.mode);
+        };
+        assert_eq!(form.all_label_names, ["bug", "docs"]);
+        assert_eq!(form.label_cursor, 0);
+        assert!(state.labels_status.is_none());
+        assert_eq!(state.all_labels.len(), 2);
+    }
+
+    #[test]
+    fn set_labels_reaches_a_form_behind_the_discard_prompt() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.type_key(Input {
+            key: Key::Char('x'),
+            ..Default::default()
+        });
+        state.cancel_form_or_create();
+        state.set_labels(vec![label("bug")]);
+        state.confirm_discard_no();
+        let Mode::Form(form) = &state.mode else {
+            panic!("expected form, got {:?}", state.mode);
+        };
+        assert_eq!(form.all_label_names, ["bug"]);
+    }
+
+    #[test]
+    fn labels_placeholder_shows_spinner_glyph_from_a_preset_while_loading() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_labels_loading();
+        let (text, color) = state.labels_placeholder().unwrap();
+        let Some(LabelsStatus::Loading { frames, .. }) = &state.labels_status else {
+            panic!("expected loading status");
+        };
+        assert!(SPINNER_PRESETS.contains(frames));
+        assert!(frames.contains(&text.chars().next().unwrap()));
+        assert!(text.ends_with(" loading labels…"), "{text:?}");
+        assert_eq!(color, Color::DarkGray);
+    }
+
+    #[test]
+    fn labels_placeholder_reports_failure() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_labels_loading();
+        state.fail_labels("boom".into());
+        assert_eq!(
+            state.labels_placeholder(),
+            Some(("couldn't load labels: boom".to_string(), Color::Red))
+        );
+    }
+
+    #[test]
+    fn labels_placeholder_is_none_once_loaded() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.begin_labels_loading();
+        state.set_labels(vec![]);
+        assert_eq!(state.labels_placeholder(), None);
     }
 
     #[test]

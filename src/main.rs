@@ -36,6 +36,7 @@ Usage:
   boomerang --doctor                          Print gh, repo, auth, and logging diagnostics
   boomerang --capture                         Instant title-only capture, then exit
   boomerang --capture-full                    Full create form (title/body/labels), then exit
+  boomerang --new                             Launch straight into the create form; land on the list after submit
   boomerang --version                         Print version and exit
   boomerang --help                            Print this help and exit
 
@@ -47,7 +48,7 @@ Bind it in ~/.tmux.conf, e.g.:
 
 #[derive(Debug, PartialEq)]
 enum StartupCommand {
-    Launch { repo: Option<String> },
+    Launch { repo: Option<String>, new: bool },
     Version,
     Help,
     Doctor,
@@ -59,21 +60,34 @@ enum StartupCommand {
 fn parse_command(args: impl IntoIterator<Item = String>) -> Result<StartupCommand, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     match args.as_slice() {
-        [] => Ok(StartupCommand::Launch { repo: None }),
+        [] => Ok(StartupCommand::Launch {
+                repo: None,
+                new: false
+            }),
         [arg] if matches!(arg.as_str(), "-V" | "--version") => Ok(StartupCommand::Version),
         [arg] if matches!(arg.as_str(), "-h" | "--help") => Ok(StartupCommand::Help),
         [arg] if arg == "--doctor" => Ok(StartupCommand::Doctor),
         [arg] if arg == "--capture" => Ok(StartupCommand::Capture),
         [arg] if arg == "--capture-full" => Ok(StartupCommand::CaptureFull),
+        [arg] if arg == "--new" => Ok(StartupCommand::Launch {
+            repo: None,
+            new: true,
+        }),
         [arg, rest @ ..] if arg == "--preview-loading" => parse_loading_preview(rest),
         [flag, repo] if flag == "--repo" => gh::parse_repo_spec(repo)
-            .map(|repo| StartupCommand::Launch { repo: Some(repo) })
+            .map(|repo| StartupCommand::Launch {
+                repo: Some(repo),
+                new: false,
+            })
             .ok_or_else(|| {
                 format!("'{repo}' doesn't look like a GitHub repo (expected OWNER/REPO or a github.com URL)")
             }),
         [arg] if arg == "--repo" => Err("--repo requires an OWNER/REPO argument".to_string()),
         [arg] if !arg.starts_with('-') => gh::parse_repo_spec(arg)
-            .map(|repo| StartupCommand::Launch { repo: Some(repo) })
+            .map(|repo| StartupCommand::Launch {
+                repo: Some(repo),
+                new: false,
+            })
             .ok_or_else(|| format!("unknown argument '{arg}'")),
         [arg, ..] => Err(format!("unknown argument '{arg}'")),
     }
@@ -133,8 +147,8 @@ fn parse_preview_duration(value: &str) -> Result<Duration, String> {
 
 fn main() -> anyhow::Result<()> {
     diagnostics::log_event("process_start");
-    let cli_repo = match parse_command(std::env::args().skip(1)) {
-        Ok(StartupCommand::Launch { repo }) => repo,
+    let (cli_repo, start_on_create) = match parse_command(std::env::args().skip(1)) {
+        Ok(StartupCommand::Launch { repo, new }) => (repo, new),
         Ok(StartupCommand::Version) => {
             println!("boomerang {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
@@ -187,6 +201,10 @@ fn main() -> anyhow::Result<()> {
         state.enter_repo_picker(loaded_config.recent_repos.clone(), false);
         state
     };
+    if start_on_create && has_repo_context {
+        state.enter_big_create();
+        state.begin_labels_loading();
+    }
     state.exit_on_copy_yank = loaded_config.exit_on_copy_yank;
     state.zebra_striping = loaded_config.zebra_striping;
     state.shortcuts_on_demand = loaded_config.shortcuts_on_demand;
@@ -406,7 +424,8 @@ fn run_capture_full<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
 
     let mut state = AppState::new(vec![], vec![]);
-    state.begin_loading("labels");
+    state.enter_big_create();
+    state.begin_labels_loading();
     let labels_rx = spawn_labels_fetch(source.clone());
 
     let result = capture_full_loop(&mut terminal, &mut state, source, Some(labels_rx));
@@ -415,6 +434,15 @@ fn run_capture_full<S: IssueSource>(source: &S) -> anyhow::Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
+}
+
+/// Hands a finished label fetch to the open form; a failure is shown in the
+/// Labels box rather than ending the session, so typed text survives.
+fn apply_labels_result(state: &mut AppState, result: anyhow::Result<Vec<Label>>) {
+    match result {
+        Ok(labels) => state.set_labels(labels),
+        Err(e) => state.fail_labels(gh_error_status(&e)),
+    }
 }
 
 fn begin_full_create<S: IssueSource>(
@@ -445,10 +473,7 @@ fn capture_full_loop<S: IssueSource>(
     loop {
         if let Some(result) = poll_labels(&labels_rx) {
             labels_rx = None;
-            let labels = result?;
-            state.all_labels = labels;
-            state.finish_loading();
-            state.enter_big_create();
+            apply_labels_result(state, result);
         }
 
         if let Some(result) = poll_create(&create_rx) {
@@ -638,7 +663,7 @@ fn event_loop<S: IssueSource>(
     loop {
         if let Some(result) = poll_initial_load(&initial_load_rx) {
             initial_load_rx = None;
-            finish_initial_load(state, result);
+            apply_initial_load(state, result);
         }
 
         if let Some(result) = poll_mutation(&mutation_rx) {
@@ -668,7 +693,7 @@ fn event_loop<S: IssueSource>(
             if state.dismiss_error() {
                 continue;
             }
-            if state.is_loading() {
+            if state.is_loading() && state.mode == Mode::List {
                 if map_list_key(key) == ListInput::Quit {
                     return Ok(());
                 }
@@ -959,6 +984,37 @@ fn poll_initial_load(
     }
 }
 
+/// Applies the launch (or repo-switch) load. If loading already ended, a
+/// mutation that finished first (e.g. a quick `--new` submit) has refreshed
+/// the list itself, so only the labels are taken from this older result.
+fn apply_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadSuccess>) {
+    if !state.is_loading() {
+        match result {
+            Ok(success) => {
+                state.repo_name_with_owner = success.repo_name;
+                state.set_labels(success.labels);
+            }
+            Err(e) if state.labels_status.is_some() => state.fail_labels(gh_error_status(&e)),
+            Err(_) => {}
+        }
+        return;
+    }
+    match result {
+        Ok(success) => {
+            let labels = success.labels.clone();
+            finish_initial_load(state, Ok(success));
+            state.set_labels(labels);
+        }
+        Err(e) => {
+            let message = gh_error_status(&e);
+            finish_initial_load(state, Err(e));
+            if state.labels_status.is_some() {
+                state.fail_labels(message);
+            }
+        }
+    }
+}
+
 fn finish_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadSuccess>) {
     match result {
         Ok(success) => {
@@ -1108,6 +1164,8 @@ fn finish_mutation(
     state.finish_pending();
     match result {
         Ok(success) => {
+            // The mutation's own refresh is newer than any load still in flight.
+            state.finish_loading();
             state.mode = Mode::List;
             state.set_issues_selecting(success.issues, success.target_issue);
             if let Some(number) = success.target_issue {
@@ -1546,7 +1604,21 @@ mod tests {
     fn parse_command_defaults_to_launch() {
         assert_eq!(
             parse_command(args(&[])),
-            Ok(StartupCommand::Launch { repo: None })
+            Ok(StartupCommand::Launch {
+                repo: None,
+                new: false
+            })
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_new() {
+        assert_eq!(
+            parse_command(args(&["--new"])),
+            Ok(StartupCommand::Launch {
+                repo: None,
+                new: true
+            })
         );
     }
 
@@ -1555,7 +1627,8 @@ mod tests {
         assert_eq!(
             parse_command(args(&["jeffdt/rolomux"])),
             Ok(StartupCommand::Launch {
-                repo: Some("jeffdt/rolomux".to_string())
+                repo: Some("jeffdt/rolomux".to_string()),
+                new: false
             })
         );
     }
@@ -1565,7 +1638,8 @@ mod tests {
         assert_eq!(
             parse_command(args(&["--repo", "jeffdt/rolomux"])),
             Ok(StartupCommand::Launch {
-                repo: Some("jeffdt/rolomux".to_string())
+                repo: Some("jeffdt/rolomux".to_string()),
+                new: false
             })
         );
     }
@@ -1575,7 +1649,8 @@ mod tests {
         assert_eq!(
             parse_command(args(&["https://github.com/jeffdt/rolomux"])),
             Ok(StartupCommand::Launch {
-                repo: Some("jeffdt/rolomux".to_string())
+                repo: Some("jeffdt/rolomux".to_string()),
+                new: false
             })
         );
     }
@@ -1781,6 +1856,127 @@ mod tests {
             state.repo_name_with_owner,
             Some("jeffdt/boomerang".to_string())
         );
+    }
+
+    fn loaded(issues: Vec<Issue>, labels: Vec<Label>) -> anyhow::Result<InitialLoadSuccess> {
+        Ok(InitialLoadSuccess {
+            issues,
+            labels,
+            repo_name: None,
+            elapsed: Duration::from_millis(10),
+        })
+    }
+
+    fn bug_label() -> Label {
+        Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        }
+    }
+
+    fn created(number: u32) -> anyhow::Result<MutationSuccess> {
+        Ok(MutationSuccess {
+            operation: PendingOperation::CreateIssue,
+            issues: vec![issue(number, "Just created")],
+            action_elapsed: Duration::from_millis(10),
+            refresh_elapsed: Duration::from_millis(10),
+            target_issue: Some(number),
+        })
+    }
+
+    #[test]
+    fn create_finishing_before_initial_load_ends_loading_and_keeps_its_list() {
+        let mut state = AppState::loading();
+        state.enter_big_create();
+        state.begin_pending(PendingOperation::CreateIssue);
+        finish_mutation(&mut state, None, created(42));
+        assert!(
+            !state.is_loading(),
+            "list must not sit behind the loading screen"
+        );
+
+        apply_initial_load(
+            &mut state,
+            loaded(vec![issue(1, "Stale")], vec![bug_label()]),
+        );
+        assert_eq!(state.issues, vec![issue(42, "Just created")]);
+        assert_eq!(state.all_labels, vec![bug_label()]);
+    }
+
+    #[test]
+    fn late_initial_load_failure_after_create_shows_no_error() {
+        let mut state = AppState::loading();
+        state.begin_pending(PendingOperation::CreateIssue);
+        finish_mutation(&mut state, None, created(42));
+        state.status = None;
+        apply_initial_load(&mut state, Err(anyhow::anyhow!("offline")));
+        assert_eq!(state.status, None);
+        assert_eq!(state.issues, vec![issue(42, "Just created")]);
+    }
+
+    #[test]
+    fn repo_switch_after_a_mutation_still_applies_the_new_list() {
+        let mut state = AppState::loading();
+        apply_initial_load(&mut state, loaded(vec![issue(1, "One")], vec![]));
+        state.begin_pending(PendingOperation::CreateIssue);
+        finish_mutation(&mut state, None, created(2));
+        // What switch_repo does to state before its fresh load lands.
+        state.issues = Vec::new();
+        state.begin_loading("issues");
+        apply_initial_load(&mut state, loaded(vec![issue(7, "Other repo")], vec![]));
+        assert_eq!(state.issues, vec![issue(7, "Other repo")]);
+    }
+
+    #[test]
+    fn initial_load_while_on_form_keeps_form_and_fills_labels() {
+        let mut state = AppState::loading();
+        state.enter_big_create();
+        state.begin_labels_loading();
+        apply_initial_load(&mut state, loaded(vec![issue(1, "One")], vec![bug_label()]));
+        let Mode::Form(form) = &state.mode else {
+            panic!("expected form, got {:?}", state.mode);
+        };
+        assert_eq!(form.all_label_names, ["bug"]);
+        assert_eq!(state.issues, vec![issue(1, "One")]);
+        assert!(state.labels_placeholder().is_none());
+    }
+
+    #[test]
+    fn failed_initial_load_while_on_form_reports_labels_failure() {
+        let mut state = AppState::loading();
+        state.enter_big_create();
+        state.begin_labels_loading();
+        apply_initial_load(&mut state, Err(anyhow::anyhow!("offline")));
+        assert!(matches!(state.mode, Mode::Form(_)));
+        let (text, _) = state.labels_placeholder().expect("failure placeholder");
+        assert!(text.contains("offline"), "{text}");
+    }
+
+    #[test]
+    fn apply_labels_result_failure_keeps_form_open() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.begin_labels_loading();
+        apply_labels_result(&mut state, Err(anyhow::anyhow!("network down")));
+        assert!(matches!(state.mode, Mode::Form(_)));
+        let (text, _) = state.labels_placeholder().expect("failure placeholder");
+        assert!(text.contains("network down"), "{text}");
+    }
+
+    #[test]
+    fn apply_labels_result_success_fills_form() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.enter_big_create();
+        state.begin_labels_loading();
+        let bug = Label {
+            name: "bug".into(),
+            color: "d73a4a".into(),
+        };
+        apply_labels_result(&mut state, Ok(vec![bug]));
+        let Mode::Form(form) = &state.mode else {
+            panic!("expected form");
+        };
+        assert_eq!(form.all_label_names, ["bug"]);
     }
 
     #[test]
