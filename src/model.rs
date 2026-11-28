@@ -1001,13 +1001,8 @@ impl AppState {
                 }
                 None
             }
-            FormField::Body => None, // unreachable: Body's Enter is routed to form_input
-            FormField::Labels => {
-                if let Mode::Form(form) = &mut self.mode {
-                    form.field = FormField::Submit;
-                }
-                None
-            }
+            // unreachable: Body's Enter goes to form_input, Labels' Enter toggles a label
+            FormField::Body | FormField::Labels => None,
             FormField::Submit => self.form_submit_now(),
         }
     }
@@ -2117,33 +2112,6 @@ mod tests {
         assert_eq!(state.form_enter(), None);
         if let Mode::Form(form) = &state.mode {
             assert_eq!(form.field, FormField::Body);
-        }
-    }
-
-    #[test]
-    fn form_enter_on_labels_advances_to_submit() {
-        let mut state = AppState::new(
-            vec![],
-            vec![Label {
-                name: "bug".into(),
-                color: "d73a4a".into(),
-            }],
-        );
-        state.enter_big_create();
-        state.type_str("T");
-        state.form_next_field();
-        state.type_str("B");
-        state.form_next_field();
-        state.form_toggle_label();
-        assert_eq!(
-            state.form_enter(),
-            None,
-            "Enter on Labels should advance, not submit"
-        );
-        if let Mode::Form(form) = &state.mode {
-            assert_eq!(form.field, FormField::Submit);
-        } else {
-            panic!("expected Form mode");
         }
     }
 
