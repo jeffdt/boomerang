@@ -173,7 +173,9 @@ pub fn map_form_key(key: KeyEvent, field: FormField) -> FormInput {
         KeyCode::Enter if field == FormField::Title => return FormInput::Enter,
         KeyCode::Up if field == FormField::Labels => return FormInput::MoveUp,
         KeyCode::Down if field == FormField::Labels => return FormInput::MoveDown,
-        KeyCode::Char(' ') if field == FormField::Labels => return FormInput::ToggleLabel,
+        KeyCode::Enter | KeyCode::Char(' ') if field == FormField::Labels => {
+            return FormInput::ToggleLabel
+        }
         _ => {}
     }
     match field {
@@ -624,7 +626,7 @@ fn draw_shortcuts_hint(frame: &mut Frame, area: Rect, state: &AppState) {
                     "j/k move · h hide pane · / search · a state · l label · space check · e edit",
                 ),
                 styled_hint(
-                    "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit",
+                    "n new · x close · o open · y/Y/ctrl+y copy · , settings · R repo · q quit",
                 ),
             ],
             _ => vec![Line::from(Span::styled(
@@ -879,7 +881,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
         List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Labels (space to toggle)")
+                .title("Labels (enter/space to toggle)")
                 .border_style(field_style(form.field == FormField::Labels)),
         ),
         chunks[2],
@@ -1347,6 +1349,10 @@ mod tests {
     fn form_key_mapping_reserves_space_and_arrows_for_labels_field() {
         assert_eq!(
             map_form_key(key(KeyCode::Char(' ')), FormField::Labels),
+            FormInput::ToggleLabel
+        );
+        assert_eq!(
+            map_form_key(key(KeyCode::Enter), FormField::Labels),
             FormInput::ToggleLabel
         );
         assert_eq!(
@@ -2805,7 +2811,7 @@ mod tests {
             "n new",
             "x close",
             "o open",
-            "y/Y/^y copy",
+            "y/Y/ctrl+y copy",
             ", settings",
             "R repo",
             "q quit",
@@ -2841,7 +2847,8 @@ mod tests {
         const REAL_POPUP_INNER_WIDTH: usize = 78;
         let list_line1 =
             "j/k move · h hide pane · / search · a state · l label · space check · e edit";
-        let list_line2 = "n new · x close · o open · y/Y/^y copy · , settings · R repo · q quit";
+        let list_line2 =
+            "n new · x close · o open · y/Y/ctrl+y copy · , settings · R repo · q quit";
         let form_line1 = "tab/shift+tab field · ctrl+s submit";
         let form_line2 = "ctrl+w delete word · ctrl+u clear line · esc cancel";
         for line in [list_line1, list_line2, form_line1, form_line2] {
