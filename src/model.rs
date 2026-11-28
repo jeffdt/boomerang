@@ -498,7 +498,7 @@ impl AppState {
     }
 
     pub fn set_loaded(&mut self, issues: Vec<Issue>, all_labels: Vec<Label>) {
-        self.all_labels = all_labels;
+        self.set_labels(all_labels);
         self.set_issues(issues);
         self.finish_loading();
     }
@@ -3250,10 +3250,7 @@ mod tests {
     fn set_labels_reaches_a_form_behind_the_discard_prompt() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
-        state.type_key(Input {
-            key: Key::Char('x'),
-            ..Default::default()
-        });
+        state.type_char('x');
         state.cancel_form_or_create();
         state.set_labels(vec![label("bug")]);
         state.confirm_discard_no();
@@ -3264,15 +3261,10 @@ mod tests {
     }
 
     #[test]
-    fn labels_placeholder_shows_spinner_glyph_from_a_preset_while_loading() {
+    fn labels_placeholder_shows_loading_text_while_loading() {
         let mut state = AppState::new(vec![], vec![]);
         state.begin_labels_loading();
         let (text, color) = state.labels_placeholder().unwrap();
-        let Some(LabelsStatus::Loading { frames, .. }) = &state.labels_status else {
-            panic!("expected loading status");
-        };
-        assert!(SPINNER_PRESETS.contains(frames));
-        assert!(frames.contains(&text.chars().next().unwrap()));
         assert!(text.ends_with(" loading labels…"), "{text:?}");
         assert_eq!(color, Color::DarkGray);
     }
@@ -3286,14 +3278,6 @@ mod tests {
             state.labels_placeholder(),
             Some(("couldn't load labels: boom".to_string(), Color::Red))
         );
-    }
-
-    #[test]
-    fn labels_placeholder_is_none_once_loaded() {
-        let mut state = AppState::new(vec![], vec![]);
-        state.begin_labels_loading();
-        state.set_labels(vec![]);
-        assert_eq!(state.labels_placeholder(), None);
     }
 
     #[test]

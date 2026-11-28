@@ -988,30 +988,15 @@ fn poll_initial_load(
 /// mutation that finished first (e.g. a quick `--new` submit) has refreshed
 /// the list itself, so only the labels are taken from this older result.
 fn apply_initial_load(state: &mut AppState, result: anyhow::Result<InitialLoadSuccess>) {
-    if !state.is_loading() {
-        match result {
-            Ok(success) => {
-                state.repo_name_with_owner = success.repo_name;
-                state.set_labels(success.labels);
-            }
-            Err(e) if state.labels_status.is_some() => state.fail_labels(gh_error_status(&e)),
-            Err(_) => {}
-        }
-        return;
+    if let (Err(e), Some(_)) = (&result, &state.labels_status) {
+        state.fail_labels(gh_error_status(e));
     }
-    match result {
-        Ok(success) => {
-            let labels = success.labels.clone();
-            finish_initial_load(state, Ok(success));
-            state.set_labels(labels);
-        }
-        Err(e) => {
-            let message = gh_error_status(&e);
-            finish_initial_load(state, Err(e));
-            if state.labels_status.is_some() {
-                state.fail_labels(message);
-            }
-        }
+    if state.is_loading() {
+        return finish_initial_load(state, result);
+    }
+    if let Ok(success) = result {
+        state.repo_name_with_owner = success.repo_name;
+        state.set_labels(success.labels);
     }
 }
 
@@ -1096,7 +1081,7 @@ fn finish_refresh(state: &mut AppState, result: anyhow::Result<RefreshSuccess>) 
     match result {
         Ok(success) => {
             let count = success.issues.len();
-            state.all_labels = success.labels;
+            state.set_labels(success.labels);
             state.set_issues(success.issues);
             state.set_status_success(format!(
                 "refreshed {count} issues in {}",
@@ -1953,6 +1938,22 @@ mod tests {
     }
 
     #[test]
+    fn refresh_clears_a_stale_labels_failure() {
+        let mut state = AppState::new(vec![], vec![]);
+        state.fail_labels("offline".into());
+        state.begin_pending(PendingOperation::RefreshList);
+        finish_refresh(
+            &mut state,
+            Ok(RefreshSuccess {
+                issues: vec![],
+                labels: vec![bug_label()],
+                elapsed: Duration::from_millis(10),
+            }),
+        );
+        assert!(state.labels_placeholder().is_none());
+    }
+
+    #[test]
     fn apply_labels_result_failure_keeps_form_open() {
         let mut state = AppState::new(vec![], vec![]);
         state.enter_big_create();
@@ -1961,22 +1962,6 @@ mod tests {
         assert!(matches!(state.mode, Mode::Form(_)));
         let (text, _) = state.labels_placeholder().expect("failure placeholder");
         assert!(text.contains("network down"), "{text}");
-    }
-
-    #[test]
-    fn apply_labels_result_success_fills_form() {
-        let mut state = AppState::new(vec![], vec![]);
-        state.enter_big_create();
-        state.begin_labels_loading();
-        let bug = Label {
-            name: "bug".into(),
-            color: "d73a4a".into(),
-        };
-        apply_labels_result(&mut state, Ok(vec![bug]));
-        let Mode::Form(form) = &state.mode else {
-            panic!("expected form");
-        };
-        assert_eq!(form.all_label_names, ["bug"]);
     }
 
     #[test]

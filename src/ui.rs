@@ -852,9 +852,7 @@ fn draw_form(frame: &mut Frame, area: Rect, form: &crate::model::FormState, stat
     frame.render_widget(body_block, chunks[1]);
     frame.render_widget(&form.body_input, body_inner);
 
-    let placeholder = state
-        .labels_placeholder()
-        .filter(|_| form.all_label_names.is_empty());
+    let placeholder = state.labels_placeholder();
     let items: Vec<ListItem> = form
         .all_label_names
         .iter()
@@ -2227,10 +2225,7 @@ mod tests {
         assert!(form_view.contains("Title"), "{form_view}");
         assert!(!form_view.contains("Loading issues..."), "{form_view}");
 
-        state.type_key(ratatui_textarea::Input {
-            key: ratatui_textarea::Key::Char('x'),
-            ..Default::default()
-        });
+        state.type_char('x');
         state.cancel_form_or_create();
         let discard_view = render_to_string(&state);
         assert!(
